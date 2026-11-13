@@ -7,6 +7,7 @@
 //! Strings (`TYPE string`) sind Handles auf `RtStr`. Sie werden nicht freigegeben (kein GC).
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 const BLANK: u16 = 0x20;
 
@@ -15,7 +16,15 @@ pub struct RtStr {
     data: Vec<u16>,
 }
 
+/// Listzustand: Bit 0 = es wurde schon ausgegeben, Bit 1 = die aktuelle Zeile hat Inhalt.
+static LIST: AtomicU8 = AtomicU8::new(0);
+const STARTED: u8 = 1;
+const DIRTY: u8 = 2;
+
 fn out(bytes: &[u8]) {
+    if !bytes.is_empty() {
+        LIST.fetch_or(STARTED | DIRTY, Ordering::Relaxed);
+    }
     let mut stdout = io::stdout().lock();
     let _ = stdout.write_all(bytes);
 }
@@ -91,10 +100,24 @@ pub unsafe extern "C" fn abap_rt_write_str(h: *const RtStr) {
     }
 }
 
-/// Zeilenumbruch nach einer WRITE-Ausgabe.
+/// `WRITE /`: beendet die aktuelle Zeile. Vor der ersten Ausgabe gibt es keine leere Zeile.
 #[no_mangle]
 pub extern "C" fn abap_rt_newline() {
-    out(b"\n");
+    if LIST.load(Ordering::Relaxed) & STARTED != 0 {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(b"\n");
+    }
+    LIST.store(STARTED, Ordering::Relaxed);
+}
+
+/// Programmende: schließt eine offene Zeile ab.
+#[no_mangle]
+pub extern "C" fn abap_rt_finish() {
+    if LIST.load(Ordering::Relaxed) & DIRTY != 0 {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(b"\n");
+    }
+    LIST.store(0, Ordering::Relaxed);
 }
 
 /// Zuweisung Zeichen -> Zeichen: abschneiden bzw. mit Leerzeichen auffüllen.
@@ -113,7 +136,12 @@ pub unsafe extern "C" fn abap_rt_chars_move(dst: *mut u16, dlen: u64, src: *cons
 /// # Safety
 /// Die Zeiger müssen auf die angegebenen Längen gültig sein.
 #[no_mangle]
-pub unsafe extern "C" fn abap_rt_chars_cmp(a: *const u16, alen: u64, b: *const u16, blen: u64) -> i32 {
+pub unsafe extern "C" fn abap_rt_chars_cmp(
+    a: *const u16,
+    alen: u64,
+    b: *const u16,
+    blen: u64,
+) -> i32 {
     cmp_padded(units(a, alen), units(b, blen))
 }
 
@@ -123,7 +151,9 @@ pub unsafe extern "C" fn abap_rt_chars_cmp(a: *const u16, alen: u64, b: *const u
 /// Die Zeiger müssen auf die angegebenen Längen gültig sein.
 #[no_mangle]
 pub unsafe extern "C" fn abap_rt_str_new(ptr: *const u16, len: u64) -> *mut RtStr {
-    Box::into_raw(Box::new(RtStr { data: units(ptr, len).to_vec() }))
+    Box::into_raw(Box::new(RtStr {
+        data: units(ptr, len).to_vec(),
+    }))
 }
 
 /// Neuer String aus einem Zeichenfeld; nachgestellte Leerzeichen werden entfernt.
@@ -184,7 +214,10 @@ pub struct RtTable {
 /// Neue leere Tabelle für Zeilen der Größe `elem_bytes`.
 #[no_mangle]
 pub extern "C" fn abap_rt_table_new(elem_bytes: u64) -> *mut RtTable {
-    Box::into_raw(Box::new(RtTable { elem_bytes: elem_bytes.max(1) as usize, rows: Vec::new() }))
+    Box::into_raw(Box::new(RtTable {
+        elem_bytes: elem_bytes.max(1) as usize,
+        rows: Vec::new(),
+    }))
 }
 
 /// Hängt eine Zeile an; kopiert `bytes` Bytes von `src`.
@@ -218,7 +251,9 @@ pub unsafe extern "C" fn abap_rt_table_count(t: *const RtTable) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn abap_rt_table_row(t: *mut RtTable, idx: i64) -> *mut u8 {
     match t.as_mut() {
-        Some(t) if idx >= 0 && (idx as usize) < t.rows.len() => t.rows[idx as usize].as_mut_ptr() as *mut u8,
+        Some(t) if idx >= 0 && (idx as usize) < t.rows.len() => {
+            t.rows[idx as usize].as_mut_ptr() as *mut u8
+        }
         _ => std::ptr::null_mut(),
     }
 }

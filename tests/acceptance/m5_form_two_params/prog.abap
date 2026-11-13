@@ -12,4 +12,4 @@ START-OF-SELECTION.
   b = 2.
   PERFORM swap CHANGING a b.
   WRITE a.
-  WRITE b.
+  WRITE / b.

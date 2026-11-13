@@ -6,5 +6,5 @@ START-OF-SELECTION.
   APPEND 20 TO t.
   APPEND 30 TO t.
   LOOP AT t INTO wa.
-    WRITE wa.
+    WRITE / wa.
   ENDLOOP.

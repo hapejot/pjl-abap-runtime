@@ -4,6 +4,6 @@ TYPES: BEGIN OF ts,
        END OF ts.
 DATA s TYPE ts.
 START-OF-SELECTION.
-  WRITE s-name.
+  WRITE / s-name.
   s-name = 'x'.
-  WRITE s-name.
+  WRITE / s-name.

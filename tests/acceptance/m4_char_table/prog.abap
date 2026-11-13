@@ -5,5 +5,5 @@ START-OF-SELECTION.
   APPEND 'ab' TO t.
   APPEND 'äöü' TO t.
   LOOP AT t INTO wa.
-    WRITE wa.
+    WRITE / wa.
   ENDLOOP.

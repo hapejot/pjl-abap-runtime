@@ -1,0 +1,4 @@
+REPORT ztest.
+START-OF-SELECTION.
+  WRITE 'a'.
+  WRITE 'b'.

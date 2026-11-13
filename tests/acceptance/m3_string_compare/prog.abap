@@ -6,5 +6,5 @@ START-OF-SELECTION.
     WRITE 'gleich'.
   ENDIF.
   IF s <> 'abd'.
-    WRITE 'ungleich'.
+    WRITE / 'ungleich'.
   ENDIF.

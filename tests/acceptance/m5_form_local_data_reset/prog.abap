@@ -1,7 +1,7 @@
 REPORT ztest.
 FORM f.
   DATA k TYPE i.
-  WRITE k.
+  WRITE / k.
   k = 9.
 ENDFORM.
 START-OF-SELECTION.

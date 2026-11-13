@@ -6,8 +6,8 @@ START-OF-SELECTION.
     WRITE 'a'.
   ENDIF.
   IF x = 9 OR x <> 2.
-    WRITE 'b'.
+    WRITE / 'b'.
   ENDIF.
   IF x <= 2 AND x >= 2.
-    WRITE 'c'.
+    WRITE / 'c'.
   ENDIF.

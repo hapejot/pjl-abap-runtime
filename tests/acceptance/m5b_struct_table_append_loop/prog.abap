@@ -13,6 +13,6 @@ START-OF-SELECTION.
   wa-b = 'zwei'.
   APPEND wa TO t.
   LOOP AT t INTO wa.
-    WRITE wa-a.
-    WRITE wa-b.
+    WRITE / wa-a.
+    WRITE / wa-b.
   ENDLOOP.

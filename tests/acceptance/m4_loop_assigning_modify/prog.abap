@@ -10,5 +10,5 @@ START-OF-SELECTION.
     <fs> = <fs> * 10.
   ENDLOOP.
   LOOP AT t INTO wa.
-    WRITE wa.
+    WRITE / wa.
   ENDLOOP.

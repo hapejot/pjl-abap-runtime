@@ -75,8 +75,16 @@ impl Lowerer {
                 Ok(())
             }
             "WRITE" => {
-                let value = parse_expr(&toks[1..], line)?;
-                out.push(Stmt::Write { value, line });
+                // WRITE [/] [wert]. Ein `/` beginnt eine neue Zeile; ohne `/` wird angehängt.
+                let (newline, rest) = match toks.get(1) {
+                    Some(t) if t.is_punct("/") => (true, &toks[2..]),
+                    Some(t) if t.kind == Kind::Word && t.text.starts_with('/') => {
+                        return err(line, "Nach '/' bitte ein Leerzeichen setzen (WRITE / wert)");
+                    }
+                    _ => (false, &toks[1..]),
+                };
+                let value = if rest.is_empty() { None } else { Some(parse_expr(rest, line)?) };
+                out.push(Stmt::Write { newline, value, line });
                 Ok(())
             }
             "APPEND" => {

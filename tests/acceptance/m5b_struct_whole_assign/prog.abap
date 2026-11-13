@@ -10,4 +10,4 @@ START-OF-SELECTION.
   t = s.
   t-a = 2.
   WRITE s-a.
-  WRITE t-a.
+  WRITE / t-a.

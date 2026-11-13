@@ -16,4 +16,4 @@ DATA o TYPE REF TO lcl.
 START-OF-SELECTION.
   CREATE OBJECT o.
   WRITE o->name( ).
-  WRITE o->twice( 'ab' ).
+  WRITE / o->twice( 'ab' ).

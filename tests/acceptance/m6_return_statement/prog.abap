@@ -17,4 +17,4 @@ DATA o TYPE REF TO lcl.
 START-OF-SELECTION.
   CREATE OBJECT o.
   WRITE o->sign( -5 ).
-  WRITE o->sign( 5 ).
+  WRITE / o->sign( 5 ).

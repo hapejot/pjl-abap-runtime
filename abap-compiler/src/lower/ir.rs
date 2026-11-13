@@ -65,7 +65,8 @@ pub enum Stmt {
     Data { name: String, ty: Ty, line: usize },
     Assign { target: Target, value: Expr, line: usize },
     Clear { target: Target, line: usize },
-    Write { value: Expr, line: usize },
+    /// WRITE [/] [wert]. `newline`: `/` vor dem Wert beendet die aktuelle Zeile.
+    Write { newline: bool, value: Option<Expr>, line: usize },
     If { branches: Vec<(Cond, Vec<Stmt>)>, otherwise: Vec<Stmt>, line: usize },
     Case { subject: Expr, whens: Vec<(Vec<Expr>, Vec<Stmt>)>, other: Vec<Stmt>, line: usize },
     /// `DO n TIMES` (times = Some) oder endlose `DO` (times = None)

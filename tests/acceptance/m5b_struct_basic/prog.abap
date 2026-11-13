@@ -8,4 +8,4 @@ START-OF-SELECTION.
   s-a = 3.
   s-b = 'xy'.
   WRITE s-a.
-  WRITE s-b.
+  WRITE / s-b.

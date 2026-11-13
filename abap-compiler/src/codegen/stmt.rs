@@ -17,9 +17,13 @@ impl<'ctx> Codegen<'ctx> {
             // Allokation erfolgt in `hoist`.
             Stmt::Data { .. } | Stmt::FieldSymbol { .. } => Ok(()),
             Stmt::Perform { name, args, line } => self.emit_perform(name, args, *line),
-            Stmt::MethodCall { recv, method, args, receiving, line } => {
-                self.emit_method_call(recv, method, args, receiving.as_ref(), *line)
-            }
+            Stmt::MethodCall {
+                recv,
+                method,
+                args,
+                receiving,
+                line,
+            } => self.emit_method_call(recv, method, args, receiving.as_ref(), *line),
             Stmt::Return { .. } => {
                 let Some(exit) = self.exit_fn else {
                     return err(0, "RETURN ohne Routine");
@@ -30,7 +34,10 @@ impl<'ctx> Codegen<'ctx> {
             Stmt::Create { name, line } => {
                 let (slot, ty) = self.data(name, *line)?;
                 let Ty::Ref(c) = ty else {
-                    return err(*line, format!("CREATE OBJECT erwartet eine Objektreferenz: '{name}'"));
+                    return err(
+                        *line,
+                        format!("CREATE OBJECT erwartet eine Objektreferenz: '{name}'"),
+                    );
                 };
                 let st = self.classes[c].struct_idx;
                 let size = self.len(self.size_of(Ty::Struct(st)) as usize);
@@ -39,7 +46,11 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_store(slot, obj))?;
                 Ok(())
             }
-            Stmt::Assign { target, value, line } => {
+            Stmt::Assign {
+                target,
+                value,
+                line,
+            } => {
                 let dst = self.dest(target, *line)?;
                 let v = self.eval(value, *line)?;
                 self.store(dst, v, *line)
@@ -63,7 +74,12 @@ impl<'ctx> Codegen<'ctx> {
                     Dest::Chars(p, n) => {
                         self.call_void(
                             self.rt.chars_move,
-                            &[p.into(), self.len(n).into(), self.ptrt.const_null().into(), self.len(0).into()],
+                            &[
+                                p.into(),
+                                self.len(n).into(),
+                                self.ptrt.const_null().into(),
+                                self.len(0).into(),
+                            ],
                         )?;
                     }
                     Dest::Str(p) => {
@@ -73,19 +89,43 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Write { value, line } => {
+            Stmt::Write { newline, value, line } => {
+                if *newline {
+                    self.call_void(self.rt.newline, &[])?;
+                }
+                let Some(value) = value else {
+                    return Ok(());
+                };
                 let v = self.eval(value, *line)?;
                 match v {
-                    Val::Ref(..) => return err(*line, "Objektreferenz kann nicht ausgegeben werden"),
-                    Val::Mem(..) => return err(*line, "Struktur kann nicht ausgegeben werden (nur Komponenten)"),
+                    Val::Ref(..) => {
+                        return err(*line, "Objektreferenz kann nicht ausgegeben werden")
+                    }
+                    Val::Mem(..) => {
+                        return err(
+                            *line,
+                            "Struktur kann nicht ausgegeben werden (nur Komponenten)",
+                        )
+                    }
                     Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
-                    Val::Chars(p, n) => self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?,
+                    Val::Chars(p, n) => {
+                        self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
+                    }
                     Val::Str(h) => self.call_void(self.rt.write_str, &[h.into()])?,
                 }
-                self.call_void(self.rt.newline, &[])
+                Ok(())
             }
-            Stmt::If { branches, otherwise, line } => self.emit_if(branches, otherwise, *line),
-            Stmt::Case { subject, whens, other, line } => self.emit_case(subject, whens, other, *line),
+            Stmt::If {
+                branches,
+                otherwise,
+                line,
+            } => self.emit_if(branches, otherwise, *line),
+            Stmt::Case {
+                subject,
+                whens,
+                other,
+                line,
+            } => self.emit_case(subject, whens, other, *line),
             Stmt::Do { times, body, line } => self.emit_do(times.as_ref(), body, *line),
             Stmt::While { cond, body, line } => self.emit_while(cond, body, *line),
             Stmt::Exit { line } => {
@@ -115,17 +155,33 @@ impl<'ctx> Codegen<'ctx> {
                 self.store(tmp_dst, v, *line)?;
                 self.call_void(
                     self.rt.table_append,
-                    &[h.into(), tmp.into(), self.len(self.elem_size(e) as usize).into()],
+                    &[
+                        h.into(),
+                        tmp.into(),
+                        self.len(self.elem_size(e) as usize).into(),
+                    ],
                 )
             }
-            Stmt::Loop { table, target, body, line } => self.emit_loop(table, target, body, *line),
-            Stmt::Describe { table, target, line } => {
+            Stmt::Loop {
+                table,
+                target,
+                body,
+                line,
+            } => self.emit_loop(table, target, body, *line),
+            Stmt::Describe {
+                table,
+                target,
+                line,
+            } => {
                 let (h, _) = self.table(table, *line)?;
                 let n = self.call_int(self.rt.table_count, &[h.into()])?;
                 let n32 = llvm(self.builder.build_int_truncate(n, self.i32t, "lines"))?;
                 let (p, ty) = self.data(target, *line)?;
                 if ty != Ty::Int {
-                    return err(*line, format!("DESCRIBE LINES erwartet ein ganzzahliges Feld: '{target}'"));
+                    return err(
+                        *line,
+                        format!("DESCRIBE LINES erwartet ein ganzzahliges Feld: '{target}'"),
+                    );
                 }
                 llvm(self.builder.build_store(p, n32))?;
                 Ok(())
@@ -146,11 +202,18 @@ impl<'ctx> Codegen<'ctx> {
             Dest::Mem(p, i) => match v {
                 // Struktur-Zuweisung kopiert alle Komponenten (gleicher Typ)
                 Val::Mem(src, j) if i == j => {
-                    let val = llvm(self.builder.build_load(self.llvm_ty(Ty::Struct(i)), src, "cp"))?;
+                    let val = llvm(self.builder.build_load(
+                        self.llvm_ty(Ty::Struct(i)),
+                        src,
+                        "cp",
+                    ))?;
                     llvm(self.builder.build_store(p, val))?;
                     Ok(())
                 }
-                Val::Mem(..) => err(line, "Struktur kann nur einer Struktur desselben Typs zugewiesen werden"),
+                Val::Mem(..) => err(
+                    line,
+                    "Struktur kann nur einer Struktur desselben Typs zugewiesen werden",
+                ),
                 _ => err(line, "Wert kann nicht einer Struktur zugewiesen werden"),
             },
             Dest::Int(p) => match v {
@@ -158,28 +221,58 @@ impl<'ctx> Codegen<'ctx> {
                     llvm(self.builder.build_store(p, i))?;
                     Ok(())
                 }
-                Val::Mem(..) => err(line, "Struktur kann nicht einem ganzzahligen Feld zugewiesen werden"),
-                _ => err(line, "Text kann nicht einem ganzzahligen Feld zugewiesen werden"),
+                Val::Mem(..) => err(
+                    line,
+                    "Struktur kann nicht einem ganzzahligen Feld zugewiesen werden",
+                ),
+                _ => err(
+                    line,
+                    "Text kann nicht einem ganzzahligen Feld zugewiesen werden",
+                ),
             },
             Dest::Chars(p, n) => match v {
-                Val::Ref(..) => err(line, "Objektreferenz kann keinem Zeichenfeld zugewiesen werden"),
+                Val::Ref(..) => err(
+                    line,
+                    "Objektreferenz kann keinem Zeichenfeld zugewiesen werden",
+                ),
                 // Zuweisung kürzt bzw. füllt mit Leerzeichen auf
                 Val::Chars(sp, sl) => self.call_void(
                     self.rt.chars_move,
                     &[p.into(), self.len(n).into(), sp.into(), self.len(sl).into()],
                 ),
-                Val::Str(h) => self.call_void(self.rt.str_to_chars, &[p.into(), self.len(n).into(), h.into()]),
-                Val::Int(_) => err(line, "Zahl kann nicht einem Zeichenfeld zugewiesen werden (noch nicht unterstützt)"),
-                Val::Mem(..) => err(line, "Struktur kann nicht einem Zeichenfeld zugewiesen werden"),
+                Val::Str(h) => self.call_void(
+                    self.rt.str_to_chars,
+                    &[p.into(), self.len(n).into(), h.into()],
+                ),
+                Val::Int(_) => err(
+                    line,
+                    "Zahl kann nicht einem Zeichenfeld zugewiesen werden (noch nicht unterstützt)",
+                ),
+                Val::Mem(..) => err(
+                    line,
+                    "Struktur kann nicht einem Zeichenfeld zugewiesen werden",
+                ),
             },
             Dest::Str(slot) => {
                 let h = match v {
                     Val::Str(h) => h,
                     // Zeichenfeld -> String: nachgestellte Leerzeichen entfallen
-                    Val::Chars(sp, sl) => self.call_ptr(self.rt.str_from_chars, &[sp.into(), self.len(sl).into()])?,
-                    Val::Int(_) => return err(line, "Zahl kann nicht einem String zugewiesen werden (noch nicht unterstützt)"),
-                    Val::Mem(..) => return err(line, "Struktur kann nicht einem String zugewiesen werden"),
-                    Val::Ref(..) => return err(line, "Objektreferenz kann nicht einem String zugewiesen werden"),
+                    Val::Chars(sp, sl) => {
+                        self.call_ptr(self.rt.str_from_chars, &[sp.into(), self.len(sl).into()])?
+                    }
+                    Val::Int(_) => return err(
+                        line,
+                        "Zahl kann nicht einem String zugewiesen werden (noch nicht unterstützt)",
+                    ),
+                    Val::Mem(..) => {
+                        return err(line, "Struktur kann nicht einem String zugewiesen werden")
+                    }
+                    Val::Ref(..) => {
+                        return err(
+                            line,
+                            "Objektreferenz kann nicht einem String zugewiesen werden",
+                        )
+                    }
                 };
                 llvm(self.builder.build_store(slot, h))?;
                 Ok(())
@@ -187,7 +280,12 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub(super) fn emit_if(&mut self, branches: &[(Cond, Vec<Stmt>)], otherwise: &[Stmt], line: usize) -> CResult<()> {
+    pub(super) fn emit_if(
+        &mut self,
+        branches: &[(Cond, Vec<Stmt>)],
+        otherwise: &[Stmt],
+        line: usize,
+    ) -> CResult<()> {
         let merge = self.new_block("endif")?;
         for (cond, body) in branches {
             let c = self.cond(cond, line)?;
@@ -205,7 +303,13 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
-    pub(super) fn emit_case(&mut self, subject: &Expr, whens: &[(Vec<Expr>, Vec<Stmt>)], other: &[Stmt], line: usize) -> CResult<()> {
+    pub(super) fn emit_case(
+        &mut self,
+        subject: &Expr,
+        whens: &[(Vec<Expr>, Vec<Stmt>)],
+        other: &[Stmt],
+        line: usize,
+    ) -> CResult<()> {
         let subj = self.eval(subject, line)?;
         let merge = self.new_block("endcase")?;
         for (values, body) in whens {
@@ -234,7 +338,12 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
-    pub(super) fn emit_do(&mut self, times: Option<&Expr>, body: &[Stmt], line: usize) -> CResult<()> {
+    pub(super) fn emit_do(
+        &mut self,
+        times: Option<&Expr>,
+        body: &[Stmt],
+        line: usize,
+    ) -> CResult<()> {
         // Anzahl wird einmal ausgewertet und in einem versteckten Zähler gehalten.
         let counter_limit = match times {
             Some(e) => {
@@ -263,7 +372,11 @@ impl<'ctx> Codegen<'ctx> {
             Some((cnt, limit)) => {
                 let cur = llvm(self.builder.build_load(self.i32t, cnt, "cnt"))?.into_int_value();
                 let lim = llvm(self.builder.build_load(self.i32t, limit, "lim"))?.into_int_value();
-                let more = llvm(self.builder.build_int_compare(IntPredicate::SLT, cur, lim, "more"))?;
+                let more =
+                    llvm(
+                        self.builder
+                            .build_int_compare(IntPredicate::SLT, cur, lim, "more"),
+                    )?;
                 llvm(self.builder.build_conditional_branch(more, bodyb, exit))?;
             }
             None => {
@@ -280,7 +393,10 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.position_at_end(latch);
         if let Some((cnt, _)) = counter_limit {
             let cur = llvm(self.builder.build_load(self.i32t, cnt, "cnt"))?.into_int_value();
-            let inc = llvm(self.builder.build_int_add(cur, self.i32t.const_int(1, false), "inc"))?;
+            let inc = llvm(
+                self.builder
+                    .build_int_add(cur, self.i32t.const_int(1, false), "inc"),
+            )?;
             llvm(self.builder.build_store(cnt, inc))?;
         }
         llvm(self.builder.build_unconditional_branch(head))?;
@@ -310,7 +426,13 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// LOOP AT tabelle INTO wa | ASSIGNING <fs>: Index läuft von 0 bis zur aktuellen Zeilenanzahl.
-    pub(super) fn emit_loop(&mut self, table: &str, target: &LoopTarget, body: &[Stmt], line: usize) -> CResult<()> {
+    pub(super) fn emit_loop(
+        &mut self,
+        table: &str,
+        target: &LoopTarget,
+        body: &[Stmt],
+        line: usize,
+    ) -> CResult<()> {
         let (h, e) = self.table(table, line)?;
         let idx = llvm(self.alloca.build_alloca(self.i64t, "loop_idx"))?;
         llvm(self.builder.build_store(idx, self.i64t.const_zero()))?;
@@ -328,7 +450,10 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.position_at_end(head);
         let cur = llvm(self.builder.build_load(self.i64t, idx, "li"))?.into_int_value();
         let cnt = llvm(self.builder.build_load(self.i64t, limit, "lim"))?.into_int_value();
-        let more = llvm(self.builder.build_int_compare(IntPredicate::SLT, cur, cnt, "more"))?;
+        let more = llvm(
+            self.builder
+                .build_int_compare(IntPredicate::SLT, cur, cnt, "more"),
+        )?;
         llvm(self.builder.build_conditional_branch(more, bodyb, exit))?;
 
         self.builder.position_at_end(bodyb);
@@ -338,7 +463,10 @@ impl<'ctx> Codegen<'ctx> {
             LoopTarget::Into(wa) => {
                 let (wp, wty) = self.data(wa, line)?;
                 if wty != e.ty() {
-                    return err(line, format!("Arbeitsbereich passt nicht zum Tabellentyp: '{wa}'"));
+                    return err(
+                        line,
+                        format!("Arbeitsbereich passt nicht zum Tabellentyp: '{wa}'"),
+                    );
                 }
                 let v = self.read_row(row, e)?;
                 let dst = self.dest_of(wty, wp, line)?;
@@ -350,7 +478,10 @@ impl<'ctx> Codegen<'ctx> {
                     return err(line, format!("ASSIGNING erwartet ein Feldsymbol: '{fs}'"));
                 }
                 if v.ty != e.ty() {
-                    return err(line, format!("Feldsymbol passt nicht zum Tabellentyp: '{fs}'"));
+                    return err(
+                        line,
+                        format!("Feldsymbol passt nicht zum Tabellentyp: '{fs}'"),
+                    );
                 }
                 llvm(self.builder.build_store(v.slot, row))?;
             }
@@ -362,7 +493,10 @@ impl<'ctx> Codegen<'ctx> {
 
         self.builder.position_at_end(latch);
         let cur_l = llvm(self.builder.build_load(self.i64t, idx, "ll"))?.into_int_value();
-        let inc = llvm(self.builder.build_int_add(cur_l, self.i64t.const_int(1, false), "linc"))?;
+        let inc = llvm(
+            self.builder
+                .build_int_add(cur_l, self.i64t.const_int(1, false), "linc"),
+        )?;
         llvm(self.builder.build_store(idx, inc))?;
         llvm(self.builder.build_unconditional_branch(head))?;
 

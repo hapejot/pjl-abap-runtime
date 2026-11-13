@@ -16,4 +16,4 @@ START-OF-SELECTION.
   CREATE OBJECT b.
   a->add( 3 ).
   WRITE a->v.
-  WRITE b->v.
+  WRITE / b->v.

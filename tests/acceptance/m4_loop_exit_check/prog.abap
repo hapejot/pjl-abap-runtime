@@ -13,4 +13,4 @@ START-OF-SELECTION.
     ENDIF.
     WRITE wa.
   ENDLOOP.
-  WRITE 'ende'.
+  WRITE / 'ende'.
