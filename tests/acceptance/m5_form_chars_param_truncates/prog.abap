@@ -1,0 +1,9 @@
+REPORT ztest.
+DATA c TYPE c LENGTH 3.
+FORM up CHANGING v TYPE c LENGTH 3.
+  v = 'zzzzz'.
+ENDFORM.
+START-OF-SELECTION.
+  c = 'abc'.
+  PERFORM up CHANGING c.
+  WRITE c.

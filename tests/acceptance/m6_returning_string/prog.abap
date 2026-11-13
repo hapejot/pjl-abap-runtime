@@ -1,0 +1,19 @@
+REPORT ztest.
+CLASS lcl DEFINITION.
+  PUBLIC SECTION.
+    METHODS name RETURNING VALUE(r) TYPE string.
+    METHODS twice IMPORTING s TYPE string RETURNING VALUE(r) TYPE string.
+ENDCLASS.
+CLASS lcl IMPLEMENTATION.
+  METHOD name.
+    r = 'lcl'.
+  ENDMETHOD.
+  METHOD twice.
+    r = s && s.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO lcl.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  WRITE o->name( ).
+  WRITE o->twice( 'ab' ).

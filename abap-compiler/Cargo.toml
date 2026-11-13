@@ -1,0 +1,12 @@
+[package]
+name = "abap-compiler"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "abapc"
+path = "src/main.rs"
+
+[dependencies]
+abapgit-inspect = { path = "../abapgit-inspect" }
+inkwell = { version = "0.9", features = ["llvm21-1"] }

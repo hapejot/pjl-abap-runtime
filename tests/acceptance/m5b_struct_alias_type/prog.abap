@@ -1,0 +1,6 @@
+REPORT ztest.
+TYPES t_i TYPE i.
+DATA x TYPE t_i.
+START-OF-SELECTION.
+  x = 4.
+  WRITE x.

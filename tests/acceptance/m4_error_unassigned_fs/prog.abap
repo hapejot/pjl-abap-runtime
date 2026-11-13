@@ -1,0 +1,3 @@
+FIELD-SYMBOLS <fs> TYPE i.
+START-OF-SELECTION.
+  <fs> = 1.

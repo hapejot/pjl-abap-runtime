@@ -1,0 +1,6 @@
+REPORT ztest.
+DATA x TYPE i.
+START-OF-SELECTION.
+  x = 5.
+  CLEAR x.
+  WRITE x.

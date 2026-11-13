@@ -1,0 +1,5 @@
+REPORT ztest.
+DATA r TYPE string.
+START-OF-SELECTION.
+  CONCATENATE 'x' 'y' INTO r.
+  WRITE r.

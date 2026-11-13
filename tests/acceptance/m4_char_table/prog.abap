@@ -1,0 +1,9 @@
+REPORT ztest.
+DATA t TYPE TABLE OF c LENGTH 3.
+DATA wa TYPE c LENGTH 3.
+START-OF-SELECTION.
+  APPEND 'ab' TO t.
+  APPEND 'äöü' TO t.
+  LOOP AT t INTO wa.
+    WRITE wa.
+  ENDLOOP.

@@ -1,0 +1,4 @@
+REPORT ztest.
+DATA c TYPE c LENGTH 5.
+START-OF-SELECTION.
+  c+4(3) = 'abc'.

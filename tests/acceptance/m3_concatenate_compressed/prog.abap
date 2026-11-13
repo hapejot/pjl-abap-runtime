@@ -1,0 +1,7 @@
+REPORT ztest.
+DATA c TYPE c LENGTH 3.
+DATA r TYPE string.
+START-OF-SELECTION.
+  c = 'a'.
+  CONCATENATE c 'b' INTO r COMPRESSED.
+  WRITE r.

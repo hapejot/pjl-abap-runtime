@@ -1,0 +1,6 @@
+REPORT ztest.
+DATA t TYPE TABLE OF i.
+DATA wa TYPE string.
+START-OF-SELECTION.
+  LOOP AT t INTO wa.
+  ENDLOOP.

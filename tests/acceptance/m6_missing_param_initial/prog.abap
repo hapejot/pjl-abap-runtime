@@ -1,0 +1,21 @@
+REPORT ztest.
+CLASS lcl DEFINITION.
+  PUBLIC SECTION.
+    METHODS sum IMPORTING a TYPE i b TYPE i RETURNING VALUE(r) TYPE i.
+    METHODS up CHANGING x TYPE i.
+ENDCLASS.
+CLASS lcl IMPLEMENTATION.
+  METHOD sum.
+    r = a + b.
+  ENDMETHOD.
+  METHOD up.
+    x = x + 100.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO lcl.
+DATA x TYPE i.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  " Regel: nicht angegebene Importing-Parameter haben den Initialwert ihres Typs
+  x = o->sum( a = 2 ).
+  WRITE x.

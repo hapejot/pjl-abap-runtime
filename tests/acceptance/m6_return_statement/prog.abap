@@ -1,0 +1,20 @@
+REPORT ztest.
+CLASS lcl DEFINITION.
+  PUBLIC SECTION.
+    METHODS sign IMPORTING n TYPE i RETURNING VALUE(r) TYPE i.
+ENDCLASS.
+CLASS lcl IMPLEMENTATION.
+  METHOD sign.
+    r = 1.
+    IF n < 0.
+      r = -1.
+      RETURN.
+    ENDIF.
+    r = 2.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO lcl.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  WRITE o->sign( -5 ).
+  WRITE o->sign( 5 ).

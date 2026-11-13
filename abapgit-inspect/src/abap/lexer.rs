@@ -129,6 +129,13 @@ pub fn tokenize(src: &str) -> Vec<Token> {
         } else if let Some(end) = field_symbol_end(&chars, i) {
             kind = Kind::Word;
             i = end + 1;
+            // Komponente am Feldsymbol: <fs>-feld
+            while i + 1 < n && chars[i] == '-' && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
+                i += 1;
+                while i < n && is_word_char(chars[i]) {
+                    i += 1;
+                }
+            }
         } else if starts_word(&chars, i) {
             kind = Kind::Word;
             i += 1;

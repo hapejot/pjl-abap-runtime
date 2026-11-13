@@ -1,0 +1,5 @@
+REPORT ztest.
+DATA x TYPE i.
+START-OF-SELECTION.
+  x = 42.
+  WRITE x.

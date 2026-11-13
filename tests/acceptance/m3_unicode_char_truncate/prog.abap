@@ -1,0 +1,5 @@
+REPORT ztest.
+DATA c TYPE c LENGTH 2.
+START-OF-SELECTION.
+  c = 'äöü'.
+  WRITE c.

@@ -1,0 +1,17 @@
+REPORT ztest.
+CLASS lcl DEFINITION.
+  PUBLIC SECTION.
+    DATA v TYPE i.
+    METHODS add IMPORTING n TYPE i.
+ENDCLASS.
+CLASS lcl IMPLEMENTATION.
+  METHOD add.
+    v = v + n.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO lcl.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  o->add( 5 ).
+  o->add( 2 ).
+  WRITE o->v.

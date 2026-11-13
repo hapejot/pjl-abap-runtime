@@ -1,0 +1,16 @@
+REPORT ztest.
+DATA t TYPE TABLE OF i.
+DATA u TYPE TABLE OF i.
+DATA a TYPE i.
+DATA b TYPE i.
+DATA s TYPE i.
+START-OF-SELECTION.
+  APPEND 1 TO t. APPEND 2 TO t.
+  APPEND 10 TO u. APPEND 20 TO u. APPEND 30 TO u.
+  s = 0.
+  LOOP AT t INTO a.
+    LOOP AT u INTO b.
+      s = s + a * b.
+    ENDLOOP.
+  ENDLOOP.
+  WRITE s.

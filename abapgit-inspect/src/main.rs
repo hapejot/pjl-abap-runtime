@@ -7,11 +7,11 @@
 //!   abapgit-inspect <datei.zip> --show <pfad>   Inhalt einer Datei ausgeben
 
 use std::collections::BTreeMap;
-use std::env;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::process;
 
+use clap::Parser;
 use zip::ZipArchive;
 
 fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
@@ -25,13 +25,59 @@ fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
     text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text)
 }
 
+/// Untersucht ZIP-Exporte aus abapGit.
+#[derive(Parser, Debug)]
+#[command(name = "abapgit-inspect", version, about)]
 struct Options {
+    /// ZIP-Datei aus abapGit
     zip_path: String,
-    list_files: bool,
+
+    /// Alle Dateien im ZIP mit Groesse auflisten
+    #[arg(long)]
+    files: bool,
+
+    /// Nur Objekte dieses Typs (z.B. CLAS, DTEL, DOMA, DEVC)
+    #[arg(long = "type", value_name = "TYP")]
     type_filter: Option<String>,
+
+    /// Inhalt einer Datei im ZIP ausgeben (Pfad wie in --files)
+    #[arg(long, value_name = "PFAD")]
     show: Option<String>,
+
+    /// ABAP-Datei aus dem ZIP parsen und Gliederung ausgeben
+    #[arg(long, value_name = "PFAD")]
     ast: Option<String>,
+
+    /// Alle .abap-Dateien parsen und Fehler melden
+    #[arg(long)]
     check: bool,
+
+    /// Top-Level-Deklarationen je Entwicklungsobjekt ausgeben
+    #[arg(long)]
+    objects: bool,
+
+    /// Interaktive Oberflaeche: Objektliste mit Filter und Quelltext
+    #[arg(long)]
+    tui: bool,
+}
+
+/// Alle `.abap`-Dateien als `(Pfad, Quelltext)`.
+fn read_abap_files(archive: &mut ZipArchive<File>) -> Vec<(String, String)> {
+    abap_entries(archive)
+        .into_iter()
+        .map(|n| {
+            let src = read_entry(archive, &n);
+            (n, src)
+        })
+        .collect()
+}
+
+/// Alle `.abap`-Dateien im ZIP in Archivreihenfolge.
+fn abap_entries(archive: &mut ZipArchive<File>) -> Vec<String> {
+    (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+        .filter(|n| n.ends_with(".abap"))
+        .collect()
 }
 
 #[derive(Default)]
@@ -41,57 +87,9 @@ struct AbapObject {
     files: Vec<(String, u64)>,
 }
 
-fn usage() -> ! {
-    eprintln!(
-        "Verwendung: abapgit-inspect <datei.zip> [--files] [--type TYP] [--show PFAD]\n\
-         \n\
-           --files        alle Dateien im ZIP mit Groesse auflisten\n\
-           --type TYP     nur Objekte dieses Typs (z.B. CLAS, DTEL, DOMA, DEVC)\n\
-           --show PFAD    Inhalt der Datei im ZIP ausgeben (Pfad wie in --files)"
-    );
-    process::exit(2);
-}
-
-fn parse_args() -> Options {
-    let mut args = env::args().skip(1);
-    let mut opts = Options {
-        zip_path: String::new(),
-        list_files: false,
-        type_filter: None,
-        show: None,
-        ast: None,
-        check: false,
-    };
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "-h" | "--help" => usage(),
-            "--files" => opts.list_files = true,
-            "--check" => opts.check = true,
-            "--ast" => opts.ast = Some(args.next().unwrap_or_else(|| usage())),
-            "--type" => opts.type_filter = Some(args.next().unwrap_or_else(|| usage()).to_uppercase()),
-            "--show" => opts.show = Some(args.next().unwrap_or_else(|| usage())),
-            s if s.starts_with("--") => {
-                eprintln!("Unbekannte Option: {s}");
-                usage();
-            }
-            _ => {
-                if opts.zip_path.is_empty() {
-                    opts.zip_path = a;
-                } else {
-                    usage();
-                }
-            }
-        }
-    }
-    if opts.zip_path.is_empty() {
-        usage();
-    }
-    opts
-}
-
 /// abapGit kodiert Namespace-Slashes als '#' im Dateinamen (#ns#obj -> /ns/obj).
 fn decode_name(raw: &str) -> String {
-    raw.replace('#', "/").to_uppercase()
+    raw.replace('#', "/").to_lowercase()
 }
 
 /// Zerlegt einen Dateinamen wie `zcl_foo.clas.locals_imp.abap` in (Name, Typ).
@@ -112,7 +110,8 @@ fn strip_bom(s: &str) -> &str {
 }
 
 fn main() {
-    let opts = parse_args();
+    let mut opts = Options::parse();
+    opts.type_filter = opts.type_filter.map(|t| t.to_uppercase());
 
     let file = File::open(&opts.zip_path).unwrap_or_else(|e| {
         eprintln!("Kann '{}' nicht oeffnen: {e}", opts.zip_path);
@@ -145,12 +144,64 @@ fn main() {
         return;
     }
 
+    // Top-Level-Deklarationen je Entwicklungsobjekt
+    if opts.objects {
+        let files = read_abap_files(&mut archive);
+        let mut objs = abapgit_inspect::objects::collect(&files);
+        if let Some(t) = &opts.type_filter {
+            objs.retain(|o| &o.obj_type == t);
+        }
+        print!("{}", abapgit_inspect::objects::render(&objs));
+        return;
+    }
+
+    // Interaktive Oberflaeche
+    if opts.tui {
+        let files = read_abap_files(&mut archive);
+        let mut objs = abapgit_inspect::objects::collect(&files);
+        if let Some(t) = &opts.type_filter {
+            objs.retain(|o| &o.obj_type == t);
+        }
+        // Quelltext je Objekt: eigene Dateien plus Dateien, die eingebettete Includes liefern
+        let mut sources: abapgit_inspect::tui::app::Sources = Default::default();
+        let by_name: std::collections::BTreeMap<&str, &str> = files
+            .iter()
+            .map(|(p, s)| (p.rsplit('/').next().unwrap_or(p), s.as_str()))
+            .collect();
+        let mut objects = Vec::new();
+        for o in &objs {
+            let key = (o.obj_type.clone(), o.name.clone());
+            let mut names: Vec<String> = files
+                .iter()
+                .filter(|(p, _)| abapgit_inspect::objects::object_key(p).as_ref() == Some(&key))
+                .map(|(p, _)| p.rsplit('/').next().unwrap_or(p).to_string())
+                .collect();
+            for f in abapgit_inspect::objects::source_files(o) {
+                if !names.contains(&f) {
+                    names.push(f);
+                }
+            }
+            for f in names {
+                if let Some(src) = by_name.get(f.as_str()) {
+                    sources.entry(key.clone()).or_default().push((f, src.to_string()));
+                }
+            }
+            objects.push(abapgit_inspect::tui::app::Object {
+                key,
+                entries: abapgit_inspect::objects::entries(o),
+            });
+        }
+
+        if let Err(e) = abapgit_inspect::tui::run(objects, sources) {
+            eprintln!("TUI-Fehler: {e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     // Alle .abap-Dateien parsen und Fehler zusammenfassen
     if opts.check {
-        let names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
-            .filter(|n| n.ends_with(".abap"))
-            .collect();
+        let names = abap_entries(&mut archive);
         let mut total_errors = 0;
         for name in &names {
             let src = read_entry(&mut archive, name);
@@ -176,7 +227,7 @@ fn main() {
         }
     }
 
-    if opts.list_files {
+    if opts.files {
         println!("{:>10}  PFAD", "GROESSE");
         for (name, size) in &entries {
             println!("{size:>10}  {name}");

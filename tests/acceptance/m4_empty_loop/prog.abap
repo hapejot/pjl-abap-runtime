@@ -1,0 +1,8 @@
+REPORT ztest.
+DATA t TYPE TABLE OF i.
+DATA wa TYPE i.
+START-OF-SELECTION.
+  LOOP AT t INTO wa.
+    WRITE wa.
+  ENDLOOP.
+  WRITE 'leer'.

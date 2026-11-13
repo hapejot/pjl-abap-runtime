@@ -1,0 +1,4 @@
+REPORT ztest.
+DATA x TYPE i.
+START-OF-SELECTION.
+  APPEND 1 TO x.

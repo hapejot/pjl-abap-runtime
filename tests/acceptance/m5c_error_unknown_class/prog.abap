@@ -1,0 +1,4 @@
+REPORT ztest.
+DATA o TYPE REF TO nope.
+START-OF-SELECTION.
+  WRITE 'x'.

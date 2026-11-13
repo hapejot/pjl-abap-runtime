@@ -1,0 +1,5 @@
+REPORT ztest.
+DATA x TYPE i.
+START-OF-SELECTION.
+  MOVE 7 TO x.
+  WRITE x.
