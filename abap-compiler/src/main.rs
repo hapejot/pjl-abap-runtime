@@ -71,9 +71,23 @@ fn emit_object(module: &inkwell::module::Module, path: &Path) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
+/// Sucht link.exe samt LIB/PATH über die Visual-Studio-Installation,
+/// sodass keine Developer-Shell nötig ist; Fallback ist link.exe im PATH.
+#[cfg(target_env = "msvc")]
+fn msvc_linker() -> Command {
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64-pc-windows-msvc"
+    } else {
+        "x86_64-pc-windows-msvc"
+    };
+    cc::windows_registry::find(arch, "link.exe")
+        .map(Command::from)
+        .unwrap_or_else(|| Command::new("link.exe"))
+}
+
 fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
     #[cfg(target_env = "msvc")]
-    let output = Command::new("link.exe")
+    let output = msvc_linker()
         .arg("/NOLOGO")
         .arg("/SUBSYSTEM:CONSOLE")
         .arg(format!("/OUT:{}", exe.display()))
