@@ -77,7 +77,7 @@ pub extern "C" fn abap_rt_write_int(value: i32) {
     if value < 0 {
         s.push('-');
     }
-    out(s.as_bytes());
+    out(format!("{:>10}", s).as_bytes());
 }
 
 /// WRITE für Zeichenfelder: gibt die vollen `len` Zeichen aus (inkl. Auffüllung), als UTF-8.
@@ -106,6 +106,16 @@ pub extern "C" fn abap_rt_newline() {
     if LIST.load(Ordering::Relaxed) & STARTED != 0 {
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(b"\n");
+    }
+    LIST.store(STARTED, Ordering::Relaxed);
+}
+
+/// `WRITE `: erzeugt einen Field Separator. Vor der ersten Ausgabe gibt es keine leere Zeile.
+#[no_mangle]
+pub extern "C" fn abap_rt_newfield() {
+    if LIST.load(Ordering::Relaxed) & DIRTY != 0 {
+        let mut stdout = io::stdout().lock();
+        let _ = stdout.write_all(b"\t \t");
     }
     LIST.store(STARTED, Ordering::Relaxed);
 }
