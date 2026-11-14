@@ -116,6 +116,7 @@ struct Rt<'ctx> {
     write_chars: FunctionValue<'ctx>,
     write_str: FunctionValue<'ctx>,
     newline: FunctionValue<'ctx>,
+    newfield: FunctionValue<'ctx>,
     finish: FunctionValue<'ctx>,
     chars_move: FunctionValue<'ctx>,
     chars_cmp: FunctionValue<'ctx>,
@@ -178,6 +179,7 @@ impl<'ctx> Codegen<'ctx> {
             write_chars: f("abap_rt_write_chars", void.fn_type(&[ptrt.into(), i64t.into()], false)),
             write_str: f("abap_rt_write_str", void.fn_type(&[ptrt.into()], false)),
             newline: f("abap_rt_newline", void.fn_type(&[], false)),
+            newfield: f("abap_rt_newfield", void.fn_type(&[], false)),
             finish: f("abap_rt_finish", void.fn_type(&[], false)),
             chars_move: f(
                 "abap_rt_chars_move",

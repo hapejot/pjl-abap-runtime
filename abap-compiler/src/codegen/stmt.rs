@@ -93,6 +93,9 @@ impl<'ctx> Codegen<'ctx> {
                 if *newline {
                     self.call_void(self.rt.newline, &[])?;
                 }
+                else {
+                    self.call_void(self.rt.newfield, &[])?;
+                }
                 let Some(value) = value else {
                     return Ok(());
                 };
