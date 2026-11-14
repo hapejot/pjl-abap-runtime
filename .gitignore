@@ -1,6 +1,7 @@
-ZSD_VERSAND_20261113_121849.zip
+*.zip
+*.7z
+.vs
 abapgit-inspect/target
 target
-sample
-sample.abap
-sample.out
+sample*
+.cargo

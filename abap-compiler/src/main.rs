@@ -1,57 +1,47 @@
 //! abapc: übersetzt ein ABAP-Report-Programm in eine ausführbare Datei.
 //!
-//! Aufruf: abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <libabap_rt.a>]
-
-use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+//! Aufruf: abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <runtime-lib>]
 
 use abap_compiler::{codegen::Codegen, lower::lower_source};
+use clap::Parser;
 use inkwell::context::Context;
-use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 use inkwell::OptimizationLevel;
+use std::path::{Path, PathBuf};
+use std::process::{self, Command};
+use tracing::*;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+#[derive(Debug, Parser)]
 struct Args {
+    /// Eingabe-ABAP-Datei
     input: PathBuf,
+    /// Ausgabedatei
+    #[clap(short = 'o', long = "output")]
     output: PathBuf,
+    /// Optional: IR-Datei ausgeben
+    #[clap(long = "emit-ir")]
     emit_ir: Option<PathBuf>,
+    /// Optional: Laufzeitbibliothek
+    #[clap(long = "runtime")]
     runtime: Option<PathBuf>,
 }
 
-fn usage() -> ! {
-    eprintln!("Verwendung: abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <libabap_rt.a>]");
-    process::exit(2);
-}
-
-fn parse_args() -> Args {
-    let mut input = None;
-    let mut output = None;
-    let mut emit_ir = None;
-    let mut runtime = None;
-    let mut it = std::env::args().skip(1);
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "-o" => output = Some(PathBuf::from(it.next().unwrap_or_else(|| usage()))),
-            "--emit-ir" => emit_ir = Some(PathBuf::from(it.next().unwrap_or_else(|| usage()))),
-            "--runtime" => runtime = Some(PathBuf::from(it.next().unwrap_or_else(|| usage()))),
-            "-h" | "--help" => usage(),
-            _ if input.is_none() => input = Some(PathBuf::from(a)),
-            _ => usage(),
-        }
-    }
-    Args {
-        input: input.unwrap_or_else(|| usage()),
-        output: output.unwrap_or_else(|| usage()),
-        emit_ir,
-        runtime,
+fn runtime_library_name() -> &'static str {
+    if cfg!(target_env = "msvc") {
+        "abap_rt.lib"
+    } else {
+        "libabap_rt.a"
     }
 }
 
-/// Standard: libabap_rt.a liegt neben dem abapc-Binary.
 fn default_runtime() -> PathBuf {
     std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("libabap_rt.a")))
-        .unwrap_or_else(|| PathBuf::from("libabap_rt.a"))
+        .and_then(|p| p.parent().map(|d| d.join(runtime_library_name())))
+        .unwrap_or_else(|| PathBuf::from(runtime_library_name()))
 }
 
 fn fail(msg: impl std::fmt::Display) -> ! {
@@ -82,23 +72,56 @@ fn emit_object(module: &inkwell::module::Module, path: &Path) -> Result<(), Stri
 }
 
 fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
-    let status = Command::new("cc")
+    #[cfg(target_env = "msvc")]
+    let output = Command::new("link.exe")
+        .arg("/NOLOGO")
+        .arg("/SUBSYSTEM:CONSOLE")
+        .arg(format!("/OUT:{}", exe.display()))
+        .arg(obj)
+        .arg(runtime)
+        .args([
+            "kernel32.lib",
+            "ntdll.lib",
+            "userenv.lib",
+            "ws2_32.lib",
+            "dbghelp.lib",
+            "/DEFAULTLIB:msvcrt",
+        ])
+        .output()
+        .map_err(|e| format!("Linker 'link.exe' nicht startbar: {e}"))?;
+
+    #[cfg(not(target_env = "msvc"))]
+    let output = Command::new("cc")
         .arg(obj)
         .arg(runtime)
         .arg("-o")
         .arg(exe)
         .args(["-lpthread", "-ldl", "-lm", "-lgcc_s"])
-        .status()
+        .output()
         .map_err(|e| format!("Linker 'cc' nicht startbar: {e}"))?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        Err("Linken fehlgeschlagen".into())
+        Err(format!(
+            "Linken fehlgeschlagen:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }
 
 fn main() {
-    let args = parse_args();
+    let args = Args::parse();
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+    info!("ABAPC starting");
+    info!(
+        "Translating {} into {}",
+        args.input.display(),
+        args.output.display()
+    );
     let src = std::fs::read_to_string(&args.input)
         .unwrap_or_else(|e| fail(format!("{}: {e}", args.input.display())));
 
@@ -124,10 +147,14 @@ fn main() {
     }
     let runtime = args.runtime.clone().unwrap_or_else(default_runtime);
     if !runtime.exists() {
-        fail(format!("Laufzeitbibliothek nicht gefunden: {}", runtime.display()));
+        fail(format!(
+            "Laufzeitbibliothek nicht gefunden: {}",
+            runtime.display()
+        ));
     }
     if let Err(e) = link(&obj, &runtime, &args.output) {
         fail(e);
     }
     let _ = std::fs::remove_file(&obj);
+    info!("Compilation successful");
 }
