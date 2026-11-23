@@ -1,0 +1,1069 @@
+{
+  "statements": [
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 389,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_VERS_PACK"
+      ],
+      "fields": [],
+      "target": "lt_packdata",
+      "target_type": "zsd_vers_pack"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 407,
+      "operation": "SELECT",
+      "tables": [
+        "VBAP"
+      ],
+      "fields": [
+        "LGORT",
+        "WERKS"
+      ],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 989,
+      "operation": "SELECT",
+      "tables": [
+        "LIKP"
+      ],
+      "fields": [],
+      "target": "ls_likp",
+      "target_type": "likp"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1002,
+      "operation": "SELECT",
+      "tables": [
+        "LIPS"
+      ],
+      "fields": [],
+      "target": "lt_lips",
+      "target_type": "lips"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1618,
+      "operation": "INSERT",
+      "tables": [
+        "ZSD_VERS_LOAD"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1622,
+      "operation": "UPDATE",
+      "tables": [
+        "ZSD_VERS_LOAD"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1628,
+      "operation": "DELETE",
+      "tables": [
+        "ZSD_VERS_LOAD"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1702,
+      "operation": "INSERT",
+      "tables": [
+        "ZSD_VERS_PACK"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1706,
+      "operation": "UPDATE",
+      "tables": [
+        "ZSD_VERS_PACK"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1711,
+      "operation": "DELETE",
+      "tables": [
+        "ZSD_VERS_PACK"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1839,
+      "operation": "SELECT",
+      "tables": [
+        "VBAK",
+        "VBAP",
+        "VBEP"
+      ],
+      "fields": [
+        "KUNNR",
+        "NETWR",
+        "VBELN",
+        "VKORG",
+        "VSBED",
+        "VTWEG",
+        "WAERK",
+        "ZBVS",
+        "ZZANLCUSTDATE",
+        "ZZFERT",
+        "ZZPLDELDATE",
+        "ZZ_PROJNR",
+        "ARKTX",
+        "KWMENG",
+        "MATNR",
+        "MEINS",
+        "POSNR",
+        "PRODH",
+        "PSTYV",
+        "UEPOS",
+        "VSTEL",
+        "ETENR",
+        "LDDAT"
+      ],
+      "target": "gt_data",
+      "target_type": "zzs_vers_eben_0"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1867,
+      "operation": "SELECT",
+      "tables": [
+        "VBAK",
+        "VBAP",
+        "VBEP"
+      ],
+      "fields": [
+        "KUNNR",
+        "NETWR",
+        "VBELN",
+        "VKORG",
+        "VSBED",
+        "VTWEG",
+        "WAERK",
+        "ZBVS",
+        "ZZANLCUSTDATE",
+        "ZZFERT",
+        "ZZPLDELDATE",
+        "ZZ_PROJNR",
+        "ARKTX",
+        "KWMENG",
+        "MATNR",
+        "MEINS",
+        "POSNR",
+        "PRODH",
+        "PSTYV",
+        "VBELN",
+        "VSTEL",
+        "ETENR",
+        "LDDAT"
+      ],
+      "target": "gt_data",
+      "target_type": "zzs_vers_eben_0"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1899,
+      "operation": "SELECT",
+      "tables": [
+        "MVKE"
+      ],
+      "fields": [
+        "PRAT1",
+        "PRAT2",
+        "PRAT3",
+        "PRAT6",
+        "PRAT7",
+        "PRAT8"
+      ],
+      "target": "ls_mvke",
+      "target_type": "gys_mvke"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1908,
+      "operation": "SELECT",
+      "tables": [
+        "MARC"
+      ],
+      "fields": [
+        "STAWN"
+      ],
+      "target": "lv_stawn",
+      "target_type": "marc-stawn"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1925,
+      "operation": "SELECT",
+      "tables": [
+        "VBPA"
+      ],
+      "fields": [
+        "KUNNR",
+        "PARVW",
+        "POSNR"
+      ],
+      "target": "lt_vbpa",
+      "target_type": "vbpa"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1933,
+      "operation": "SELECT",
+      "tables": [
+        "VBKD"
+      ],
+      "fields": [
+        "INCO1",
+        "INCO2",
+        "POSNR",
+        "VBELN"
+      ],
+      "target": "lt_vbkd",
+      "target_type": "vbkd"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1951,
+      "operation": "SELECT",
+      "tables": [
+        "ZCP_PROJ"
+      ],
+      "fields": [
+        "UNAME"
+      ],
+      "target": "ls_zcp_proj-uname",
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 1989,
+      "operation": "SELECT",
+      "tables": [
+        "KNA1"
+      ],
+      "fields": [],
+      "target": "lt_kna1",
+      "target_type": "kna1"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2033,
+      "operation": "SELECT",
+      "tables": [
+        "T179T"
+      ],
+      "fields": [
+        "VTEXT"
+      ],
+      "target": "ls_t179t-vtext",
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2089,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_VERS_TRUCK"
+      ],
+      "fields": [],
+      "target": "gt_lkw",
+      "target_type": "gyt_lkw"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2094,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_VERS_LOAD"
+      ],
+      "fields": [],
+      "target": "me",
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2106,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_VERS_TRSC"
+      ],
+      "fields": [
+        "VSBED"
+      ],
+      "target": "ls_load-vsbed",
+      "target_type": null
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2136,
+      "operation": "SELECT",
+      "tables": [
+        "MARA"
+      ],
+      "fields": [
+        "BREIT",
+        "BRGEW",
+        "GEWEI",
+        "HOEHE",
+        "LAENG",
+        "MATNR",
+        "MEABM",
+        "NTGEW",
+        "VOLEH",
+        "VOLUM"
+      ],
+      "target": "gt_matnr",
+      "target_type": "gys_matnr"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2250,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_VERS_PACK"
+      ],
+      "fields": [],
+      "target": "lt_packed_data",
+      "target_type": "zsd_vers_pack"
+    },
+    {
+      "file": "src/zcl_vers_data.clas.abap",
+      "line": 2490,
+      "operation": "SELECT",
+      "tables": [
+        "TVSTT"
+      ],
+      "fields": [
+        "VSTEL",
+        "VTEXT"
+      ],
+      "target": "gt_tvstt",
+      "target_type": "gyt_tvstt"
+    },
+    {
+      "file": "src/zcl_vers_packpos_list.clas.abap",
+      "line": 175,
+      "operation": "MODIFY",
+      "tables": [
+        "GT_FIELDCAT_LVC"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 27,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [
+        "VBELN"
+      ],
+      "target": "wa_vbeln",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 71,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [
+        "BDMAN",
+        "LGPBE"
+      ],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 81,
+      "operation": "SELECT",
+      "tables": [
+        "ZPP_DEMO_HEAD"
+      ],
+      "fields": [
+        "BDMAN"
+      ],
+      "target": "lr_list",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 87,
+      "operation": "SELECT",
+      "tables": [
+        "ZHKV_PSSD_HAWA"
+      ],
+      "fields": [
+        "PSSD_MTART"
+      ],
+      "target": "lv_pssd_mtart",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 134,
+      "operation": "SELECT",
+      "tables": [
+        "ZPP_DEMO_POS"
+      ],
+      "fields": [],
+      "target": "ls_demo_pos",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 163,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [
+        "LGPBE"
+      ],
+      "target": "lr_list",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 189,
+      "operation": "SELECT",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [],
+      "target": "ls_bdm",
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 196,
+      "operation": "INSERT",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    },
+    {
+      "file": "src/zsd_shp_we_mig.prog.abap",
+      "line": 199,
+      "operation": "DELETE",
+      "tables": [
+        "ZSD_SHP_BDM"
+      ],
+      "fields": [],
+      "target": null,
+      "target_type": null
+    }
+  ],
+  "tables": [
+    {
+      "name": "GT_FIELDCAT_LVC",
+      "operations": [
+        "MODIFY"
+      ],
+      "fields": []
+    },
+    {
+      "name": "KNA1",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": []
+    },
+    {
+      "name": "LIKP",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": []
+    },
+    {
+      "name": "LIPS",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": []
+    },
+    {
+      "name": "MARA",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "BREIT",
+        "BRGEW",
+        "GEWEI",
+        "HOEHE",
+        "LAENG",
+        "MATNR",
+        "MEABM",
+        "NTGEW",
+        "VOLEH",
+        "VOLUM"
+      ]
+    },
+    {
+      "name": "MARC",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "STAWN"
+      ]
+    },
+    {
+      "name": "MVKE",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "PRAT1",
+        "PRAT2",
+        "PRAT3",
+        "PRAT6",
+        "PRAT7",
+        "PRAT8"
+      ]
+    },
+    {
+      "name": "T179T",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "VTEXT"
+      ]
+    },
+    {
+      "name": "TVSTT",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "VSTEL",
+        "VTEXT"
+      ]
+    },
+    {
+      "name": "VBAK",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "KUNNR",
+        "NETWR",
+        "VBELN",
+        "VKORG",
+        "VSBED",
+        "VTWEG",
+        "WAERK",
+        "ZBVS",
+        "ZZANLCUSTDATE",
+        "ZZFERT",
+        "ZZPLDELDATE",
+        "ZZ_PROJNR"
+      ]
+    },
+    {
+      "name": "VBAP",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "ARKTX",
+        "KWMENG",
+        "LGORT",
+        "MATNR",
+        "MEINS",
+        "POSNR",
+        "PRODH",
+        "PSTYV",
+        "UEPOS",
+        "VBELN",
+        "VSTEL",
+        "WERKS"
+      ]
+    },
+    {
+      "name": "VBEP",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "ETENR",
+        "LDDAT"
+      ]
+    },
+    {
+      "name": "VBKD",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "INCO1",
+        "INCO2",
+        "POSNR",
+        "VBELN"
+      ]
+    },
+    {
+      "name": "VBPA",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "KUNNR",
+        "PARVW",
+        "POSNR"
+      ]
+    },
+    {
+      "name": "ZCP_PROJ",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "UNAME"
+      ]
+    },
+    {
+      "name": "ZHKV_PSSD_HAWA",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "PSSD_MTART"
+      ]
+    },
+    {
+      "name": "ZPP_DEMO_HEAD",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "BDMAN"
+      ]
+    },
+    {
+      "name": "ZPP_DEMO_POS",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": []
+    },
+    {
+      "name": "ZSD_SHP_BDM",
+      "operations": [
+        "DELETE",
+        "INSERT",
+        "SELECT"
+      ],
+      "fields": [
+        "BDMAN",
+        "LGPBE",
+        "VBELN"
+      ]
+    },
+    {
+      "name": "ZSD_VERS_LOAD",
+      "operations": [
+        "DELETE",
+        "INSERT",
+        "SELECT",
+        "UPDATE"
+      ],
+      "fields": []
+    },
+    {
+      "name": "ZSD_VERS_PACK",
+      "operations": [
+        "DELETE",
+        "INSERT",
+        "SELECT",
+        "UPDATE"
+      ],
+      "fields": []
+    },
+    {
+      "name": "ZSD_VERS_TRSC",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": [
+        "VSBED"
+      ]
+    },
+    {
+      "name": "ZSD_VERS_TRUCK",
+      "operations": [
+        "SELECT"
+      ],
+      "fields": []
+    }
+  ],
+  "relationships": [
+    {
+      "left_table": "VBAP",
+      "right_table": "VBAK",
+      "fields": [
+        {
+          "left": "VBELN",
+          "right": "VBELN",
+          "sources": [
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1839
+            },
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1867
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "left_table": "VBEP",
+      "right_table": "VBAP",
+      "fields": [
+        {
+          "left": "POSNR",
+          "right": "POSNR",
+          "sources": [
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1839
+            },
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1867
+            }
+          ]
+        },
+        {
+          "left": "VBELN",
+          "right": "VBELN",
+          "sources": [
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1839
+            },
+            {
+              "source": "sql_equality",
+              "file": "src/zcl_vers_data.clas.abap",
+              "line": 1867
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "left_table": "ZSD_VERS_TRSC",
+      "right_table": "TVSB",
+      "fields": [
+        {
+          "left": "VSBED",
+          "right": "VSBED",
+          "sources": [
+            {
+              "source": "ddic_foreign_key",
+              "file": "src/zsd_vers_trsc.tabl.xml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "left_table": "ZSD_VERS_TRSC",
+      "right_table": "ZSD_VERS_TRUCK",
+      "fields": [
+        {
+          "left": "LKWTYP",
+          "right": "LKWTYP",
+          "sources": [
+            {
+              "source": "ddic_foreign_key",
+              "file": "src/zsd_vers_trsc.tabl.xml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "left_table": "ZSD_VERS_TRUCK",
+      "right_table": "ZSD_VERS_TRBG",
+      "fields": [
+        {
+          "left": "LKWBG",
+          "right": "LKWBG",
+          "sources": [
+            {
+              "source": "ddic_foreign_key",
+              "file": "src/zsd_vers_truck.tabl.xml"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "left_table": "ZVL_SCHIFF",
+      "right_table": "VBUK",
+      "fields": [
+        {
+          "left": "FAKTURA",
+          "right": "VBELN",
+          "sources": [
+            {
+              "source": "ddic_foreign_key",
+              "file": "src/zvl_schiff.tabl.xml"
+            }
+          ]
+        },
+        {
+          "left": "LIEFERUNG",
+          "right": "VBELN",
+          "sources": [
+            {
+              "source": "ddic_foreign_key",
+              "file": "src/zvl_schiff.tabl.xml"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "structures": [
+    {
+      "name": "gys_matnr",
+      "fields": [
+        {
+          "name": "matnr",
+          "type": "matnr"
+        },
+        {
+          "name": "laeng",
+          "type": "mara-laeng"
+        },
+        {
+          "name": "breit",
+          "type": "mara-breit"
+        },
+        {
+          "name": "hoehe",
+          "type": "mara-hoehe"
+        },
+        {
+          "name": "meabm",
+          "type": "mara-meabm"
+        },
+        {
+          "name": "brgew",
+          "type": "mara-brgew"
+        },
+        {
+          "name": "ntgew",
+          "type": "mara-ntgew"
+        },
+        {
+          "name": "gewei",
+          "type": "mara-gewei"
+        },
+        {
+          "name": "volum",
+          "type": "mara-volum"
+        },
+        {
+          "name": "voleh",
+          "type": "mara-voleh"
+        }
+      ]
+    },
+    {
+      "name": "gys_mvke",
+      "fields": [
+        {
+          "name": "prat1",
+          "type": "mvke-prat1"
+        },
+        {
+          "name": "prat2",
+          "type": "mvke-prat2"
+        },
+        {
+          "name": "prat3",
+          "type": "mvke-prat3"
+        },
+        {
+          "name": "prat6",
+          "type": "mvke-prat6"
+        },
+        {
+          "name": "prat7",
+          "type": "mvke-prat7"
+        },
+        {
+          "name": "prat8",
+          "type": "mvke-prat8"
+        }
+      ]
+    },
+    {
+      "name": "gys_mvke",
+      "fields": [
+        {
+          "name": "prat1",
+          "type": "mvke-prat1"
+        },
+        {
+          "name": "prat2",
+          "type": "mvke-prat2"
+        },
+        {
+          "name": "prat3",
+          "type": "mvke-prat3"
+        },
+        {
+          "name": "prat6",
+          "type": "mvke-prat6"
+        },
+        {
+          "name": "prat7",
+          "type": "mvke-prat7"
+        },
+        {
+          "name": "prat8",
+          "type": "mvke-prat8"
+        }
+      ]
+    },
+    {
+      "name": "lys_kunnr",
+      "fields": [
+        {
+          "name": "kunnr",
+          "type": "kunnr"
+        }
+      ]
+    },
+    {
+      "name": "t_packm_node_info",
+      "fields": [
+        {
+          "name": "packm_line",
+          "type": "zzs_vers_eben_3"
+        },
+        {
+          "name": "l_node_text",
+          "type": "lvc_value"
+        },
+        {
+          "name": "l_node_key",
+          "type": "lvc_nkey"
+        }
+      ]
+    },
+    {
+      "name": "t_packp_node_info",
+      "fields": [
+        {
+          "name": "packp_line",
+          "type": "zzs_vers_eben_2"
+        },
+        {
+          "name": "l_node_text",
+          "type": "lvc_value"
+        },
+        {
+          "name": "l_node_key",
+          "type": "lvc_nkey"
+        }
+      ]
+    },
+    {
+      "name": "ts_list",
+      "fields": [
+        {
+          "name": "demo_pos",
+          "type": "zpp_demo_posnr"
+        },
+        {
+          "name": "ps_psp_pnr",
+          "type": "ps_posnr"
+        },
+        {
+          "name": "wbs_el_t",
+          "type": "psb_posnr_tt"
+        },
+        {
+          "name": "rowcolor",
+          "type": "char4"
+        },
+        {
+          "name": "cellcolor",
+          "type": "lvc_t_scol"
+        },
+        {
+          "name": "cellstyle",
+          "type": "lvc_t_styl"
+        }
+      ]
+    },
+    {
+      "name": "ty_t016t",
+      "fields": [
+        {
+          "name": "brsch",
+          "type": "brsch"
+        },
+        {
+          "name": "brtxt",
+          "type": "text1_016t"
+        },
+        {
+          "name": "spras",
+          "type": "spras"
+        }
+      ]
+    }
+  ]
+}

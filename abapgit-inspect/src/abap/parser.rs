@@ -1,5 +1,7 @@
 //! Parser: Statements, Blöcke, Klassen, Routinen.
 
+use tracing::trace;
+
 use super::lexer::{tokenize, Kind, Token};
 
 #[derive(Debug, Clone)]
@@ -11,7 +13,10 @@ pub struct Statement {
 impl Statement {
     /// Erstes Wort in Großbuchstaben (z.B. `METHODS`, `CLASS-DATA`).
     pub fn keyword(&self) -> String {
-        self.tokens.first().map(|t| t.text.to_uppercase()).unwrap_or_default()
+        self.tokens
+            .first()
+            .map(|t| t.text.to_uppercase())
+            .unwrap_or_default()
     }
 
     pub fn has(&self, kw: &str) -> bool {
@@ -19,7 +24,11 @@ impl Statement {
     }
 
     pub fn text(&self) -> String {
-        self.tokens.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(" ")
+        self.tokens
+            .iter()
+            .map(|t| t.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Namen nach `->` bzw. `=>` (Methodenaufrufe, Attributzugriffe), kleingeschrieben.
@@ -42,7 +51,10 @@ pub struct ParseError {
 pub enum Item {
     Statement(Statement),
     /// Block wie IF/ENDIF, LOOP/ENDLOOP; Zwischenschlüsselwörter (ELSE, WHEN, CATCH) bleiben Statements im Body.
-    Block { head: Statement, body: Vec<Item> },
+    Block {
+        head: Statement,
+        body: Vec<Item>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,10 +122,18 @@ pub struct ClassDef {
 pub enum TopItem {
     Statement(Statement),
     /// Block auf Programmebene (z.B. SELECT ... ENDSELECT)
-    Block { head: Statement, body: Vec<Item> },
+    Block {
+        head: Statement,
+        body: Vec<Item>,
+    },
     Class(ClassDef),
     /// FORM, FUNCTION, MODULE oder Ereignisblock (START-OF-SELECTION usw.)
-    Routine { kind: String, name: String, head: Statement, body: Vec<Item> },
+    Routine {
+        kind: String,
+        name: String,
+        head: Statement,
+        body: Vec<Item>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -134,12 +154,18 @@ impl Cursor {
     }
 
     fn error(&mut self, line: usize, msg: impl Into<String>) {
-        self.errors.push(ParseError { line, message: msg.into() });
+        self.errors.push(ParseError {
+            line,
+            message: msg.into(),
+        });
     }
 }
 
 fn name_at(s: &Statement, idx: usize) -> String {
-    s.tokens.get(idx).map(|t| t.text.clone()).unwrap_or_default()
+    s.tokens
+        .get(idx)
+        .map(|t| t.text.clone())
+        .unwrap_or_default()
 }
 
 /// END-Schlüsselwort, das einen Block schließt (ENDIF, ENDMETHOD, ...). END-OF-SELECTION zählt nicht.
@@ -161,7 +187,11 @@ fn is_event(s: &Statement) -> bool {
 }
 
 fn is_top_starter(s: &Statement) -> bool {
-    is_event(s) || matches!(s.keyword().as_str(), "CLASS" | "INTERFACE" | "FORM" | "FUNCTION" | "MODULE")
+    is_event(s)
+        || matches!(
+            s.keyword().as_str(),
+            "CLASS" | "INTERFACE" | "FORM" | "FUNCTION" | "MODULE"
+        )
 }
 
 fn never(_: &Statement) -> bool {
@@ -178,7 +208,11 @@ fn block_closer(s: &Statement) -> Option<&'static str> {
         "CASE" => Some("ENDCASE"),
         "TRY" => Some("ENDTRY"),
         "SELECT" if !s.has("SINGLE") && !s.has("TABLE") => Some("ENDSELECT"),
-        "AT" if matches!(name_at(s, 1).to_uppercase().as_str(), "NEW" | "END" | "FIRST" | "LAST") => {
+        "AT" if matches!(
+            name_at(s, 1).to_uppercase().as_str(),
+            "NEW" | "END" | "FIRST" | "LAST"
+        ) =>
+        {
             Some("ENDAT")
         }
         "ON" if name_at(s, 1).eq_ignore_ascii_case("CHANGE") => Some("ENDON"),
@@ -266,7 +300,10 @@ fn take_closer(c: &mut Cursor, closer: &str) {
     match c.peek().cloned() {
         Some(e) if e.keyword() == closer => c.pos += 1,
         Some(e) if is_end(&e) => {
-            c.error(e.line, format!("{closer} erwartet, {} gefunden", e.keyword()));
+            c.error(
+                e.line,
+                format!("{closer} erwartet, {} gefunden", e.keyword()),
+            );
             c.pos += 1;
         }
         Some(e) => c.error(e.line, format!("{closer} fehlt")),
@@ -289,13 +326,22 @@ fn parse_routine(
     if let Some(cl) = closer {
         take_closer(c, cl);
     }
-    TopItem::Routine { kind, name, head, body }
+    TopItem::Routine {
+        kind,
+        name,
+        head,
+        body,
+    }
 }
 
 fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
     let name = name_at(&head, 1);
     let line = head.line;
-    let end_kw = if kind == ClassKind::Interface { "ENDINTERFACE" } else { "ENDCLASS" };
+    let end_kw = if kind == ClassKind::Interface {
+        "ENDINTERFACE"
+    } else {
+        "ENDCLASS"
+    };
     let mut def = ClassDef {
         name,
         kind,
@@ -338,7 +384,11 @@ fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
                 let mname = name_at(&s, 1);
                 let body = parse_items(c, &never);
                 take_closer(c, "ENDMETHOD");
-                def.methods.push(Method { name: mname, head: s, body });
+                def.methods.push(Method {
+                    name: mname,
+                    head: s,
+                    body,
+                });
             } else {
                 def.other.push(Item::Statement(s));
             }
@@ -346,7 +396,11 @@ fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
         }
 
         let mkind = classify_member(&s);
-        def.members.push(Member { visibility: vis, kind: mkind, statement: s });
+        def.members.push(Member {
+            visibility: vis,
+            kind: mkind,
+            statement: s,
+        });
     }
     def
 }
@@ -384,7 +438,11 @@ fn parse_sig(s: &Statement) -> MethodSig {
             last.1.push_str(&t.text);
         }
     }
-    MethodSig { name, is_class, sections }
+    MethodSig {
+        name,
+        is_class,
+        sections,
+    }
 }
 
 /// Parst ABAP-Quelltext in eine Struktur aus Klassen, Routinen und Statements.
@@ -394,6 +452,9 @@ pub fn parse(src: &str) -> Program {
         pos: 0,
         errors: Vec::new(),
     };
+    for s in c.stmts.iter() {
+        trace!("{:?}", s);
+    }
     let mut items = Vec::new();
 
     while let Some(s) = c.peek().cloned() {
@@ -413,7 +474,9 @@ pub fn parse(src: &str) -> Program {
             "CLASS" if s.has("DEFINITION") && !deferred => {
                 TopItem::Class(parse_class(&mut c, s, ClassKind::Definition))
             }
-            "INTERFACE" if !deferred => TopItem::Class(parse_class(&mut c, s, ClassKind::Interface)),
+            "INTERFACE" if !deferred => {
+                TopItem::Class(parse_class(&mut c, s, ClassKind::Interface))
+            }
             "FORM" => parse_routine(&mut c, s, Some("ENDFORM"), &never),
             "FUNCTION" => parse_routine(&mut c, s, Some("ENDFUNCTION"), &never),
             "MODULE" if s.has("OUTPUT") || s.has("INPUT") => {
@@ -432,5 +495,8 @@ pub fn parse(src: &str) -> Program {
         items.push(item);
     }
 
-    Program { items, errors: c.errors }
+    Program {
+        items,
+        errors: c.errors,
+    }
 }

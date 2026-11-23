@@ -5,6 +5,7 @@
 //!   abapgit-inspect <datei.zip> --files         alle Dateien im ZIP mit Groesse
 //!   abapgit-inspect <datei.zip> --type CLAS     nur Objekte eines Typs
 //!   abapgit-inspect <datei.zip> --show <pfad>   Inhalt einer Datei ausgeben
+//!   abapgit-inspect <datei.zip> --model         Modell und Abhängigkeiten als JSON ausgeben
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -56,6 +57,10 @@ struct Options {
     #[arg(long)]
     objects: bool,
 
+    /// ABAP-, SQL-/DDIC-Modell und Abhängigkeiten aus dem ZIP als JSON ausgeben
+    #[arg(long)]
+    model: bool,
+
     /// Interaktive Oberflaeche: Objektliste mit Filter und Quelltext
     #[arg(long)]
     tui: bool,
@@ -68,6 +73,20 @@ fn read_abap_files(archive: &mut ZipArchive<File>) -> Vec<(String, String)> {
         .map(|n| {
             let src = read_entry(archive, &n);
             (n, src)
+        })
+        .collect()
+}
+
+fn read_table_metadata(archive: &mut ZipArchive<File>) -> Vec<(String, String)> {
+    let names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+        .filter(|n| n.to_ascii_lowercase().ends_with(".tabl.xml"))
+        .collect();
+    names
+        .into_iter()
+        .map(|name| {
+            let xml = read_entry(archive, &name);
+            (name, xml)
         })
         .collect()
 }
@@ -152,6 +171,33 @@ fn main() {
             objs.retain(|o| &o.obj_type == t);
         }
         print!("{}", abapgit_inspect::objects::render(&objs));
+        return;
+    }
+
+    if opts.model {
+        let files = read_abap_files(&mut archive);
+        let table_metadata = read_table_metadata(&mut archive);
+        let inventory: Vec<String> = (0..archive.len())
+            .filter_map(|i| {
+                archive
+                    .by_index(i)
+                    .ok()
+                    .filter(|entry| !entry.is_dir())
+                    .map(|entry| entry.name().to_string())
+            })
+            .collect();
+        let model = abapgit_inspect::model::analyze_with_ddic_and_inventory(
+            &files,
+            &table_metadata,
+            &inventory,
+        );
+        match abapgit_inspect::model::render_json(&model) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                process::exit(1);
+            }
+        }
         return;
     }
 
