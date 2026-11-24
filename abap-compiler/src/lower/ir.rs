@@ -15,6 +15,14 @@ pub enum Ty {
     Struct(usize),
     /// Objektreferenz (`TYPE REF TO`), Index in `Ir::classes`
     Ref(usize),
+    /// Externer SAP-/DDIC-Typ, Index in `Ir::external_types`
+    External(usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopFilter {
+    pub component: String,
+    pub value: Expr,
 }
 
 /// Typ der Zeilen einer internen Tabelle.
@@ -24,6 +32,7 @@ pub enum Elem {
     Char(usize),
     Str,
     Struct(usize),
+    External(usize),
 }
 
 impl Elem {
@@ -33,6 +42,7 @@ impl Elem {
             Elem::Char(n) => Ty::Char(n),
             Elem::Str => Ty::Str,
             Elem::Struct(i) => Ty::Struct(i),
+            Elem::External(i) => Ty::External(i),
         }
     }
 }
@@ -64,6 +74,18 @@ pub enum Target {
 pub enum Stmt {
     Data { name: String, ty: Ty, line: usize },
     Assign { target: Target, value: Expr, line: usize },
+    AssignComponent {
+        component: String,
+        structure: String,
+        target: String,
+        line: usize,
+    },
+    ReadTable {
+        table: String,
+        target: String,
+        index: Expr,
+        line: usize,
+    },
     Clear { target: Target, line: usize },
     /// WRITE [/] [wert]. `newline`: `/` vor dem Wert beendet die aktuelle Zeile.
     Write { newline: bool, value: Option<Expr>, line: usize },
@@ -74,18 +96,43 @@ pub enum Stmt {
     While { cond: Cond, body: Vec<Stmt>, line: usize },
     FieldSymbol { name: String, ty: Ty, line: usize },
     Append { table: String, value: Expr, line: usize },
-    Loop { table: String, target: LoopTarget, body: Vec<Stmt>, line: usize },
+    Loop {
+        table: String,
+        target: LoopTarget,
+        filter: Option<LoopFilter>,
+        body: Vec<Stmt>,
+        line: usize,
+    },
     Describe { table: String, target: String, line: usize },
     Exit { line: usize },
+    Continue { line: usize },
     Check { cond: Cond, line: usize },
+    Assert { cond: Cond, line: usize },
     Perform { name: String, args: Vec<Arg>, line: usize },
     /// RETURN: Ende der aktuellen FORM oder Methode
     Return { line: usize },
-    /// CREATE OBJECT name
-    Create { name: String, line: usize },
+    /// CREATE OBJECT name [EXPORTING ...]
+    Create { name: String, args: Vec<NamedArg>, line: usize },
     /// obj->methode( args ). Empfänger `me` ist erlaubt.
     /// Methodenaufruf; `receiving` ist das RECEIVING-Ziel bei CALL METHOD
     MethodCall { recv: String, method: String, args: Vec<NamedArg>, receiving: Option<Target>, line: usize },
+    ExternalFunctionCall { name: String, line: usize },
+    ExternalOperation { name: String, line: usize },
+    Raise { exception: String, line: usize },
+    Try {
+        body: Vec<Stmt>,
+        catches: Vec<CatchClause>,
+        cleanup: Vec<Stmt>,
+        line: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatchClause {
+    pub class: String,
+    pub target: Option<String>,
+    pub body: Vec<Stmt>,
+    pub line: usize,
 }
 
 /// Methode einer Klasse mit übersetzter Implementierung.
@@ -98,6 +145,7 @@ pub struct RetParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassMethod {
     pub name: String,
+    pub is_static: bool,
     pub params: Vec<Param>,
     /// RETURNING-Parameter, falls vorhanden
     pub ret: Option<RetParam>,
@@ -110,7 +158,24 @@ pub struct ClassMethod {
 pub struct ClassDef {
     pub name: String,
     pub struct_idx: usize,
+    pub parent: Option<ClassParent>,
+    pub interfaces: Vec<InterfaceRef>,
+    pub aliases: Vec<(String, String)>,
+    pub is_abstract: bool,
+    pub static_fields: Vec<(String, Ty)>,
     pub methods: Vec<ClassMethod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterfaceRef {
+    Internal(String),
+    External(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassParent {
+    Internal(usize),
+    External(String),
 }
 
 /// Formalparameter einer FORM. Übergabe immer per Referenz.
@@ -141,4 +206,6 @@ pub struct Ir {
     pub forms: Vec<Form>,
     pub structs: Vec<StructDef>,
     pub classes: Vec<ClassDef>,
+    pub constants: HashMap<String, Expr>,
+    pub external_types: Vec<String>,
 }

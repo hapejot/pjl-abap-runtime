@@ -168,6 +168,18 @@ fn name_at(s: &Statement, idx: usize) -> String {
         .unwrap_or_default()
 }
 
+fn method_name_at(s: &Statement) -> String {
+    let Some(name) = s.tokens.get(1) else {
+        return String::new();
+    };
+    if s.tokens.get(2).is_some_and(|token| token.is_punct("~")) {
+        if let Some(method) = s.tokens.get(3) {
+            return format!("{}~{}", name.text, method.text);
+        }
+    }
+    name.text.clone()
+}
+
 /// END-Schlüsselwort, das einen Block schließt (ENDIF, ENDMETHOD, ...). END-OF-SELECTION zählt nicht.
 fn is_end(s: &Statement) -> bool {
     let k = s.keyword();
@@ -198,6 +210,26 @@ fn never(_: &Statement) -> bool {
     false
 }
 
+fn is_select_loop(s: &Statement) -> bool {
+    if s.has("SINGLE") || s.has("TABLE") {
+        return false;
+    }
+
+    let has_aggregate = ["AVG", "COUNT", "MAX", "MIN", "SUM"]
+        .iter()
+        .any(|function| {
+            s.tokens
+                .iter()
+                .position(|token| token.is_word(function))
+                .is_some_and(|idx| {
+                    s.tokens
+                        .get(idx + 1)
+                        .is_some_and(|token| token.is_punct("("))
+                })
+        });
+    !(has_aggregate && !s.has("GROUP"))
+}
+
 /// Liefert das Schlussschlüsselwort, falls das Statement einen Block eröffnet.
 fn block_closer(s: &Statement) -> Option<&'static str> {
     match s.keyword().as_str() {
@@ -207,7 +239,7 @@ fn block_closer(s: &Statement) -> Option<&'static str> {
         "WHILE" => Some("ENDWHILE"),
         "CASE" => Some("ENDCASE"),
         "TRY" => Some("ENDTRY"),
-        "SELECT" if !s.has("SINGLE") && !s.has("TABLE") => Some("ENDSELECT"),
+        "SELECT" if is_select_loop(s) => Some("ENDSELECT"),
         "AT" if matches!(
             name_at(s, 1).to_uppercase().as_str(),
             "NEW" | "END" | "FIRST" | "LAST"
@@ -381,7 +413,7 @@ fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
 
         if kind == ClassKind::Implementation {
             if kw == "METHOD" {
-                let mname = name_at(&s, 1);
+                let mname = method_name_at(&s);
                 let body = parse_items(c, &never);
                 take_closer(c, "ENDMETHOD");
                 def.methods.push(Method {
@@ -420,7 +452,7 @@ fn classify_member(s: &Statement) -> MemberKind {
 
 fn parse_sig(s: &Statement) -> MethodSig {
     let is_class = s.keyword().starts_with("CLASS");
-    let name = name_at(s, 1);
+    let name = method_name_at(s);
     let mut sections: Vec<(String, String)> = Vec::new();
     for t in s.tokens.iter().skip(2) {
         let up = t.text.to_uppercase();

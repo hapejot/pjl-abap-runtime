@@ -19,6 +19,9 @@ impl<'ctx> Codegen<'ctx> {
             return self.data_base(name, line);
         };
         let (p, ty) = self.data_base(base, line)?;
+        if matches!(ty, Ty::External(_)) {
+            return Ok((p, ty));
+        }
         let Ty::Struct(i) = ty else {
             return err(line, format!("'{base}' ist keine Struktur, Komponente '{field}' nicht zugreifbar"));
         };
@@ -104,6 +107,9 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn field_of(&self, obj: PointerValue<'ctx>, c: usize, attr: &str, line: usize) -> CResult<(PointerValue<'ctx>, Ty)> {
         let layout = self.layouts[self.classes[c].struct_idx].clone();
         let Some(k) = layout.fields.iter().position(|(n, _)| n == attr) else {
+            if self.classes[c].external_parent.is_some() {
+                return Ok((obj, Ty::External(0)));
+            }
             return err(line, format!("Attribut '{attr}' unbekannt"));
         };
         let fp = llvm(self.builder.build_struct_gep(layout.st, obj, k as u32, "attr"))?;
@@ -155,6 +161,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Table(_) => err(line, "Tabelle kann nicht direkt zugewiesen werden"),
             Ty::Struct(i) => Ok(Dest::Mem(p, i)),
             Ty::Ref(c) => Ok(Dest::Ref(p, c)),
+            Ty::External(_) => Ok(Dest::Str(p)),
         }
     }
 
@@ -165,14 +172,19 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// Liest einen Wert aus einem Speicherplatz des angegebenen Typs.
-    pub(super) fn load_val(&self, p: PointerValue<'ctx>, ty: Ty, line: usize) -> CResult<Val<'ctx>> {
+    pub(super) fn load_val(&self, p: PointerValue<'ctx>, ty: Ty, _line: usize) -> CResult<Val<'ctx>> {
         match ty {
             Ty::Int => Ok(Val::Int(llvm(self.builder.build_load(self.i32t, p, "ld"))?.into_int_value())),
             Ty::Char(n) => Ok(Val::Chars(p, n)),
             Ty::Str => Ok(Val::Str(llvm(self.builder.build_load(self.ptrt, p, "lds"))?.into_pointer_value())),
-            Ty::Table(_) => err(line, "Tabelle kann nicht als Wert verwendet werden"),
+            Ty::Table(_) => Ok(Val::Table(
+                llvm(self.builder.build_load(self.ptrt, p, "table"))?.into_pointer_value(),
+            )),
             Ty::Struct(i) => Ok(Val::Mem(p, i)),
             Ty::Ref(c) => Ok(Val::Ref(llvm(self.builder.build_load(self.ptrt, p, "ref"))?.into_pointer_value(), c)),
+            Ty::External(_) => Ok(Val::Str(
+                llvm(self.builder.build_load(self.ptrt, p, "external"))?.into_pointer_value(),
+            )),
         }
     }
 

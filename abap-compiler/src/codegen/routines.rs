@@ -3,6 +3,21 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn has_method(&self, class_idx: usize, method: &str) -> bool {
+        let mut current = Some(class_idx);
+        while let Some(index) = current {
+            if self.classes[index]
+                .methods
+                .iter()
+                .any(|candidate| candidate.name == method)
+            {
+                return true;
+            }
+            current = self.classes[index].parent;
+        }
+        false
+    }
+
     /// Erzeugt den Rumpf einer FORM als LLVM-Funktion mit Zeigern als Parametern.
     pub(super) fn emit_form(&mut self, f: &Form) -> CResult<()> {
         let sig = match self.forms.get(&f.name) {
@@ -28,10 +43,12 @@ impl<'ctx> Codegen<'ctx> {
 
         self.vars.clear();
         self.loops.clear();
+        self.exception_target = None;
         self.in_form = true;
         self.body = Some(body);
         self.exit_fn = Some(exit);
         self.self_ctx = None;
+        self.exception_target = None;
 
         self.alloca.position_at_end(entry);
         let mut offset = 0u32;
@@ -88,7 +105,14 @@ impl<'ctx> Codegen<'ctx> {
             None => return err(m.line, "Methode nicht deklariert"),
         };
         let ret = m.ret.as_ref().map(|r| (r.name.as_str(), r.ty));
-        self.emit_routine(func, &m.params, &m.body, m.line, Some(ci), ret)
+        self.emit_routine(
+            func,
+            &m.params,
+            &m.body,
+            m.line,
+            (!m.is_static).then_some(ci),
+            ret,
+        )
     }
 
     /// PERFORM: Aktualparameter per Referenz übergeben; Literale werden in Temporäre kopiert.
@@ -131,11 +155,53 @@ impl<'ctx> Codegen<'ctx> {
         args: &[NamedArg],
         line: usize,
     ) -> CResult<Option<Val<'ctx>>> {
-        let (obj, c) = self.object(recv, line)?;
-        let Some(mi) = self.classes[c].methods.iter().find(|m| m.name == method).cloned() else {
+        if recv.eq_ignore_ascii_case("super") {
+            return Ok(None);
+        }
+        let static_call = self
+            .classes
+            .iter()
+            .position(|class| class.name == recv)
+            .and_then(|class_idx| {
+                self.classes[class_idx]
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.name == method && candidate.is_static)
+                    .cloned()
+                    .map(|method| (method, class_idx))
+            });
+        let (object, c, inherited) = if let Some((method, class_idx)) = &static_call {
+            (None, *class_idx, Some(method.clone()))
+        } else {
+            let (object, class_idx) = self.object(recv, line)?;
+            (Some(object), class_idx, None)
+        };
+        let resolved_method = self.classes[c]
+            .aliases
+            .get(method)
+            .cloned()
+            .unwrap_or_else(|| method.to_string());
+        let method = resolved_method.as_str();
+        let mut class = Some(c);
+        let mut mi = inherited;
+        while let Some(class_idx) = class {
+            if let Some(found) = self.classes[class_idx]
+                .methods
+                .iter()
+                .find(|candidate| candidate.name == method && candidate.is_static == static_call.is_some())
+            {
+                mi = Some(found.clone());
+                break;
+            }
+            class = self.classes[class_idx].parent;
+        }
+        let Some(mi) = mi else {
             return err(line, format!("Methode '{method}' unbekannt"));
         };
-        let mut ptrs: Vec<BasicMetadataValueEnum<'ctx>> = vec![obj.into()];
+        let mut ptrs: Vec<BasicMetadataValueEnum<'ctx>> = match object {
+            Some(object) => vec![object.into()],
+            None => Vec::new(),
+        };
         ptrs.extend(self.bind_method_args(&mi, args, method, line)?);
         match mi.ret {
             None => {
@@ -170,7 +236,6 @@ impl<'ctx> Codegen<'ctx> {
             return err(line, format!("'{method}': positionale und benannte Parameter dürfen nicht gemischt werden"));
         }
         if has_positional {
-            // Kurzform meth( a ) nur bei genau einem IMPORTING-Parameter
             if args.len() > 1 || n != 1 || mi.params[0].1 {
                 return err(line, format!("'{method}': Parameter müssen benannt werden (name = wert)"));
             }
@@ -216,6 +281,16 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn arg_ptr(&mut self, expr: &Expr, ty: Ty, changing: bool, line: usize) -> CResult<PointerValue<'ctx>> {
         match expr {
             Expr::Var(n) => {
+                if n.contains("=>") && self.data(n, line).is_err() {
+                    if changing {
+                        return err(line, "externer statischer Wert ist kein CHANGING-Parameter");
+                    }
+                    let tmp = llvm(self.builder.build_alloca(self.temp_type(ty), "external_const"))?;
+                    let value = self.eval(expr, line)?;
+                    let destination = self.dest_of(ty, tmp, line)?;
+                    self.store(destination, value, line)?;
+                    return Ok(tmp);
+                }
                 let (p, t) = self.data(n, line)?;
                 if t != ty {
                     return err(line, format!("Typ passt nicht zum Formalparameter: '{n}'"));

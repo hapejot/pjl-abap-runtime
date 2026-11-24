@@ -3,3 +3,4 @@
 pub mod ast;
 pub mod codegen;
 pub mod lower;
+pub mod symbols;

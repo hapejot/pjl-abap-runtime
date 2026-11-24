@@ -5,3 +5,4 @@ abapgit-inspect/target
 target
 sample*
 .cargo
+zabapgit_standalone.prog.abap

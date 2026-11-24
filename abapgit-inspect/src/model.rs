@@ -786,6 +786,26 @@ fn local_declarations(statements: &[Statement]) -> BTreeSet<String> {
     names
 }
 
+fn add_declared_inventory(
+    statements: &[Statement],
+    inventory: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    for statement in statements {
+        let (name, object_type) = match statement.keyword().as_str() {
+            "CLASS" => (word(statement, 1), Some("CLAS")),
+            "INTERFACE" => (word(statement, 1), Some("INTF")),
+            "FUNCTION" => (word(statement, 1), Some("FUNC")),
+            _ => (None, None),
+        };
+        if let (Some(name), Some(object_type)) = (name, object_type) {
+            inventory
+                .entry(name.to_lowercase())
+                .or_default()
+                .insert(object_type.to_string());
+        }
+    }
+}
+
 fn literal_or_word(token: &Token) -> Option<String> {
     match token.kind {
         Kind::Word => Some(token.text.to_lowercase()),
@@ -1086,6 +1106,7 @@ fn analyze_with_inventory(files: &[(String, String)], inventory_files: &[String]
         }
     }
     for (file, src) in files {
+        add_declared_inventory(&collect_program(&parse(src)), &mut inventory);
         let key = crate::objects::object_key(file).unwrap_or_else(|| (String::new(), file.clone()));
         groups
             .entry(key)

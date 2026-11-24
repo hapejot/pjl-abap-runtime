@@ -24,6 +24,49 @@ impl<'ctx> Codegen<'ctx> {
                 receiving,
                 line,
             } => self.emit_method_call(recv, method, args, receiving.as_ref(), *line),
+            Stmt::ExternalFunctionCall { name, .. } => {
+                let function = self.lit(name);
+                self.call_void(
+                    self.rt.external_call,
+                    &[function.into(), self.len(name.encode_utf16().count()).into()],
+                )
+            }
+            Stmt::ExternalOperation { name, .. } => {
+                let operation = self.lit(name);
+                self.call_void(
+                    self.rt.external_call,
+                    &[operation.into(), self.len(name.encode_utf16().count()).into()],
+                )
+            }
+            Stmt::Raise { exception, line } => {
+                let (pointer, ty) = self.data(exception, *line)?;
+                let Ty::Ref(class_idx) = ty else {
+                    return err(
+                        *line,
+                        format!("RAISE EXCEPTION erwartet eine Objektreferenz: '{exception}'"),
+                    );
+                };
+                let object = llvm(
+                    self.builder
+                        .build_load(self.ptrt, pointer, "exception_object"),
+                )?
+                .into_pointer_value();
+                self.call_void(
+                    self.rt.exception_raise,
+                    &[object.into(), self.i64t.const_int(class_idx as u64 + 1, false).into()],
+                )?;
+                let Some(target) = self.exception_target.or(self.exit_fn) else {
+                    return err(*line, "RAISE EXCEPTION ohne Rücksprungziel");
+                };
+                llvm(self.builder.build_unconditional_branch(target))?;
+                self.open_dead_block()
+            }
+            Stmt::Try {
+                body,
+                catches,
+                cleanup,
+                line,
+            } => self.emit_try(body, catches, cleanup, *line),
             Stmt::Return { .. } => {
                 let Some(exit) = self.exit_fn else {
                     return err(0, "RETURN ohne Routine");
@@ -31,7 +74,8 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_unconditional_branch(exit))?;
                 self.open_dead_block()
             }
-            Stmt::Create { name, line } => {
+
+            Stmt::Create { name, args, line } => {
                 let (slot, ty) = self.data(name, *line)?;
                 let Ty::Ref(c) = ty else {
                     return err(
@@ -44,6 +88,14 @@ impl<'ctx> Codegen<'ctx> {
                 let obj = self.call_ptr(self.rt.obj_new, &[size.into()])?;
                 self.init_value(&self.builder, obj, Ty::Struct(st))?;
                 llvm(self.builder.build_store(slot, obj))?;
+                if self.has_method(c, "constructor") {
+                    self.emit_method_call(name, "constructor", args, None, *line)?;
+                } else if !args.is_empty() {
+                    return err(
+                        *line,
+                        format!("CREATE OBJECT: Klasse hat keinen Konstruktor für '{name}'"),
+                    );
+                }
                 Ok(())
             }
             Stmt::Assign {
@@ -54,6 +106,92 @@ impl<'ctx> Codegen<'ctx> {
                 let dst = self.dest(target, *line)?;
                 let v = self.eval(value, *line)?;
                 self.store(dst, v, *line)
+            }
+            Stmt::AssignComponent {
+                component,
+                structure,
+                target,
+                line,
+            } => {
+                let (base, ty) = self.data(structure, *line)?;
+                if !matches!(ty, Ty::Struct(_)) {
+                    let target_symbol = self.var(target, *line)?.clone();
+                    if !target_symbol.fs {
+                        return err(*line, format!("ASSIGN-Ziel '{target}' ist kein Feldsymbol"));
+                    }
+                    llvm(self.builder.build_store(
+                        target_symbol.slot,
+                        self.ptrt.const_null(),
+                    ))?;
+                    return Ok(());
+                }
+                let Ty::Struct(index) = ty else {
+                    return err(
+                        *line,
+                        format!("'{structure}' ist keine statisch bekannte Struktur"),
+                    );
+                };
+                let layout = self.layouts[index].clone();
+                let Some(field_index) = layout.fields.iter().position(|(name, _)| name == component)
+                else {
+                    return err(
+                        *line,
+                        format!("Komponente '{component}' unbekannt in '{structure}'"),
+                    );
+                };
+                let target_symbol = self.var(target, *line)?.clone();
+                if !target_symbol.fs {
+                    return err(*line, format!("ASSIGN-Ziel '{target}' ist kein Feldsymbol"));
+                }
+                let field_ty = layout.fields[field_index].1;
+                if target_symbol.ty != field_ty {
+                    return err(
+                        *line,
+                        format!(
+                            "Komponente '{component}' hat einen anderen Typ als Feldsymbol '{target}'"
+                        ),
+                    );
+                }
+                let field = llvm(self.builder.build_struct_gep(
+                    layout.st,
+                    base,
+                    field_index as u32,
+                    "assigned_component",
+                ))?;
+                llvm(self.builder.build_store(target_symbol.slot, field))?;
+                Ok(())
+            }
+            Stmt::ReadTable {
+                table,
+                target,
+                index,
+                line,
+            } => {
+                let (handle, element) = self.table(table, *line)?;
+                let target_symbol = self.var(target, *line)?.clone();
+                if !target_symbol.fs || target_symbol.ty != element.ty() {
+                    return err(
+                        *line,
+                        format!("READ TABLE-Ziel '{target}' hat nicht den Zeilentyp"),
+                    );
+                }
+                let index = self.int_operand(index, *line)?;
+                let zero_based = llvm(self.builder.build_int_sub(
+                    index,
+                    self.i32t.const_int(1, false),
+                    "read_index",
+                ))?;
+                let zero_based = llvm(self.builder.build_int_z_extend(
+                    zero_based,
+                    self.i64t,
+                    "read_index_i64",
+                ))?;
+                let row = self.call_ptr(
+                    self.rt.table_row,
+                    &[handle.into(), zero_based.into()],
+                )?;
+                llvm(self.builder.build_store(target_symbol.slot, row))?;
+                Ok(())
             }
             Stmt::Clear { target, line } => {
                 if let Target::Var(name) = target {
@@ -110,6 +248,9 @@ impl<'ctx> Codegen<'ctx> {
                             "Struktur kann nicht ausgegeben werden (nur Komponenten)",
                         )
                     }
+                    Val::Table(_) => {
+                        return err(*line, "Interne Tabelle kann nicht ausgegeben werden")
+                    }
                     Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
                     Val::Chars(p, n) => {
                         self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
@@ -138,6 +279,13 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_unconditional_branch(lp.exit))?;
                 self.open_dead_block()
             }
+            Stmt::Continue { line } => {
+                let Some(lp) = self.loops.last().copied() else {
+                    return err(*line, "CONTINUE außerhalb einer Schleife");
+                };
+                llvm(self.builder.build_unconditional_branch(lp.next))?;
+                self.open_dead_block()
+            }
             Stmt::Check { cond, line } => {
                 let c = self.cond(cond, *line)?;
                 // Nicht erfüllt: nächster Durchlauf (Schleife) bzw. Programmende (außerhalb)
@@ -148,6 +296,17 @@ impl<'ctx> Codegen<'ctx> {
                 let cont = self.new_block("check_ok")?;
                 llvm(self.builder.build_conditional_branch(c, cont, target))?;
                 self.builder.position_at_end(cont);
+                Ok(())
+            }
+            Stmt::Assert { cond, line } => {
+                let condition = self.cond(cond, *line)?;
+                let success = self.new_block("assert_ok")?;
+                let failure = self.new_block("assert_failed")?;
+                llvm(self.builder.build_conditional_branch(condition, success, failure))?;
+                self.builder.position_at_end(failure);
+                self.call_void(self.rt.unbound, &[])?;
+                llvm(self.builder.build_unreachable())?;
+                self.builder.position_at_end(success);
                 Ok(())
             }
             Stmt::Append { table, value, line } => {
@@ -168,9 +327,10 @@ impl<'ctx> Codegen<'ctx> {
             Stmt::Loop {
                 table,
                 target,
+                filter,
                 body,
                 line,
-            } => self.emit_loop(table, target, body, *line),
+            } => self.emit_loop(table, target, filter.as_ref(), body, *line),
             Stmt::Describe {
                 table,
                 target,
@@ -217,6 +377,7 @@ impl<'ctx> Codegen<'ctx> {
                     line,
                     "Struktur kann nur einer Struktur desselben Typs zugewiesen werden",
                 ),
+                Val::Str(_) | Val::Chars(_, _) => Ok(()),
                 _ => err(line, "Wert kann nicht einer Struktur zugewiesen werden"),
             },
             Dest::Int(p) => match v {
@@ -237,6 +398,10 @@ impl<'ctx> Codegen<'ctx> {
                 Val::Ref(..) => err(
                     line,
                     "Objektreferenz kann keinem Zeichenfeld zugewiesen werden",
+                ),
+                Val::Table(_) => err(
+                    line,
+                    "Tabelle kann keinem Zeichenfeld zugewiesen werden",
                 ),
                 // Zuweisung kürzt bzw. füllt mit Leerzeichen auf
                 Val::Chars(sp, sl) => self.call_void(
@@ -275,6 +440,9 @@ impl<'ctx> Codegen<'ctx> {
                             line,
                             "Objektreferenz kann nicht einem String zugewiesen werden",
                         )
+                    }
+                    Val::Table(_) => {
+                        return err(line, "Tabelle kann nicht einem String zugewiesen werden")
                     }
                 };
                 llvm(self.builder.build_store(slot, h))?;
@@ -433,6 +601,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         table: &str,
         target: &LoopTarget,
+        filter: Option<&LoopFilter>,
         body: &[Stmt],
         line: usize,
     ) -> CResult<()> {
@@ -489,6 +658,34 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_store(v.slot, row))?;
             }
         }
+        if let Some(filter) = filter {
+            let Elem::Struct(structure) = e else {
+                return err(line, "LOOP WHERE benötigt strukturierte Tabellenzeilen");
+            };
+            let layout = self.layouts[structure].clone();
+            let Some(field_index) = layout
+                .fields
+                .iter()
+                .position(|(name, _)| name == &filter.component)
+            else {
+                return err(
+                    line,
+                    format!("LOOP WHERE: Komponente '{}' unbekannt", filter.component),
+                );
+            };
+            let field = llvm(self.builder.build_struct_gep(
+                layout.st,
+                row,
+                field_index as u32,
+                "loop_filter_field",
+            ))?;
+            let actual = self.load_val(field, layout.fields[field_index].1, line)?;
+            let expected = self.eval(&filter.value, line)?;
+            let matches = self.compare(CmpOp::Eq, actual, expected, line)?;
+            let filtered_body = self.new_block("loop_filter_body")?;
+            llvm(self.builder.build_conditional_branch(matches, filtered_body, latch))?;
+            self.builder.position_at_end(filtered_body);
+        }
         self.loops.push(LoopCtx { exit, next: latch });
         self.emit_block(body)?;
         self.loops.pop();
@@ -505,5 +702,128 @@ impl<'ctx> Codegen<'ctx> {
 
         self.builder.position_at_end(exit);
         Ok(())
+    }
+
+    pub(super) fn emit_try(
+        &mut self,
+        body: &[Stmt],
+        catches: &[CatchClause],
+        cleanup: &[Stmt],
+        line: usize,
+    ) -> CResult<()> {
+        let dispatch = self.new_block("exception_dispatch")?;
+        let continuation = self.new_block("try_done")?;
+        let outer_target = self.exception_target;
+        self.exception_target = Some(dispatch);
+
+        for statement in body {
+            self.emit_stmt(statement)?;
+            if self.builder.get_insert_block().is_none() {
+                break;
+            }
+            let next = self.new_block("try_next")?;
+            let pending = self.call_int(self.rt.exception_pending, &[])?;
+            let condition = llvm(self.builder.build_int_compare(
+                IntPredicate::NE,
+                pending,
+                self.i32t.const_zero(),
+                "exception_pending",
+            ))?;
+            llvm(self.builder.build_conditional_branch(condition, dispatch, next))?;
+            self.builder.position_at_end(next);
+        }
+        self.br_if_open(continuation)?;
+        self.builder.position_at_end(dispatch);
+
+        let pending_class = self.call_int(self.rt.exception_class, &[])?;
+        let mut next_test = dispatch;
+        for (catch_index, catch) in catches.iter().enumerate() {
+            let match_block = self.new_block("catch_match")?;
+            let fallback = self.new_block("catch_test_next")?;
+            self.builder.position_at_end(next_test);
+            let ids = self.catch_class_ids(&catch.class);
+            if ids.is_empty() {
+                llvm(self.builder.build_unconditional_branch(fallback))?;
+            } else {
+                let mut matches = self.i32t.const_zero();
+                for id in ids {
+                    let equal = llvm(self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        pending_class,
+                        self.i64t.const_int(id, false),
+                        "catch_class",
+                    ))?;
+                    let extended = llvm(self.builder.build_int_z_extend(
+                        equal,
+                        self.i32t,
+                        "catch_bit",
+                    ))?;
+                    matches = llvm(self.builder.build_or(matches, extended, "catch_any"))?;
+                }
+                let condition = llvm(self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    matches,
+                    self.i32t.const_zero(),
+                    "catch_condition",
+                ))?;
+                llvm(self.builder.build_conditional_branch(condition, match_block, fallback))?;
+            }
+
+            self.builder.position_at_end(match_block);
+            if let Some(target) = &catch.target {
+                let (slot, ty) = self.data(target, catch.line)?;
+                let Ty::Ref(_) = ty else {
+                    return err(
+                        catch.line,
+                        format!("CATCH INTO erwartet Objektreferenz: '{target}'"),
+                    );
+                };
+                let object = self.call_ptr(self.rt.exception_object, &[])?;
+                llvm(self.builder.build_store(slot, object))?;
+            }
+            self.call_void(self.rt.exception_clear, &[])?;
+            self.emit_block(&catch.body)?;
+            self.br_if_open(continuation)?;
+            next_test = fallback;
+            if catch_index + 1 == catches.len() {
+                self.builder.position_at_end(fallback);
+            }
+        }
+
+        if catches.is_empty() {
+            self.builder.position_at_end(dispatch);
+        } else {
+            self.builder.position_at_end(next_test);
+        }
+        self.exception_target = outer_target;
+        self.emit_block(cleanup)?;
+        let target = outer_target.or(self.exit_fn).ok_or_else(|| CompileError {
+            line,
+            message: "Unbehandelte Exception ohne Rücksprungziel".into(),
+        })?;
+        self.br_if_open(target)?;
+        self.builder.position_at_end(continuation);
+        Ok(())
+    }
+
+    fn catch_class_ids(&self, name: &str) -> Vec<u64> {
+        self.classes
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                let mut current = Some(*index);
+                while let Some(class_index) = current {
+                    let candidate = &self.classes[class_index];
+                    if candidate.name == name
+                        || candidate.external_parent.as_deref() == Some(name)
+                    {
+                        return true;
+                    }
+                    current = candidate.parent;
+                }
+                false
+            })
+            .map(|(index, _)| index as u64 + 1)
+            .collect()
     }
 }

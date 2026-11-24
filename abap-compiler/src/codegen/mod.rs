@@ -28,7 +28,7 @@ use inkwell::values::{ArrayValue, BasicMetadataValueEnum, BasicValueEnum, Functi
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::ast::{err, BinOp, CmpOp, CompileError, Cond, Expr, NamedArg};
-use crate::lower::{Arg, Elem, Form, Ir, LoopTarget, Stmt, Target, Ty};
+use crate::lower::{Arg, CatchClause, Elem, Form, Ir, LoopFilter, LoopTarget, Stmt, Target, Ty};
 
 type CResult<T> = Result<T, CompileError>;
 
@@ -48,6 +48,7 @@ struct Layout<'ctx> {
 #[derive(Clone)]
 struct MethodInfo<'ctx> {
     name: String,
+    is_static: bool,
     f: FunctionValue<'ctx>,
     /// Formalparametername je Position
     pnames: Vec<String>,
@@ -59,8 +60,12 @@ struct MethodInfo<'ctx> {
 /// Klasse zur Laufzeit: Attribut-Layout und Methoden.
 #[derive(Clone)]
 struct ClassInfo<'ctx> {
+    name: String,
     struct_idx: usize,
+    parent: Option<usize>,
+    external_parent: Option<String>,
     methods: Vec<MethodInfo<'ctx>>,
+    aliases: HashMap<String, String>,
 }
 
 /// Ausgewerteter Ausdruck.
@@ -68,6 +73,7 @@ struct ClassInfo<'ctx> {
 enum Val<'ctx> {
     /// Objektreferenz: Zeiger auf das Objekt und Klassenindex
     Ref(PointerValue<'ctx>, usize),
+    Table(PointerValue<'ctx>),
     /// Struktur: Zeiger auf den Speicher und Index des Strukturtyps
     Mem(PointerValue<'ctx>, usize),
     Int(IntValue<'ctx>),
@@ -96,6 +102,7 @@ struct FormSig<'ctx> {
     params: Vec<(Ty, bool)>,
 }
 
+#[derive(Clone)]
 struct Var<'ctx> {
     /// Speicherplatz der Variablen; bei Feldsymbolen der Zeiger auf das Ziel
     slot: PointerValue<'ctx>,
@@ -125,6 +132,7 @@ struct Rt<'ctx> {
     str_to_chars: FunctionValue<'ctx>,
     str_concat: FunctionValue<'ctx>,
     str_cmp: FunctionValue<'ctx>,
+    int_to_str: FunctionValue<'ctx>,
     table_new: FunctionValue<'ctx>,
     table_append: FunctionValue<'ctx>,
     table_count: FunctionValue<'ctx>,
@@ -133,6 +141,18 @@ struct Rt<'ctx> {
     fs_unassigned: FunctionValue<'ctx>,
     obj_new: FunctionValue<'ctx>,
     unbound: FunctionValue<'ctx>,
+    exception_raise: FunctionValue<'ctx>,
+    exception_pending: FunctionValue<'ctx>,
+    exception_class: FunctionValue<'ctx>,
+    exception_object: FunctionValue<'ctx>,
+    exception_clear: FunctionValue<'ctx>,
+    external_call: FunctionValue<'ctx>,
+    pattern_match: FunctionValue<'ctx>,
+    str_contains: FunctionValue<'ctx>,
+    str_contains_any: FunctionValue<'ctx>,
+    str_contains_only: FunctionValue<'ctx>,
+    str_length: FunctionValue<'ctx>,
+    str_slice: FunctionValue<'ctx>,
 }
 
 pub struct Codegen<'ctx> {
@@ -154,9 +174,11 @@ pub struct Codegen<'ctx> {
     forms: HashMap<String, FormSig<'ctx>>,
     layouts: Vec<Layout<'ctx>>,
     classes: Vec<ClassInfo<'ctx>>,
+    constants: HashMap<String, Expr>,
     /// Im Methodenrumpf: Speicherplatz des Objektzeigers (`me`) und Klassenindex
     self_ctx: Option<(PointerValue<'ctx>, usize)>,
     loops: Vec<LoopCtx<'ctx>>,
+    exception_target: Option<BasicBlock<'ctx>>,
     /// Ziel von CHECK außerhalb von Schleifen (Ende des Programms)
     exit_fn: Option<BasicBlock<'ctx>>,
     body: Option<BasicBlock<'ctx>>,
@@ -194,6 +216,7 @@ impl<'ctx> Codegen<'ctx> {
             str_to_chars: f("abap_rt_str_to_chars", void.fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false)),
             str_concat: f("abap_rt_str_concat", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
             str_cmp: f("abap_rt_str_cmp", i32t.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            int_to_str: f("abap_rt_int_to_str", ptrt.fn_type(&[i32t.into()], false)),
             table_new: f("abap_rt_table_new", ptrt.fn_type(&[i64t.into()], false)),
             table_append: f("abap_rt_table_append", void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into()], false)),
             table_count: f("abap_rt_table_count", i64t.fn_type(&[ptrt.into()], false)),
@@ -202,6 +225,48 @@ impl<'ctx> Codegen<'ctx> {
             fs_unassigned: f("abap_rt_fs_unassigned", void.fn_type(&[], false)),
             obj_new: f("abap_rt_obj_new", ptrt.fn_type(&[i64t.into()], false)),
             unbound: f("abap_rt_unbound", void.fn_type(&[], false)),
+            exception_raise: f(
+                "abap_rt_exception_raise",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            exception_pending: f(
+                "abap_rt_exception_pending",
+                i32t.fn_type(&[], false),
+            ),
+            exception_class: f(
+                "abap_rt_exception_class",
+                i64t.fn_type(&[], false),
+            ),
+            exception_object: f(
+                "abap_rt_exception_object",
+                ptrt.fn_type(&[], false),
+            ),
+            exception_clear: f("abap_rt_exception_clear", void.fn_type(&[], false)),
+            external_call: f(
+                "abap_rt_external_call",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            pattern_match: f(
+                "abap_rt_pattern_match",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            str_contains: f(
+                "abap_rt_str_contains",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            str_contains_any: f(
+                "abap_rt_str_contains_any",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            str_contains_only: f(
+                "abap_rt_str_contains_only",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            str_length: f("abap_rt_str_length", i64t.fn_type(&[ptrt.into()], false)),
+            str_slice: f(
+                "abap_rt_str_slice",
+                ptrt.fn_type(&[ptrt.into(), i32t.into(), i32t.into()], false),
+            ),
         };
 
         Codegen {
@@ -219,8 +284,10 @@ impl<'ctx> Codegen<'ctx> {
             forms: HashMap::new(),
             layouts: Vec::new(),
             classes: Vec::new(),
+            constants: HashMap::new(),
             self_ctx: None,
             loops: Vec::new(),
+            exception_target: None,
             exit_fn: None,
             body: None,
             rt,
@@ -229,13 +296,18 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Erzeugt `main` mit allen Statements und die FORMs als eigene Funktionen.
     pub fn emit_program(&mut self, ir: &Ir) -> CResult<()> {
+        self.constants = ir.constants.clone();
         self.build_layouts(&ir.structs);
         // Klassen: Methoden als Funktionen deklarieren (Objektzeiger als erster Parameter)
         let void = self.ctx.void_type();
         for c in &ir.classes {
             let mut methods = Vec::new();
             for m in &c.methods {
-                let mut ps: Vec<BasicMetadataTypeEnum<'ctx>> = vec![self.ptrt.into()];
+                let mut ps: Vec<BasicMetadataTypeEnum<'ctx>> = if m.is_static {
+                    Vec::new()
+                } else {
+                    vec![self.ptrt.into()]
+                };
                 ps.extend(m.params.iter().map(|_| BasicMetadataTypeEnum::from(self.ptrt)));
                 if m.ret.is_some() {
                     ps.push(self.ptrt.into());
@@ -247,13 +319,29 @@ impl<'ctx> Codegen<'ctx> {
                 );
                 methods.push(MethodInfo {
                     name: m.name.clone(),
+                    is_static: m.is_static,
                     f,
                     pnames: m.params.iter().map(|p| p.name.clone()).collect(),
                     params: m.params.iter().map(|p| (p.ty, p.changing)).collect(),
                     ret: m.ret.as_ref().map(|r| r.ty),
                 });
             }
-            self.classes.push(ClassInfo { struct_idx: c.struct_idx, methods });
+            let parent = match c.parent {
+                Some(crate::lower::ClassParent::Internal(index)) => Some(index),
+                _ => None,
+            };
+            let external_parent = match &c.parent {
+                Some(crate::lower::ClassParent::External(name)) => Some(name.clone()),
+                _ => None,
+            };
+            self.classes.push(ClassInfo {
+                name: c.name.clone(),
+                struct_idx: c.struct_idx,
+                parent,
+                external_parent,
+                methods,
+                aliases: c.aliases.iter().cloned().collect(),
+            });
         }
         // Formen zuerst deklarieren, damit PERFORM auch vorwärts aufrufen kann
         for f in &ir.forms {
@@ -275,6 +363,21 @@ impl<'ctx> Codegen<'ctx> {
         self.exit_fn = Some(exit);
 
         self.alloca.position_at_end(entry);
+        for class in &ir.classes {
+            for (name, ty) in &class.static_fields {
+                let qualified = format!("{}=>{}", class.name, name);
+                let slot = self.global_slot(&qualified, *ty);
+                self.pending_init.push((slot, *ty));
+                self.globals.insert(
+                    qualified.clone(),
+                    Var {
+                        slot,
+                        ty: *ty,
+                        fs: false,
+                    },
+                );
+            }
+        }
         self.hoist(&ir.stmts)?;
         self.flush_inits()?;
 

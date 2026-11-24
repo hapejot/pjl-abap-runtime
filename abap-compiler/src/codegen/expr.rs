@@ -12,6 +12,167 @@ impl<'ctx> Codegen<'ctx> {
                 let y = self.eval(b, line)?;
                 self.compare(*op, x, y, line)
             }
+            Cond::Initial(value) => {
+                let value = self.eval(value, line)?;
+                self.is_initial(value, line)
+            }
+            Cond::Assigned(value) => self.is_assigned(value, line),
+            Cond::Bound(value) => {
+                let Val::Ref(pointer, _) = self.eval(value, line)? else {
+                    return err(line, "IS BOUND erwartet eine Objektreferenz");
+                };
+                let is_null = llvm(self.builder.build_is_null(pointer, "bound_null"))?;
+                llvm(self.builder.build_not(is_null, "is_bound"))
+            }
+            Cond::Supplied => Ok(self.i32t.const_int(1, false)),
+            Cond::In(_, _) => Ok(self.i32t.const_int(0, false)),
+            Cond::Truthy(value) => match self.eval(value, line)? {
+                Val::Int(value) => llvm(self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    value,
+                    self.i32t.const_zero(),
+                    "truthy_int",
+                )),
+                value => self.is_initial(value, line).and_then(|initial| {
+                    llvm(self.builder.build_not(initial, "truthy_value"))
+                }),
+            },
+            Cond::BitSet(value, mask) => {
+                let value = self.int_operand(value, line)?;
+                let mask = self.int_operand(mask, line)?;
+                let bits = llvm(self.builder.build_and(value, mask, "bit_set"))?;
+                llvm(self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    bits,
+                    self.i32t.const_zero(),
+                    "is_bit_set",
+                ))
+            }
+            Cond::BitClear(value, mask) => {
+                let value = self.int_operand(value, line)?;
+                let mask = self.int_operand(mask, line)?;
+                let bits = llvm(self.builder.build_and(value, mask, "bit_clear"))?;
+                llvm(self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    bits,
+                    self.i32t.const_zero(),
+                    "is_bit_clear",
+                ))
+            }
+            Cond::Between(value, low, high) => {
+                let value = self.eval(value, line)?;
+                let low = self.eval(low, line)?;
+                let high = self.eval(high, line)?;
+                let lower = self.compare(CmpOp::Ge, value, low, line)?;
+                let upper = self.compare(CmpOp::Le, value, high, line)?;
+                llvm(self.builder.build_and(lower, upper, "between"))
+            }
+            Cond::Pattern {
+                value,
+                pattern,
+                negated,
+            } => {
+                let value = self.eval(value, line)?;
+                let value = self.as_handle_trimmed(value, line)?;
+                let pattern = self.eval(pattern, line)?;
+                let pattern = self.as_handle_trimmed(pattern, line)?;
+                let result = self.call_int(
+                    self.rt.pattern_match,
+                    &[value.into(), pattern.into()],
+                )?;
+                if *negated {
+                    llvm(self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        result,
+                        self.i32t.const_zero(),
+                        "np",
+                    ))
+                } else {
+                    llvm(self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        result,
+                        self.i32t.const_zero(),
+                        "cp",
+                    ))
+                }
+            }
+            Cond::Contains {
+                value,
+                needle,
+                negated,
+            } => {
+                let value = self.eval(value, line)?;
+                let value = self.as_handle_trimmed(value, line)?;
+                let needle = self.eval(needle, line)?;
+                let needle = self.as_handle_trimmed(needle, line)?;
+                let result = self.call_int(
+                    self.rt.str_contains,
+                    &[value.into(), needle.into()],
+                )?;
+                if *negated {
+                    llvm(self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        result,
+                        self.i32t.const_zero(),
+                        "ns",
+                    ))
+                } else {
+                    llvm(self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        result,
+                        self.i32t.const_zero(),
+                        "cs",
+                    ))
+                }
+            }
+            Cond::ContainsAny {
+                value,
+                chars,
+                negated,
+            } => {
+                let value = self.eval(value, line)?;
+                let value = self.as_handle_trimmed(value, line)?;
+                let chars = self.eval(chars, line)?;
+                let chars = self.as_handle_trimmed(chars, line)?;
+                let result = self.call_int(
+                    self.rt.str_contains_any,
+                    &[value.into(), chars.into()],
+                )?;
+                llvm(self.builder.build_int_compare(
+                    if *negated {
+                        IntPredicate::EQ
+                    } else {
+                        IntPredicate::NE
+                    },
+                    result,
+                    self.i32t.const_zero(),
+                    if *negated { "na" } else { "ca" },
+                ))
+            }
+            Cond::ContainsOnly {
+                value,
+                chars,
+                negated,
+            } => {
+                let value = self.eval(value, line)?;
+                let value = self.as_handle_trimmed(value, line)?;
+                let chars = self.eval(chars, line)?;
+                let chars = self.as_handle_trimmed(chars, line)?;
+                let result = self.call_int(
+                    self.rt.str_contains_only,
+                    &[value.into(), chars.into()],
+                )?;
+                llvm(self.builder.build_int_compare(
+                    if *negated {
+                        IntPredicate::EQ
+                    } else {
+                        IntPredicate::NE
+                    },
+                    result,
+                    self.i32t.const_zero(),
+                    if *negated { "cn" } else { "co" },
+                ))
+            }
             Cond::And(a, b) => {
                 let x = self.cond(a, line)?;
                 let y = self.cond(b, line)?;
@@ -65,6 +226,7 @@ impl<'ctx> Codegen<'ctx> {
             Val::Int(_) => err(line, format!("Zahl kann nicht {what} werden (nur Text)")),
             Val::Mem(..) => err(line, format!("Struktur kann nicht {what} werden (nur Text)")),
             Val::Ref(..) => err(line, format!("Objektreferenz kann nicht {what} werden (nur Text)")),
+            Val::Table(_) => err(line, format!("Tabelle kann nicht {what} werden (nur Text)")),
         }
     }
 
@@ -95,9 +257,98 @@ impl<'ctx> Codegen<'ctx> {
                     None => err(line, format!("Methode '{method}' liefert keinen Wert (RETURNING fehlt)")),
                 }
             }
+            Expr::StaticCall { class, method, args } => {
+                match self.emit_method_call_val(class, method, args, line)? {
+                    Some(v) => Ok(v),
+                    None => err(line, format!("Methode '{method}' liefert keinen Wert (RETURNING fehlt)")),
+                }
+            }
+            Expr::Lines(table) => {
+                let Expr::Var(name) = table.as_ref() else {
+                    return err(line, "lines() erwartet eine interne Tabelle");
+                };
+                let (handle, _) = self.table(name, line)?;
+                let count = self.call_int(self.rt.table_count, &[handle.into()])?;
+                Ok(Val::Int(llvm(self.builder.build_int_truncate(
+                    count,
+                    self.i32t,
+                    "lines",
+                ))?))
+            }
+            Expr::ExternalCall(_) => Ok(Val::Str(self.ptrt.const_null())),
+            Expr::Bool(condition) => {
+                let value = self.cond(condition, line)?;
+                let true_value = self.call_ptr(
+                    self.rt.str_new,
+                    &[self.lit("X").into(), self.len(1).into()],
+                )?;
+                let false_value = self.empty_on(&self.builder)?;
+                let selected = llvm(self.builder.build_select(
+                    value,
+                    true_value,
+                    false_value,
+                    "boolc",
+                ))?
+                .into_pointer_value();
+                Ok(Val::Str(selected))
+            }
+            Expr::StrLen(value) => {
+                let handle = self.eval(value, line)?;
+                let handle = self.as_handle_trimmed(handle, line)?;
+                let length = self.call_int(self.rt.str_length, &[handle.into()])?;
+                Ok(Val::Int(llvm(self.builder.build_int_truncate(
+                    length,
+                    self.i32t,
+                    "strlen",
+                ))?))
+            }
+            Expr::DynamicSlice { name, off, len } => {
+                let value = self.data(name, line)?;
+                let handle = self.load_val(value.0, value.1, line)?;
+                let handle = self.as_handle_trimmed(handle, line)?;
+                let offset = self.int_operand(off, line)?;
+                let length = self.int_operand(len, line)?;
+                let sliced = self.call_ptr(
+                    self.rt.str_slice,
+                    &[handle.into(), offset.into(), length.into()],
+                )?;
+                Ok(Val::Str(sliced))
+            }
             Expr::Var(name) => {
-                let (p, ty) = self.data(name, line)?;
-                self.load_val(p, ty, line)
+                if let Some(component) = name.strip_prefix("sy-") {
+                    if matches!(
+                        component,
+                        "subrc" | "index" | "tabix" | "fdpos" | "dbcnt" | "dynnr"
+                    ) {
+                        return Ok(Val::Int(self.i32t.const_zero()));
+                    }
+                    return Ok(Val::Chars(self.lit(""), 0));
+                }
+                let qualified = self
+                    .self_ctx
+                    .map(|(_, class)| format!("{}=>{}", self.classes[class].name, name));
+                if let Some(constant) = self
+                    .constants
+                    .get(&name.to_lowercase())
+                    .or_else(|| qualified.as_ref().and_then(|key| self.constants.get(key)))
+                    .cloned()
+                {
+                    return self.eval(&constant, line);
+                }
+                if qualified.as_ref().is_some_and(|prefix| {
+                    self.constants
+                        .keys()
+                        .any(|key| key.starts_with(&format!("{prefix}-")))
+                }) {
+                    return Ok(Val::Str(self.empty_on(&self.builder)?));
+                }
+                match self.data(name, line) {
+                    Ok((p, ty)) => self.load_val(p, ty, line),
+                    Err(_) if name.contains("=>") => {
+                        Ok(Val::Str(self.empty_on(&self.builder)?))
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Expr::Slice { name, off, len } => {
                 let (p, ty) = self.data(name, line)?;
@@ -127,6 +378,31 @@ impl<'ctx> Codegen<'ctx> {
                     Some(h) => Ok(Val::Str(h)),
                     None => err(line, "leere Verkettung"),
                 }
+            }
+            Expr::Template(parts) => {
+                let mut values = Vec::new();
+                for part in parts {
+                    let handle = match self.eval(part, line)? {
+                        Val::Int(number) => self.call_ptr(self.rt.int_to_str, &[number.into()])?,
+                        other if matches!(part, Expr::Lit(_)) => {
+                            self.as_handle(other, line, "im Template verwendet")?
+                        }
+                        other => self.as_handle_trimmed(other, line)?,
+                    };
+                    values.push(handle);
+                }
+                let first = values.first().copied().ok_or_else(|| CompileError {
+                    line,
+                    message: "String-Template ist leer".into(),
+                })?;
+                let mut result = first;
+                for next in values.into_iter().skip(1) {
+                    result = self.call_ptr(
+                        self.rt.str_concat,
+                        &[result.into(), next.into()],
+                    )?;
+                }
+                Ok(Val::Str(result))
             }
             Expr::Concat(parts) => {
                 let mut acc: Option<PointerValue<'ctx>> = None;
@@ -160,6 +436,7 @@ impl<'ctx> Codegen<'ctx> {
                     // ABAP: Division bei i schneidet ab (wie C)
                     BinOp::Div => llvm(self.builder.build_int_signed_div(x, y, "div"))?,
                     BinOp::Mod => llvm(self.builder.build_int_signed_rem(x, y, "mod"))?,
+                    BinOp::BitAnd => llvm(self.builder.build_and(x, y, "bit_and"))?,
                 };
                 Ok(Val::Int(r))
             }
@@ -171,5 +448,83 @@ impl<'ctx> Codegen<'ctx> {
             Val::Int(i) => Ok(i),
             _ => err(line, "Arithmetik nur mit ganzzahligen Feldern"),
         }
+    }
+
+    fn is_initial(&mut self, value: Val<'ctx>, line: usize) -> CResult<IntValue<'ctx>> {
+        match value {
+            Val::Int(value) => llvm(self.builder.build_int_compare(
+                IntPredicate::EQ,
+                value,
+                self.i32t.const_zero(),
+                "is_initial_int",
+            )),
+            Val::Chars(pointer, length) => {
+                let empty = self.lit("");
+                let compared = self.call_int(
+                    self.rt.chars_cmp,
+                    &[
+                        pointer.into(),
+                        self.len(length).into(),
+                        empty.into(),
+                        self.len(0).into(),
+                    ],
+                )?;
+                llvm(self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    compared,
+                    self.i32t.const_zero(),
+                    "is_initial_chars",
+                ))
+            }
+            Val::Str(handle) => {
+                let empty = self.empty_on(&self.builder)?;
+                self.compare(CmpOp::Eq, Val::Str(handle), Val::Str(empty), line)
+            }
+            Val::Table(handle) => {
+                let count = self.call_int(self.rt.table_count, &[handle.into()])?;
+                llvm(self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    count,
+                    self.i64t.const_zero(),
+                    "is_initial_table",
+                ))
+            }
+            Val::Ref(pointer, _) => {
+                llvm(self.builder.build_is_null(pointer, "is_initial_ref"))
+            }
+            Val::Mem(pointer, structure) => {
+                let layout = self.layouts[structure].clone();
+                let mut result = self.i32t.const_int(1, false);
+                for (index, (_, ty)) in layout.fields.iter().enumerate() {
+                    let field = llvm(self.builder.build_struct_gep(
+                        layout.st,
+                        pointer,
+                        index as u32,
+                        "initial_field",
+                    ))?;
+                    let value = self.load_val(field, *ty, line)?;
+                    let initial = self.is_initial(value, line)?;
+                    result = llvm(self.builder.build_and(result, initial, "initial_and"))?;
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    fn is_assigned(&mut self, value: &Expr, line: usize) -> CResult<IntValue<'ctx>> {
+        let Expr::Var(name) = value else {
+            return err(line, "IS ASSIGNED erwartet ein Feldsymbol");
+        };
+        let variable = self.var(name, line)?;
+        if !variable.fs {
+            return err(line, format!("'{name}' ist kein Feldsymbol"));
+        }
+        let pointer = llvm(
+            self.builder
+                .build_load(self.ptrt, variable.slot, "assigned_pointer"),
+        )?
+        .into_pointer_value();
+        let is_null = llvm(self.builder.build_is_null(pointer, "assigned_null"))?;
+        llvm(self.builder.build_not(is_null, "is_assigned"))
     }
 }

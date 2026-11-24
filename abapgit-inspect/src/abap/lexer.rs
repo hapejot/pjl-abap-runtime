@@ -112,10 +112,19 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                     }
                 }
             }
+        } else if c == '!' && i + 1 < n && (chars[i + 1].is_alphabetic() || chars[i + 1] == '_') {
+            i += 1;
+            continue;
         } else if c == '|' {
             kind = Kind::Template;
             i += 1;
-            while i < n && chars[i] != '|' {
+            let mut brace_depth = 0i32;
+            while i < n && !(chars[i] == '|' && brace_depth == 0) {
+                if chars[i] == '{' {
+                    brace_depth += 1;
+                } else if chars[i] == '}' {
+                    brace_depth -= 1;
+                }
                 if chars[i] == '\\' {
                     i += 1;
                 }

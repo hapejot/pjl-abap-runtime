@@ -18,7 +18,7 @@ impl<'ctx> Codegen<'ctx> {
         match ty {
             Ty::Int => self.i32t.into(),
             Ty::Char(n) => self.char_array(n).into(),
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) => self.ptrt.into(),
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => self.ptrt.into(),
             Ty::Struct(i) => self.layouts[i].st.into(),
         }
     }
@@ -28,7 +28,7 @@ impl<'ctx> Codegen<'ctx> {
         match ty {
             Ty::Int => 4,
             Ty::Char(n) => 2 * n as u64,
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) => 8,
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => 8,
             Ty::Struct(i) => self.layouts[i].fields.iter().map(|(_, t)| self.size_of(*t)).sum(),
         }
     }
@@ -67,14 +67,14 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 llvm(b.build_store(slot, t))?;
             }
-            Ty::Ref(_) => {
+            Ty::Ref(_) | Ty::External(_) => {
                 llvm(b.build_store(slot, self.ptrt.const_null()))?;
             }
             Ty::Struct(i) => {
                 let layout = self.layouts[i].clone();
                 llvm(b.build_store(slot, layout.st.const_zero()))?;
                 for (k, (_, fty)) in layout.fields.iter().enumerate() {
-                    if matches!(fty, Ty::Str | Ty::Char(_)) {
+                    if matches!(fty, Ty::Str | Ty::Char(_) | Ty::Table(_) | Ty::Struct(_)) {
                         let fp = llvm(b.build_struct_gep(layout.st, slot, k as u32, "fi"))?;
                         self.init_value(b, fp, *fty)?;
                     }
@@ -111,6 +111,10 @@ impl<'ctx> Codegen<'ctx> {
             Elem::Struct(i) => {
                 let p = llvm(self.alloca.build_alloca(self.llvm_ty(Ty::Struct(i)), "tmp"))?;
                 Ok((p, Dest::Mem(p, i)))
+            }
+            Elem::External(_) => {
+                let p = llvm(self.alloca.build_alloca(self.ptrt, "tmp"))?;
+                Ok((p, Dest::Str(p)))
             }
         }
     }

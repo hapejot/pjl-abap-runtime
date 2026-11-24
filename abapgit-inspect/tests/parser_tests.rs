@@ -42,6 +42,29 @@ fn select_single_is_not_a_block() {
 }
 
 #[test]
+fn aggregate_select_without_group_by_is_not_a_block() {
+    let prog = program(
+        "LOOP AT it_where INTO lv_where.\n\
+         SELECT COUNT(*) FROM (iv_table_name) INTO lv_count WHERE (lv_where).\n\
+         lv_total = lv_total + lv_count.\n\
+         ENDLOOP.",
+    );
+    assert!(prog.errors.is_empty(), "{:?}", prog.errors);
+    assert!(matches!(&prog.items[0], TopItem::Block { head, .. } if head.keyword() == "LOOP"));
+}
+
+#[test]
+fn aggregate_select_with_group_by_is_a_block() {
+    let prog = program(
+        "SELECT carrier COUNT(*) FROM flights GROUP BY carrier INTO (carrier, count).\n\
+         WRITE count.\n\
+         ENDSELECT.",
+    );
+    assert!(prog.errors.is_empty(), "{:?}", prog.errors);
+    assert!(matches!(&prog.items[0], TopItem::Block { head, .. } if head.keyword() == "SELECT"));
+}
+
+#[test]
 fn select_loop_is_a_block() {
     let prog = program("SELECT a FROM t INTO wa.\n  WRITE wa.\nENDSELECT.");
     assert!(prog.errors.is_empty());
@@ -109,6 +132,15 @@ fn event_block_ends_at_next_event() {
 }
 
 #[test]
+fn initialization_block_ends_at_start_of_selection() {
+    let prog = program("INITIALIZATION.\n  x = 1.\nSTART-OF-SELECTION.\n  x = 2.");
+    assert!(prog.errors.is_empty(), "{:?}", prog.errors);
+    assert_eq!(prog.items.len(), 2);
+    assert!(matches!(&prog.items[0], TopItem::Routine { kind, body, .. }
+        if kind == "INITIALIZATION" && body.len() == 1));
+}
+
+#[test]
 fn class_definition_members_and_visibility() {
     let src = "CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    METHODS run IMPORTING iv_x TYPE i RETURNING VALUE(rv) TYPE string.\n  PRIVATE SECTION.\n    DATA mv TYPE i.\nENDCLASS.";
     let prog = program(src);
@@ -143,6 +175,32 @@ fn class_static_method_is_flagged() {
         MemberKind::Method(sig) => assert!(sig.is_class),
         other => panic!("expected method, got {other:?}"),
     }
+}
+
+#[test]
+fn interface_method_names_keep_their_qualifier() {
+    let prog = program(
+        "CLASS child DEFINITION.\n\
+           PUBLIC SECTION.\n\
+             METHODS zif_contract~create REDEFINITION.\n\
+         ENDCLASS.\n\
+         CLASS child IMPLEMENTATION.\n\
+           METHOD zif_contract~create.\n\
+           ENDMETHOD.\n\
+         ENDCLASS.",
+    );
+    assert!(prog.errors.is_empty(), "{:?}", prog.errors);
+    let TopItem::Class(definition) = &prog.items[0] else {
+        panic!("expected class definition")
+    };
+    let MemberKind::Method(signature) = &definition.members[0].kind else {
+        panic!("expected method declaration")
+    };
+    assert_eq!(signature.name, "zif_contract~create");
+    let TopItem::Class(implementation) = &prog.items[1] else {
+        panic!("expected class implementation")
+    };
+    assert_eq!(implementation.methods[0].name, "zif_contract~create");
 }
 
 #[test]

@@ -8,6 +8,7 @@
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::AtomicU64;
 
 const BLANK: u16 = 0x20;
 
@@ -20,6 +21,8 @@ pub struct RtStr {
 static LIST: AtomicU8 = AtomicU8::new(0);
 const STARTED: u8 = 1;
 const DIRTY: u8 = 2;
+static EXCEPTION_CLASS: AtomicU64 = AtomicU64::new(0);
+static EXCEPTION_OBJECT: AtomicU64 = AtomicU64::new(0);
 
 fn out(bytes: &[u8]) {
     if !bytes.is_empty() {
@@ -59,6 +62,177 @@ fn sign(o: std::cmp::Ordering) -> i32 {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn abap_rt_exception_raise(object: *mut u8, class_id: u64) {
+    EXCEPTION_OBJECT.store(object as u64, Ordering::SeqCst);
+    EXCEPTION_CLASS.store(class_id, Ordering::SeqCst);
+}
+
+#[no_mangle]
+pub extern "C" fn abap_rt_exception_pending() -> i32 {
+    (EXCEPTION_CLASS.load(Ordering::SeqCst) != 0) as i32
+}
+
+#[no_mangle]
+pub extern "C" fn abap_rt_exception_class() -> u64 {
+    EXCEPTION_CLASS.load(Ordering::SeqCst)
+}
+
+#[no_mangle]
+pub extern "C" fn abap_rt_exception_object() -> *mut u8 {
+    EXCEPTION_OBJECT.load(Ordering::SeqCst) as *mut u8
+}
+
+#[no_mangle]
+pub extern "C" fn abap_rt_exception_clear() {
+    EXCEPTION_CLASS.store(0, Ordering::SeqCst);
+    EXCEPTION_OBJECT.store(0, Ordering::SeqCst);
+}
+
+/// # Safety
+/// `name` zeigt auf `len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_external_call(name: *const u16, len: u64) {
+    let function = String::from_utf16_lossy(units(name, len));
+    eprintln!("abapc runtime: externen Funktionsbaustein '{function}' nicht implementiert");
+    std::process::exit(78);
+}
+
+/// Einfaches ABAP-CP-Matching mit `*` als Wildcard.
+///
+/// # Safety
+/// Beide Handles müssen aus dieser Laufzeit stammen oder null sein.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_pattern_match(
+    value: *const RtStr,
+    pattern: *const RtStr,
+) -> i32 {
+    let Some(value) = value.as_ref() else {
+        return 0;
+    };
+    let Some(pattern) = pattern.as_ref() else {
+        return 0;
+    };
+    wildcard_match(&value.data, &pattern.data) as i32
+}
+
+fn wildcard_match(value: &[u16], pattern: &[u16]) -> bool {
+    let (mut value_index, mut pattern_index) = (0, 0);
+    let mut star = None;
+    let mut checkpoint = 0;
+    while value_index < value.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'+' as u16
+                || pattern[pattern_index] == value[value_index])
+        {
+            value_index += 1;
+            pattern_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' as u16 {
+            star = Some(pattern_index);
+            pattern_index += 1;
+            checkpoint = value_index;
+        } else if let Some(star_index) = star {
+            pattern_index = star_index + 1;
+            checkpoint += 1;
+            value_index = checkpoint;
+        } else {
+            return false;
+        }
+
+        /// # Safety
+        /// Beide Handles müssen aus dieser Laufzeit stammen oder null sein.
+        #[no_mangle]
+        pub unsafe extern "C" fn abap_rt_str_contains(
+            value: *const RtStr,
+            needle: *const RtStr,
+        ) -> i32 {
+            let Some(value) = value.as_ref() else {
+                return 0;
+            };
+            let Some(needle) = needle.as_ref() else {
+                return 0;
+            };
+            if needle.data.is_empty() {
+                return 1;
+            }
+
+            /// # Safety
+            /// Beide Handles müssen aus dieser Laufzeit stammen oder null sein.
+            #[no_mangle]
+            pub unsafe extern "C" fn abap_rt_str_contains_any(
+                value: *const RtStr,
+                chars: *const RtStr,
+            ) -> i32 {
+                let Some(value) = value.as_ref() else {
+                    return 0;
+                };
+                let Some(chars) = chars.as_ref() else {
+                    return 0;
+                };
+                value
+                    .data
+                    .iter()
+                    .any(|unit| chars.data.contains(unit)) as i32
+            }
+
+            /// # Safety
+            /// Beide Handles müssen aus dieser Laufzeit stammen oder null sein.
+            #[no_mangle]
+            pub unsafe extern "C" fn abap_rt_str_contains_only(
+                value: *const RtStr,
+                chars: *const RtStr,
+            ) -> i32 {
+                let Some(value) = value.as_ref() else {
+                    return 0;
+                };
+                let Some(chars) = chars.as_ref() else {
+                    return 0;
+                };
+                value.data.iter().all(|unit| chars.data.contains(unit)) as i32
+            }
+
+            /// # Safety
+            /// Das Handle muss aus dieser Laufzeit stammen oder null sein.
+            #[no_mangle]
+            pub unsafe extern "C" fn abap_rt_str_length(value: *const RtStr) -> u64 {
+                value.as_ref().map_or(0, |string| string.data.len() as u64)
+            }
+
+            /// # Safety
+            /// Das Handle muss aus dieser Laufzeit stammen oder null sein.
+            #[no_mangle]
+            pub unsafe extern "C" fn abap_rt_str_slice(
+                value: *const RtStr,
+                offset: i32,
+                length: i32,
+            ) -> *mut RtStr {
+                let data = value.as_ref().map_or(&[][..], |string| string.data.as_slice());
+                let start = offset.max(0) as usize;
+                let end = if length < 0 {
+                    data.len()
+                } else {
+                    start.saturating_add(length as usize).min(data.len())
+                };
+                let slice = if start >= data.len() {
+                    &[]
+                } else {
+                    &data[start..end]
+                };
+                Box::into_raw(Box::new(RtStr { data: slice.to_vec() }))
+            }
+            value
+                .data
+                .windows(needle.data.len())
+                .any(|window| window == needle.data)
+                as i32
+        }
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' as u16 {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
+}
+
 /// Kopiert `src` in das Zeichenfeld `dst` (`dlen` Zeichen): abschneiden oder mit Leerzeichen auffüllen.
 unsafe fn move_into(dst: *mut u16, dlen: u64, src: &[u16]) {
     if dst.is_null() {
@@ -77,7 +251,15 @@ pub extern "C" fn abap_rt_write_int(value: i32) {
     if value < 0 {
         s.push('-');
     }
+
     out(format!("{:>10}", s).as_bytes());
+}
+
+#[no_mangle]
+pub extern "C" fn abap_rt_int_to_str(value: i32) -> *mut RtStr {
+    Box::into_raw(Box::new(RtStr {
+        data: value.to_string().encode_utf16().collect(),
+    }))
 }
 
 /// WRITE für Zeichenfelder: gibt die vollen `len` Zeichen aus (inkl. Auffüllung), als UTF-8.

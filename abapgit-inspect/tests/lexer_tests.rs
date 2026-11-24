@@ -93,3 +93,17 @@ fn word_matching_is_case_insensitive() {
     let toks = tokenize("data a.");
     assert!(toks[0].is_word("DATA"));
 }
+
+#[test]
+fn ignores_abap_identifier_escape() {
+    let tokens = tokenize("METHODS run IMPORTING !VALUE TYPE i.");
+    let words: Vec<&str> = tokens
+        .iter()
+        .filter(|token| token.kind == Kind::Word)
+        .map(|token| token.text.as_str())
+        .collect();
+    assert_eq!(
+        words,
+        vec!["METHODS", "run", "IMPORTING", "VALUE", "TYPE", "i"]
+    );
+}

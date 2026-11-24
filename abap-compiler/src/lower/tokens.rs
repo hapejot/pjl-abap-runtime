@@ -4,7 +4,13 @@ use super::*;
 
 /// Tabellenelement nach `TABLE OF` bzw. `STANDARD TABLE OF`.
 pub(super) fn table_elem_tokens(rest: &[Token]) -> Option<&[Token]> {
-    let r = if rest.first().is_some_and(|t| t.is_word("STANDARD")) { &rest[1..] } else { rest };
+    let r = if rest.first().is_some_and(|token| {
+        token.is_word("STANDARD") || token.is_word("SORTED") || token.is_word("HASHED")
+    }) {
+        &rest[1..]
+    } else {
+        rest
+    };
     if r.len() >= 2 && r[0].is_word("TABLE") && r[1].is_word("OF") {
         Some(&r[2..])
     } else {
@@ -16,6 +22,24 @@ pub(super) fn table_elem_tokens(rest: &[Token]) -> Option<&[Token]> {
 pub(super) fn parse_target(toks: &[Token], line: usize) -> Result<Target, CompileError> {
     let is_num = |t: &Token| !t.text.is_empty() && t.text.chars().all(|c| c.is_ascii_digit());
     match toks {
+        [owner, arrow, name]
+            if owner.kind == Kind::Word
+                && (arrow.is_punct("=>") || arrow.is_punct("~"))
+                && name.kind == Kind::Word =>
+        {
+            if arrow.is_punct("~") {
+                Ok(Target::Attr {
+                    obj: "me".into(),
+                    attr: format!("{}~{}", word(owner), word(name)),
+                })
+            } else {
+                Ok(Target::Var(format!(
+                    "{}=>{}",
+                    word(owner),
+                    word(name)
+                )))
+            }
+        }
         [t] if t.kind == Kind::Word => Ok(Target::Var(word(t))),
         [t, p, off, l, len, r]
             if t.kind == Kind::Word
