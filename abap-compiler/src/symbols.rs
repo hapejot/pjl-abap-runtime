@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use abapgit_inspect::abap::{ClassKind, MemberKind, Program, Statement, TopItem};
+use crate::inspect::abap::{ClassKind, MemberKind, Program, Statement, TopItem};
 
 use crate::ast::CompileError;
 
@@ -258,7 +258,7 @@ fn word_after(statement: &Statement, index: usize) -> Option<&str> {
     statement
         .tokens
         .get(index + 1)
-        .filter(|token| token.kind == abapgit_inspect::abap::Kind::Word)
+        .filter(|token| token.kind == crate::inspect::abap::Kind::Word)
         .map(|token| token.text.as_str())
 }
 
@@ -272,7 +272,7 @@ fn word_after_keyword<'a>(statement: &'a Statement, keyword: &str) -> Option<&'a
 
 #[cfg(test)]
 mod tests {
-    use abapgit_inspect::abap::parse_l1;
+    use crate::inspect::abap::parse_l1;
 
     use super::{SymbolCatalog, SymbolKind, SymbolOrigin};
 

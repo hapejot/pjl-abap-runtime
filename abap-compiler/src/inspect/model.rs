@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Serialize, Serializer};
 
-use crate::abap::{parse_l1, Item, Kind, Program, Statement, Token, TopItem};
+use crate::inspect::abap::{parse_l1, Item, Kind, Program, Statement, Token, TopItem};
 
 #[derive(Debug, Default, Serialize)]
 pub struct DataModel {
@@ -1107,7 +1107,7 @@ fn analyze_with_inventory(files: &[(String, String)], inventory_files: &[String]
     }
     for (file, src) in files {
         add_declared_inventory(&collect_program(&parse_l1(src)), &mut inventory);
-        let key = crate::objects::object_key(file).unwrap_or_else(|| (String::new(), file.clone()));
+        let key = crate::inspect::objects::object_key(file).unwrap_or_else(|| (String::new(), file.clone()));
         groups
             .entry(key)
             .or_default()
@@ -1261,7 +1261,7 @@ pub fn analyze_with_ddic_and_inventory(
             map
         });
     for (table, file, line) in table_usages {
-        if let Some((source_type, source)) = crate::objects::object_key(&file) {
+        if let Some((source_type, source)) = crate::inspect::objects::object_key(&file) {
             push_dependency(
                 &mut model,
                 &source_type,

@@ -201,6 +201,11 @@ pub enum Stmt {
         name: String,
         line: usize,
     },
+    /// Ausdrucksanweisung ohne Zuweisung, z.B. `a->m( )->n( x = 1 ).`
+    ExprStmt {
+        expr: Expr,
+        line: usize,
+    },
     Raise {
         exception: String,
         line: usize,

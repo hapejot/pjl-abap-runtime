@@ -19,7 +19,7 @@ use serde::Serialize;
 use super::graph::{build as build_graph, group_programs, name_at, scopes_of, type_owner, Owner, Scope};
 use super::lexer::{Kind, Token};
 use super::parser::Statement;
-use crate::model::is_builtin_type;
+use crate::inspect::model::is_builtin_type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

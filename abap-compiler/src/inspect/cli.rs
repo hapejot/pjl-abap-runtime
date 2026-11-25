@@ -1,18 +1,18 @@
-//! abapgit-inspect: untersucht ZIP-Exporte aus abapGit.
+//! Untersucht ZIP-Exporte aus abapGit (Aufruf über `abapc inspect`).
 //!
 //! Aufruf:
-//!   abapgit-inspect <datei.zip>                 Objektliste (Typ, Name, Dateien)
-//!   abapgit-inspect <datei.zip> --files         alle Dateien im ZIP mit Groesse
-//!   abapgit-inspect <datei.zip> --type CLAS     nur Objekte eines Typs
-//!   abapgit-inspect <datei.zip> --show <pfad>   Inhalt einer Datei ausgeben
-//!   abapgit-inspect <datei.zip> --model         Modell und Abhängigkeiten als JSON ausgeben
+//!   abapc inspect <datei.zip>                 Objektliste (Typ, Name, Dateien)
+//!   abapc inspect <datei.zip> --files         alle Dateien im ZIP mit Groesse
+//!   abapc inspect <datei.zip> --type CLAS     nur Objekte eines Typs
+//!   abapc inspect <datei.zip> --show <pfad>   Inhalt einer Datei ausgeben
+//!   abapc inspect <datei.zip> --model         Modell und Abhängigkeiten als JSON ausgeben
 
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::process;
 
-use clap::Parser;
+use clap::Args;
 use zip::ZipArchive;
 
 fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
@@ -27,51 +27,50 @@ fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
 }
 
 /// Untersucht ZIP-Exporte aus abapGit.
-#[derive(Parser, Debug)]
-#[command(name = "abapgit-inspect", version, about)]
-struct Options {
+#[derive(Args, Debug)]
+pub struct Options {
     /// ZIP-Datei aus abapGit
-    zip_path: String,
+    pub zip_path: String,
 
     /// Alle Dateien im ZIP mit Groesse auflisten
     #[arg(long)]
-    files: bool,
+    pub files: bool,
 
     /// Nur Objekte dieses Typs (z.B. CLAS, DTEL, DOMA, DEVC)
     #[arg(long = "type", value_name = "TYP")]
-    type_filter: Option<String>,
+    pub type_filter: Option<String>,
 
     /// Inhalt einer Datei im ZIP ausgeben (Pfad wie in --files)
     #[arg(long, value_name = "PFAD")]
-    show: Option<String>,
+    pub show: Option<String>,
 
     /// ABAP-Datei aus dem ZIP parsen und Gliederung ausgeben
     #[arg(long, value_name = "PFAD")]
-    ast: Option<String>,
+    pub ast: Option<String>,
 
     /// Alle .abap-Dateien parsen und Fehler melden
     #[arg(long)]
-    check: bool,
+    pub check: bool,
 
     /// Top-Level-Deklarationen je Entwicklungsobjekt ausgeben
     #[arg(long)]
-    objects: bool,
+    pub objects: bool,
 
     /// ABAP-, SQL-/DDIC-Modell und Abhängigkeiten aus dem ZIP als JSON ausgeben
     #[arg(long)]
-    model: bool,
+    pub model: bool,
 
     /// Verwendungen als Kanten (Aufrufe, Vererbung, Typen je Member mit Datei und Zeile) als JSON ausgeben
     #[arg(long)]
-    deps: bool,
+    pub deps: bool,
 
     /// Extern benötigte Klassen und Interfaces, aggregiert je Typ, als JSON ausgeben
     #[arg(long)]
-    external: bool,
+    pub external: bool,
 
     /// Interaktive Oberflaeche: Objektliste mit Filter und Quelltext
     #[arg(long)]
-    tui: bool,
+    pub tui: bool,
 }
 
 /// Alle `.abap`-Dateien als `(Pfad, Quelltext)`.
@@ -136,8 +135,7 @@ fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
 
-fn main() {
-    let mut opts = Options::parse();
+pub fn run(mut opts: Options) {
     opts.type_filter = opts.type_filter.map(|t| t.to_uppercase());
 
     let file = File::open(&opts.zip_path).unwrap_or_else(|e| {
@@ -166,19 +164,19 @@ fn main() {
     // ABAP-Datei parsen und Gliederung ausgeben
     if let Some(path) = &opts.ast {
         let src = read_entry(&mut archive, path);
-        let prog = abapgit_inspect::abap::parse_l1(&src);
-        print!("{}", abapgit_inspect::abap::outline(&prog));
+        let prog = crate::inspect::abap::parse_l1(&src);
+        print!("{}", crate::inspect::abap::outline(&prog));
         return;
     }
 
     // Top-Level-Deklarationen je Entwicklungsobjekt
     if opts.objects {
         let files = read_abap_files(&mut archive);
-        let mut objs = abapgit_inspect::objects::collect(&files);
+        let mut objs = crate::inspect::objects::collect(&files);
         if let Some(t) = &opts.type_filter {
             objs.retain(|o| &o.obj_type == t);
         }
-        print!("{}", abapgit_inspect::objects::render(&objs));
+        print!("{}", crate::inspect::objects::render(&objs));
         return;
     }
 
@@ -194,12 +192,12 @@ fn main() {
                     .map(|entry| entry.name().to_string())
             })
             .collect();
-        let model = abapgit_inspect::model::analyze_with_ddic_and_inventory(
+        let model = crate::inspect::model::analyze_with_ddic_and_inventory(
             &files,
             &table_metadata,
             &inventory,
         );
-        match abapgit_inspect::model::render_json(&model) {
+        match crate::inspect::model::render_json(&model) {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
@@ -211,7 +209,7 @@ fn main() {
 
     if opts.external {
         let files = read_abap_files(&mut archive);
-        let reqs = abapgit_inspect::abap::requirements::derive(&files);
+        let reqs = crate::inspect::abap::requirements::derive(&files);
         match serde_json::to_string_pretty(&reqs) {
             Ok(json) => println!("{json}"),
             Err(e) => {
@@ -224,7 +222,7 @@ fn main() {
 
     if opts.deps {
         let files = read_abap_files(&mut archive);
-        let graph = abapgit_inspect::abap::graph::build(&files);
+        let graph = crate::inspect::abap::graph::build(&files);
         match serde_json::to_string_pretty(&graph) {
             Ok(json) => println!("{json}"),
             Err(e) => {
@@ -238,12 +236,12 @@ fn main() {
     // Interaktive Oberflaeche
     if opts.tui {
         let files = read_abap_files(&mut archive);
-        let mut objs = abapgit_inspect::objects::collect(&files);
+        let mut objs = crate::inspect::objects::collect(&files);
         if let Some(t) = &opts.type_filter {
             objs.retain(|o| &o.obj_type == t);
         }
         // Quelltext je Objekt: eigene Dateien plus Dateien, die eingebettete Includes liefern
-        let mut sources: abapgit_inspect::tui::app::Sources = Default::default();
+        let mut sources: crate::inspect::tui::app::Sources = Default::default();
         let by_name: std::collections::BTreeMap<&str, &str> = files
             .iter()
             .map(|(p, s)| (p.rsplit('/').next().unwrap_or(p), s.as_str()))
@@ -253,10 +251,10 @@ fn main() {
             let key = (o.obj_type.clone(), o.name.clone());
             let mut names: Vec<String> = files
                 .iter()
-                .filter(|(p, _)| abapgit_inspect::objects::object_key(p).as_ref() == Some(&key))
+                .filter(|(p, _)| crate::inspect::objects::object_key(p).as_ref() == Some(&key))
                 .map(|(p, _)| p.rsplit('/').next().unwrap_or(p).to_string())
                 .collect();
-            for f in abapgit_inspect::objects::source_files(o) {
+            for f in crate::inspect::objects::source_files(o) {
                 if !names.contains(&f) {
                     names.push(f);
                 }
@@ -266,13 +264,13 @@ fn main() {
                     sources.entry(key.clone()).or_default().push((f, src.to_string()));
                 }
             }
-            objects.push(abapgit_inspect::tui::app::Object {
+            objects.push(crate::inspect::tui::app::Object {
                 key,
-                entries: abapgit_inspect::objects::entries(o),
+                entries: crate::inspect::objects::entries(o),
             });
         }
 
-        if let Err(e) = abapgit_inspect::tui::run(objects, sources) {
+        if let Err(e) = crate::inspect::tui::run(objects, sources) {
             eprintln!("TUI-Fehler: {e}");
             process::exit(1);
         }
@@ -285,7 +283,7 @@ fn main() {
         let mut total_errors = 0;
         for name in &names {
             let src = read_entry(&mut archive, name);
-            let prog = abapgit_inspect::abap::parse_l1(&src);
+            let prog = crate::inspect::abap::parse_l1(&src);
             if !prog.errors.is_empty() {
                 total_errors += prog.errors.len();
                 println!("{name}: {} Fehler", prog.errors.len());

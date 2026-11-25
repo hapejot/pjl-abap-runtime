@@ -1,4 +1,4 @@
-use abapgit_inspect::abap::requirements::{derive, Requirements, TypeKind};
+use abap_compiler::inspect::abap::requirements::{derive, Requirements, TypeKind};
 
 fn reqs(files: &[(&str, &str)]) -> Requirements {
     let owned: Vec<(String, String)> = files
@@ -8,7 +8,7 @@ fn reqs(files: &[(&str, &str)]) -> Requirements {
     derive(&owned)
 }
 
-fn find<'a>(r: &'a Requirements, name: &str) -> &'a abapgit_inspect::abap::requirements::Requirement {
+fn find<'a>(r: &'a Requirements, name: &str) -> &'a abap_compiler::inspect::abap::requirements::Requirement {
     r.items
         .iter()
         .find(|i| i.name == name)

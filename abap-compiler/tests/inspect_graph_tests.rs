@@ -1,4 +1,4 @@
-use abapgit_inspect::abap::graph::{build, EdgeKind, Graph, NodeKind};
+use abap_compiler::inspect::abap::graph::{build, EdgeKind, Graph, NodeKind};
 
 fn graph(files: &[(&str, &str)]) -> Graph {
     let owned: Vec<(String, String)> = files
@@ -8,7 +8,7 @@ fn graph(files: &[(&str, &str)]) -> Graph {
     build(&owned)
 }
 
-fn edge<'a>(g: &'a Graph, from: &str, kind: EdgeKind, hint: &str) -> &'a abapgit_inspect::abap::graph::Edge {
+fn edge<'a>(g: &'a Graph, from: &str, kind: EdgeKind, hint: &str) -> &'a abap_compiler::inspect::abap::graph::Edge {
     g.edges
         .iter()
         .find(|e| e.from == from && e.kind == kind && e.hint == hint)

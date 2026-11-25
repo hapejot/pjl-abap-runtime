@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::abap::{declarations, parse_l1, Declaration};
+use crate::inspect::abap::{declarations, parse_l1, Declaration};
 
 #[derive(Debug, Clone)]
 pub struct ObjectDecls {

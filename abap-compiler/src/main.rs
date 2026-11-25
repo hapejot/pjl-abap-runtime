@@ -1,9 +1,11 @@
-//! abapc: übersetzt ein ABAP-Report-Programm in eine ausführbare Datei.
+//! abapc: übersetzt ein ABAP-Report-Programm in eine ausführbare Datei und untersucht abapGit-Exporte.
 //!
-//! Aufruf: abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <runtime-lib>]
+//! Aufruf:
+//!   abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <runtime-lib>]
+//!   abapc inspect <export.zip> [--check|--objects|--deps|--external|--model|--tui|...]
 
-use abap_compiler::{ast::CompileError, codegen::Codegen, lower::parse_source};
-use clap::Parser;
+use abap_compiler::{analyze, ast::CompileError, codegen::Codegen, inspect, lower::parse_source};
+use clap::{Parser, Subcommand};
 use inkwell::context::Context;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
@@ -15,17 +17,36 @@ use tracing::*;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Debug, Parser)]
-struct Args {
-    /// Eingabe-ABAP-Datei
-    input: PathBuf,
+#[command(name = "abapc", args_conflicts_with_subcommands = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Sub>,
+    /// Eingabe-ABAP-Datei (Übersetzung)
+    input: Option<PathBuf>,
     /// Ausgabedatei
     #[clap(short = 'o', long = "output")]
-    output: PathBuf,
+    output: Option<PathBuf>,
     /// Optional: IR-Datei ausgeben
     #[clap(long = "emit-ir")]
     emit_ir: Option<PathBuf>,
     /// Optional: Laufzeitbibliothek
     #[clap(long = "runtime")]
+    runtime: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Sub {
+    /// abapGit-Export untersuchen: Objekte, Abhängigkeiten, externe Anforderungen, TUI
+    Inspect(inspect::cli::Options),
+    /// Übersetzungsfehler auswerten: unbekannte Namen, vermutete Art, Compiler-Lücken
+    Analyze(analyze::Options),
+}
+
+/// Argumente der Übersetzung, nachdem die Pflichtangaben geprüft sind.
+struct Args {
+    input: PathBuf,
+    output: PathBuf,
+    emit_ir: Option<PathBuf>,
     runtime: Option<PathBuf>,
 }
 
@@ -135,7 +156,30 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
 }
 
 fn main() {
-    let args = Args::parse();
+    let cli = Cli::parse();
+    match cli.command {
+        Some(Sub::Inspect(opts)) => {
+            inspect::cli::run(opts);
+            return;
+        }
+        Some(Sub::Analyze(opts)) => {
+            analyze::run(opts);
+            return;
+        }
+        None => {}
+    }
+    let (Some(input), Some(output)) = (cli.input, cli.output) else {
+        fail("Eingabedatei und -o <ausgabe> angeben (Analyse: abapc inspect <zip>)")
+    };
+    if input.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+        fail("ZIP-Dateien werden noch nicht übersetzt; zur Untersuchung: abapc inspect <zip>");
+    }
+    let args = Args {
+        input,
+        output,
+        emit_ir: cli.emit_ir,
+        runtime: cli.runtime,
+    };
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())

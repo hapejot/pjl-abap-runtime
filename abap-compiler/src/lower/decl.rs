@@ -166,7 +166,7 @@ impl Lowerer {
 
     fn define_local_data_types(
         &mut self,
-        members: &[abapgit_inspect::abap::Member],
+        members: &[crate::inspect::abap::Member],
     ) -> Result<(), CompileError> {
         let mut index = 0;
         while index < members.len() {
@@ -500,7 +500,7 @@ impl Lowerer {
 
     fn define_local_type_aliases(
         &mut self,
-        members: &[abapgit_inspect::abap::Member],
+        members: &[crate::inspect::abap::Member],
     ) -> Result<(), CompileError> {
         let mut structure_depth = 0usize;
         for member in members {
@@ -529,7 +529,7 @@ impl Lowerer {
 
     fn define_local_constants(
         &mut self,
-        members: &[abapgit_inspect::abap::Member],
+        members: &[crate::inspect::abap::Member],
     ) -> Result<(), CompileError> {
         let mut structure: Option<String> = None;
         for member in members {
@@ -570,7 +570,7 @@ impl Lowerer {
 
     fn define_local_structures(
         &mut self,
-        members: &[abapgit_inspect::abap::Member],
+        members: &[crate::inspect::abap::Member],
     ) -> Result<(), CompileError> {
         let mut index = 0;
         while index < members.len() {
@@ -592,7 +592,7 @@ impl Lowerer {
 
     fn define_local_structure(
         &mut self,
-        members: &[abapgit_inspect::abap::Member],
+        members: &[crate::inspect::abap::Member],
         begin_index: usize,
     ) -> Result<(String, Ty, usize), CompileError> {
         let begin = &members[begin_index].statement;

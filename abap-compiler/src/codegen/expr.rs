@@ -275,7 +275,7 @@ impl<'ctx> Codegen<'ctx> {
                     "lines",
                 ))?))
             }
-            Expr::ExternalCall(_) => Ok(Val::Str(self.ptrt.const_null())),
+            Expr::Chain { .. } => err(line, "Verkettete Methodenaufrufe werden noch nicht übersetzt"),
             Expr::Bool(condition) => {
                 let value = self.cond(condition, line)?;
                 let true_value = self.call_ptr(
@@ -355,7 +355,7 @@ impl<'ctx> Codegen<'ctx> {
                 let Ty::Char(n) = ty else {
                     return err(line, format!("Teilfeld nur für Zeichenfelder möglich: '{name}'"));
                 };
-                if off + len > n {
+                if *off > n || *len > n - *off {
                     return err(line, format!("Teilfeld {name}+{off}({len}) liegt außerhalb des Feldes"));
                 }
                 Ok(Val::Chars(self.slice_ptr(p, *off)?, *len))

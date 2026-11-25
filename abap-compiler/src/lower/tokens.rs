@@ -56,9 +56,27 @@ pub(super) fn parse_target(toks: &[Token], line: usize) -> Result<Target, Compil
             }
             Ok(Target::Slice { name: word(t), off, len })
         }
+        // Teilfeld ohne Offset, auch für Feldsymbole: `name(len)` bzw. `<fs>(len)`
+        [t, l, len, r]
+            if t.kind == Kind::Word
+                && l.is_punct("(")
+                && is_num(len)
+                && r.is_punct(")") =>
+        {
+            let len: usize = len.text.parse().or_else(|_| err(line, "Länge ungültig"))?;
+            if len == 0 {
+                return err(line, "Teilfeldlänge muss größer 0 sein");
+            }
+            Ok(Target::Slice { name: word(t), off: 0, len })
+        }
         [o, arrow, a] if o.kind == Kind::Word && arrow.is_punct("->") && a.kind == Kind::Word => {
             Ok(Target::Attr { obj: word(o), attr: word(a) })
         }
+        // Syntaktisch gültig, aber Zuweisung an verkettete Attribute ist noch nicht implementiert
+        _ if toks.iter().filter(|t| t.is_punct("->")).count() > 1 => err(
+            line,
+            "Zuweisung an verkettetes Attribut wird noch nicht übersetzt",
+        ),
         _ => err(line, "Ziel muss ein Feld, ein Teilfeld name+off(len) oder ein Attribut obj->attr sein"),
     }
 }

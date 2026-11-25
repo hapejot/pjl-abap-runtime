@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::objects::Entry;
+use crate::inspect::objects::Entry;
 
 /// (Objekttyp, Objektname)
 pub type Key = (String, String);

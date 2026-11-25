@@ -1,6 +1,6 @@
-use abapgit_inspect::abap::{parse_l1, ClassKind, Item, MemberKind, TopItem, Visibility};
+use abap_compiler::inspect::abap::{parse_l1, ClassKind, Item, MemberKind, TopItem, Visibility};
 
-fn program(src: &str) -> abapgit_inspect::abap::Program {
+fn program(src: &str) -> abap_compiler::inspect::abap::Program {
     parse_l1(src)
 }
 
@@ -247,7 +247,7 @@ fn method_refs_find_calls() {
 #[test]
 fn outline_contains_class_and_method_names() {
     let src = "CLASS lcl IMPLEMENTATION.\n  METHOD go.\n  ENDMETHOD.\nENDCLASS.";
-    let out = abapgit_inspect::abap::outline(&program(src));
+    let out = abap_compiler::inspect::abap::outline(&program(src));
     assert!(out.contains("CLASS IMPLEMENTATION lcl"));
     assert!(out.contains("METHOD go"));
 }

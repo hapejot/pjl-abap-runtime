@@ -1,5 +1,5 @@
-use abapgit_inspect::abap::{declarations, parse_l1};
-use abapgit_inspect::objects::{collect, render};
+use abap_compiler::inspect::abap::{declarations, parse_l1};
+use abap_compiler::inspect::objects::{collect, render};
 
 fn decls(src: &str) -> Vec<(String, String)> {
     declarations(&parse_l1(src))
@@ -193,7 +193,7 @@ fn entry_target_prefers_implementation() {
         "CLASS zc DEFINITION.\n  PUBLIC SECTION.\n    METHODS go.\nENDCLASS.\nCLASS zc IMPLEMENTATION.\n  METHOD go.\n  ENDMETHOD.\nENDCLASS.".to_string(),
     )];
     let objs = collect(&files);
-    let entries = abapgit_inspect::objects::entries(&objs[0]);
+    let entries = abap_compiler::inspect::objects::entries(&objs[0]);
     let go = entries.iter().find(|e| e.label == "METHODS go").unwrap();
     assert_eq!(go.line, 3);
     assert_eq!(go.target_line(), 6);

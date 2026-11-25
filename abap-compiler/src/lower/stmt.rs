@@ -17,6 +17,11 @@ impl Lowerer {
         let toks = &s.tokens[..pragma_start];
         let kw = s.keyword();
 
+        if let Some(expr) = expression_statement(toks, line) {
+            out.push(Stmt::ExprStmt { expr, line });
+            return Ok(());
+        }
+
         if !toks[0].text.starts_with('<')
             && toks.get(1).is_some_and(|token| token.is_punct("("))
             && toks.last().is_some_and(|token| token.is_punct(")"))
@@ -933,4 +938,29 @@ pub(super) fn parse_constant_expr(tokens: &[Token], line: usize) -> Result<Expr,
         return Ok(Expr::Lit(value));
     }
     parse_expr(tokens, line)
+}
+
+/// Erkennt verkettete Aufrufe als Anweisung wie `a->m( )->n( x = 1 ).` oder `zcl=>m( )->n( ).`.
+/// Ohne Zuweisung auf Klammerebene 0. Einfache Aufrufe ohne Verkettung bleiben beim bisherigen Pfad.
+fn expression_statement(toks: &[Token], line: usize) -> Option<Expr> {
+    if toks.first()?.kind != Kind::Word {
+        return None;
+    }
+    if !toks.iter().any(|t| t.is_punct("->") || t.is_punct("=>")) {
+        return None;
+    }
+    let mut depth = 0i32;
+    for t in toks {
+        if t.is_punct("(") {
+            depth += 1;
+        } else if t.is_punct(")") {
+            depth -= 1;
+        } else if depth == 0 && t.is_punct("=") {
+            return None;
+        }
+    }
+    match parse_expr(toks, line) {
+        Ok(expr @ Expr::Chain { .. }) => Some(expr),
+        _ => None,
+    }
 }

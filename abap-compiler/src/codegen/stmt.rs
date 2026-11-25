@@ -46,6 +46,11 @@ impl<'ctx> Codegen<'ctx> {
                     ],
                 )
             }
+            Stmt::ExprStmt { expr, line } => {
+                // Rückgabewert wird verworfen
+                self.eval(expr, *line)?;
+                Ok(())
+            }
             Stmt::Raise { exception, line } => {
                 let (pointer, ty) = self.data(exception, *line)?;
                 let Ty::Ref(class_idx) = ty else {

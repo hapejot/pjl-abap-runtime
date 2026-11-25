@@ -13,7 +13,7 @@ use tracing::error;
 
 use std::collections::{BTreeSet, HashMap};
 
-use abapgit_inspect::abap::{
+use crate::inspect::abap::{
     parse_l1, ClassDef as AbapClass, ClassKind, Item, Kind, MemberKind, Program, Statement, Token,
     TopItem,
 };

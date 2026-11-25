@@ -1,7 +1,7 @@
 //! Ausdrucks- und Bedingungs-AST sowie ihr Parser über die Tokens des ABAP-Parsers.
 
-use abapgit_inspect::abap::{Kind, Token};
-use tracing::{error, info};
+use crate::inspect::abap::{Kind, Token};
+use tracing::debug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -26,7 +26,11 @@ pub enum Expr {
         args: Vec<NamedArg>,
     },
     Lines(Box<Expr>),
-    ExternalCall(String),
+    /// Verkettete Aufrufe wie `a->m( )->n( p = x )`: Basis und Schritte in Reihenfolge
+    Chain {
+        base: Box<Expr>,
+        steps: Vec<ChainStep>,
+    },
     Bool(Box<Cond>),
     StrLen(Box<Expr>),
     DynamicSlice {
@@ -77,6 +81,13 @@ pub struct NamedArg {
     pub name: Option<String>,
     pub changing: Option<bool>,
     pub expr: Expr,
+}
+
+/// Ein Schritt einer Verkettung: Methodenaufruf (`args` gesetzt) oder Attributzugriff (`None`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainStep {
+    pub method: String,
+    pub args: Option<Vec<NamedArg>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,7 +236,7 @@ fn parse_template(text: &str, line: usize) -> Result<Expr, CompileError> {
         {
             expression.truncate(format);
         }
-        let tokens = abapgit_inspect::abap::tokenize(&expression);
+        let tokens = crate::inspect::abap::tokenize(&expression);
         parts.push(parse_expr(&tokens, line)?);
     }
     if !literal.is_empty() || parts.is_empty() {
@@ -270,7 +281,7 @@ impl Parser<'_> {
 
     fn finish(&self, toks: &[Token]) -> Result<(), CompileError> {
         if self.pos != toks.len() {
-            error!("statement is not nicht zuende: {:?}", toks);
+            debug!("statement is not nicht zuende: {:?}", toks);
             return err(
                 self.line,
                 format!("unerwartetes Token '{}'", toks[self.pos].text),
@@ -628,7 +639,61 @@ impl Parser<'_> {
         Ok((args, receiving))
     }
 
+    /// Primärausdruck mit anschließender Verkettung über `->`.
     fn primary(&mut self) -> Result<Expr, CompileError> {
+        let base = self.primary_base()?;
+        self.chain_on(base)
+    }
+
+    /// Hängt Schritte `->name` bzw. `->name( args )` an `base` an. Ohne Schritte bleibt `base` unverändert.
+    fn chain_on(&mut self, base: Expr) -> Result<Expr, CompileError> {
+        let mut steps = Vec::new();
+        while matches!(self.peek(), Some(token) if token.is_punct("->")) {
+            self.pos += 1;
+            let mut method = self
+                .peek()
+                .filter(|token| token.kind == Kind::Word)
+                .map(|token| token.text.to_lowercase())
+                .ok_or_else(|| CompileError {
+                    line: self.line,
+                    message: "Methodenname nach '->' erwartet".into(),
+                })?;
+            self.pos += 1;
+            if matches!(self.peek(), Some(token) if token.is_punct("~")) {
+                self.pos += 1;
+                let part = self
+                    .peek()
+                    .filter(|token| token.kind == Kind::Word)
+                    .map(|token| token.text.to_lowercase())
+                    .ok_or_else(|| CompileError {
+                        line: self.line,
+                        message: "Interface-Methode nach '~' erwartet".into(),
+                    })?;
+                self.pos += 1;
+                method = format!("{method}~{part}");
+            }
+            let args = if matches!(self.peek(), Some(token) if token.is_punct("(")) {
+                self.pos += 1;
+                let (args, receiving) = self.arg_list(true)?;
+                if receiving.is_some() {
+                    return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                }
+                Some(args)
+            } else {
+                None
+            };
+            steps.push(ChainStep { method, args });
+        }
+        if steps.is_empty() {
+            return Ok(base);
+        }
+        Ok(Expr::Chain {
+            base: Box::new(base),
+            steps,
+        })
+    }
+
+    fn primary_base(&mut self) -> Result<Expr, CompileError> {
         let Some(t) = self.peek().cloned() else {
             return err(self.line, "Ausdruck endet unerwartet");
         };
@@ -661,7 +726,7 @@ impl Parser<'_> {
                 else {
                     return err(self.line, "Name wird nach '{separator}' erwartet");
                 };
-                info!(
+                debug!(
                     "parsed: {}{:?}{:?}",
                     name.text,
                     separator,
@@ -700,26 +765,11 @@ impl Parser<'_> {
                         name.text.to_lowercase()
                     };
                     if matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                        let mut chain = format!("{}=>{}", t.text.to_lowercase(), method);
-                        while matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                            self.pos += 1;
-                            let chained = self
-                                .peek()
-                                .filter(|token| token.kind == Kind::Word)
-                                .map(|token| token.text.to_lowercase())
-                                .ok_or_else(|| CompileError {
-                                    line: self.line,
-                                    message: "Methodenname nach '->' erwartet".into(),
-                                })?;
-                            self.pos += 1;
-                            chain.push_str("->");
-                            chain.push_str(&chained);
-                            if matches!(self.peek(), Some(token) if token.is_punct("(")) {
-                                self.pos += 1;
-                                let _ = self.arg_list(true)?;
-                            }
-                        }
-                        return Ok(Expr::ExternalCall(chain));
+                        return self.chain_on(Expr::StaticCall {
+                            class: t.text.to_lowercase(),
+                            method,
+                            args,
+                        });
                     }
                     return Ok(Expr::StaticCall {
                         class: t.text.to_lowercase(),
@@ -803,26 +853,11 @@ impl Parser<'_> {
                     return Ok(Expr::Lines(Box::new(args.remove(0).expr)));
                 }
                 if matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                    let mut chain = t.text.to_lowercase();
-                    while matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                        self.pos += 1;
-                        let next = self
-                            .peek()
-                            .filter(|token| token.kind == Kind::Word)
-                            .map(|token| token.text.to_lowercase())
-                            .ok_or_else(|| CompileError {
-                                line: self.line,
-                                message: "Methodenname nach '->' erwartet".into(),
-                            })?;
-                        self.pos += 1;
-                        chain.push_str("->");
-                        chain.push_str(&next);
-                        if matches!(self.peek(), Some(token) if token.is_punct("(")) {
-                            self.pos += 1;
-                            let _ = self.arg_list(true)?;
-                        }
-                    }
-                    return Ok(Expr::ExternalCall(chain));
+                    return self.chain_on(Expr::Call {
+                        recv: "me".into(),
+                        method: t.text.to_lowercase(),
+                        args,
+                    });
                 }
                 Ok(Expr::Call {
                     recv: "me".into(),
@@ -866,26 +901,11 @@ impl Parser<'_> {
                         return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
                     }
                     if matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                        let mut chain = format!("{}->{}", t.text.to_lowercase(), method_name);
-                        while matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                            self.pos += 1;
-                            let next = self
-                                .peek()
-                                .filter(|token| token.kind == Kind::Word)
-                                .map(|token| token.text.to_lowercase())
-                                .ok_or_else(|| CompileError {
-                                    line: self.line,
-                                    message: "Methodenname nach '->' erwartet".into(),
-                                })?;
-                            self.pos += 1;
-                            chain.push_str("->");
-                            chain.push_str(&next);
-                            if matches!(self.peek(), Some(token) if token.is_punct("(")) {
-                                self.pos += 1;
-                                let _ = self.arg_list(true)?;
-                            }
-                        }
-                        return Ok(Expr::ExternalCall(chain));
+                        return self.chain_on(Expr::Call {
+                            recv: t.text.to_lowercase(),
+                            method: method_name,
+                            args,
+                        });
                     }
                     return Ok(Expr::Call {
                         recv: t.text.to_lowercase(),
@@ -903,7 +923,7 @@ impl Parser<'_> {
                 None => Ok(Expr::Var(t.text.to_lowercase())),
             },
             _ => {
-                error!(
+                debug!(
                     "unerwartetes Token hier {}:{} {:?}",
                     self.line, self.pos, self.toks
                 );

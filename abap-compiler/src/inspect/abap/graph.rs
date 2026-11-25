@@ -20,8 +20,8 @@ use super::lexer::{Kind, Token};
 use super::parser::{
     parse_l1, ClassDef, ClassKind, Item, MemberKind, Program, Statement, TopItem,
 };
-use crate::model::is_builtin_type;
-use crate::objects::object_key;
+use crate::inspect::model::is_builtin_type;
+use crate::inspect::objects::object_key;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use abapgit_inspect::objects::Entry;
-use abapgit_inspect::tui::app::{App, Object, Sources};
+use abap_compiler::inspect::objects::Entry;
+use abap_compiler::inspect::tui::app::{App, Object, Sources};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 fn entry(depth: usize, label: &str, file: &str, line: usize) -> Entry {

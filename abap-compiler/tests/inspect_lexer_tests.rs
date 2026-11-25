@@ -1,4 +1,4 @@
-use abapgit_inspect::abap::{tokenize, Kind};
+use abap_compiler::inspect::abap::{tokenize, Kind};
 
 fn texts(src: &str) -> Vec<String> {
     tokenize(src).into_iter().map(|t| t.text).collect()
