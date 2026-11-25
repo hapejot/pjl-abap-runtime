@@ -60,9 +60,14 @@ impl<'ctx> Codegen<'ctx> {
             return Ok((v.slot, v.ty));
         }
         let p = llvm(self.builder.build_load(self.ptrt, v.slot, "fsptr"))?.into_pointer_value();
-        let _ = (name, line);
+        let _ = line;
         self.check_bound_fs(p)?;
-        Ok((p, v.ty))
+        // In einer spezialisierten Anweisung gilt der festgelegte Typ
+        let ty = match self.fs_override.get(name) {
+            Some(t) if v.ty == Ty::Dynamic => *t,
+            _ => v.ty,
+        };
+        Ok((p, ty))
     }
 
     /// Nicht zugewiesenes Feldsymbol: Laufzeitfehler statt Zugriff auf null.

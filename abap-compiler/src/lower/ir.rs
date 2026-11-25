@@ -320,4 +320,6 @@ pub struct Ir {
     pub classes: Vec<ClassDef>,
     pub constants: HashMap<String, Expr>,
     pub dependencies: Vec<String>,
+    /// Feste Typen, die in dynamische Feldsymbole zugewiesen werden (für Prüfungen zur Laufzeit)
+    pub dynamic_types: Vec<Ty>,
 }

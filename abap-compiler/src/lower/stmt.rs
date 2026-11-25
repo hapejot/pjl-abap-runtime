@@ -232,6 +232,13 @@ impl Lowerer {
                         && toks[3].kind == Kind::Word
                         && toks[3].text.starts_with('<')
                     {
+                        if let Some(source_ty) = self.data_types.get(&word(&toks[1])).copied() {
+                            if matches!(source_ty, Ty::Int | Ty::Char(_) | Ty::Str | Ty::Struct(_))
+                                && !self.dynamic_types.contains(&source_ty)
+                            {
+                                self.dynamic_types.push(source_ty);
+                            }
+                        }
                         out.push(Stmt::AssignFs {
                             fs: word(&toks[3]),
                             source: word(&toks[1]),

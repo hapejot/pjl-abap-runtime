@@ -1,1 +1,0 @@
-dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt

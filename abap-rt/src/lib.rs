@@ -484,3 +484,11 @@ pub extern "C" fn abap_rt_unbound() -> ! {
     eprintln!("Laufzeitfehler: Objektreferenz ist nicht gesetzt (CX_SY_REF_IS_INITIAL)");
     std::process::exit(1)
 }
+
+/// Laufzeitfehler: Typ eines dynamischen Feldsymbols passt nicht zum erwarteten Typ (CASTING).
+#[no_mangle]
+pub extern "C" fn abap_rt_type_mismatch() -> ! {
+    let _ = io::stdout().flush();
+    eprintln!("Laufzeitfehler: Typ des Feldsymbols passt nicht (CASTING)");
+    std::process::exit(1)
+}

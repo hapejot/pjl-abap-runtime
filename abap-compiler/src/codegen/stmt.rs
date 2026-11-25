@@ -14,7 +14,81 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
+    /// Anweisung mit dynamischem Feldsymbol: je Typ der Typwelt ein Zweig mit festgelegtem Typ.
+    /// Zur Laufzeit wählt der Typ-Tag den Zweig; passt keiner, meldet das Programm einen Typkonflikt.
     pub(super) fn emit_stmt(&mut self, s: &Stmt) -> CResult<()> {
+        // Deklarationen erzeugen keinen Code und brauchen keinen Typzweig
+        if matches!(s, Stmt::FieldSymbol { .. } | Stmt::Data { .. }) {
+            return self.emit_stmt_plain(s);
+        }
+        // ASSIGN setzt den Tag des Ziels selbst; nur die Quelle muss zur Laufzeit geprüft werden
+        if let Stmt::AssignFs { fs, source, .. } = s {
+            let source_open = self.dynamic_fs_names().contains(source);
+            let target_open = self.var(fs, 0).is_ok_and(|v| v.ty == Ty::Dynamic);
+            if source_open && !target_open {
+                return self.emit_specialized(source, s);
+            }
+            return self.emit_stmt_plain(s);
+        }
+        let text = format!("{s:?}");
+        let used: Vec<String> = self
+            .dynamic_fs_names()
+            .into_iter()
+            .filter(|n| text.contains(&format!("\"{n}\"")))
+            .collect();
+        match used.as_slice() {
+            [] => self.emit_stmt_plain(s),
+            [name] => self.emit_specialized(name, s),
+            _ => err(0, format!("mehrere dynamische Feldsymbole in einer Anweisung ({}) noch nicht unterstützt", used.join(", "))),
+        }
+    }
+
+    /// Dynamische Feldsymbole im Gültigkeitsbereich, deren Typ in dieser Anweisung noch offen ist.
+    fn dynamic_fs_names(&self) -> Vec<String> {
+        let names: std::collections::BTreeSet<String> = self
+            .vars
+            .iter()
+            .chain(self.globals.iter())
+            .filter(|(n, v)| v.fs && v.ty == Ty::Dynamic && !self.fs_override.contains_key(*n))
+            .map(|(n, _)| n.clone())
+            .collect();
+        names.into_iter().collect()
+    }
+
+    fn emit_specialized(&mut self, name: &str, s: &Stmt) -> CResult<()> {
+        let tag_slot = self.var(name, 0)?.tag.ok_or_else(|| CompileError {
+            line: 0,
+            message: format!("Feldsymbol '{name}' hat keinen Typ-Tag"),
+        })?;
+        let tag = llvm(self.builder.build_load(self.ptrt, tag_slot, "spec_tag"))?.into_pointer_value();
+        let end = self.new_block("fs_spec_end")?;
+        for ty in self.dynamic_types.clone() {
+            let want = self.type_descriptor(ty, 0)?;
+            let t = llvm(self.builder.build_ptr_to_int(tag, self.i64t, "spec_t"))?;
+            let w = llvm(self.builder.build_ptr_to_int(want, self.i64t, "spec_w"))?;
+            let eq = llvm(self.builder.build_int_compare(IntPredicate::EQ, t, w, "spec_eq"))?;
+            let hit = self.new_block("fs_spec_hit")?;
+            let next = self.new_block("fs_spec_next")?;
+            llvm(self.builder.build_conditional_branch(eq, hit, next))?;
+            self.builder.position_at_end(hit);
+            self.fs_override.insert(name.to_string(), ty);
+            let result = self.emit_stmt_plain(s);
+            self.fs_override.remove(name);
+            if result.is_err() {
+                // Block abschließen, damit der Fehler allein gemeldet wird
+                self.br_if_open(end)?;
+            }
+            result?;
+            self.br_if_open(end)?;
+            self.builder.position_at_end(next);
+        }
+        self.call_void(self.rt.type_mismatch, &[])?;
+        llvm(self.builder.build_unreachable())?;
+        self.builder.position_at_end(end);
+        Ok(())
+    }
+
+    fn emit_stmt_plain(&mut self, s: &Stmt) -> CResult<()> {
         match s {
             // Allokation erfolgt in `hoist`.
             Stmt::Data { .. } | Stmt::FieldSymbol { .. } => Ok(()),
@@ -70,6 +144,14 @@ impl<'ctx> Codegen<'ctx> {
                     let tag = llvm(self.builder.build_load(self.ptrt, src_tag, "src_tag"))?.into_pointer_value();
                     llvm(self.builder.build_store(target.slot, p))?;
                     llvm(self.builder.build_store(tag_slot, tag))?;
+                    return Ok(());
+                }
+                if target.ty != Ty::Dynamic && target.ty != ty && self.fs_override.contains_key(source) {
+                    // Spezialisierter Zweig mit anderem Typ: nur bei Erreichen zur Laufzeit ein Fehler
+                    self.call_void(self.rt.type_mismatch, &[])?;
+                    llvm(self.builder.build_unreachable())?;
+                    let cont = self.new_block("fs_assign_cont")?;
+                    self.builder.position_at_end(cont);
                     return Ok(());
                 }
                 if target.ty != Ty::Dynamic && target.ty != ty {
@@ -155,11 +237,7 @@ impl<'ctx> Codegen<'ctx> {
                 target,
                 value,
                 line,
-            } => {
-                let dst = self.dest(target, *line)?;
-                let v = self.eval(value, *line)?;
-                self.store(dst, v, *line)
-            }
+            } => self.assign_stmt(target, value, *line),
             Stmt::AssignComponent {
                 component,
                 structure,
@@ -292,26 +370,7 @@ impl<'ctx> Codegen<'ctx> {
                     return Ok(());
                 };
                 let v = self.eval(value, *line)?;
-                match v {
-                    Val::Ref(..) => {
-                        return err(*line, "Objektreferenz kann nicht ausgegeben werden")
-                    }
-                    Val::Mem(..) => {
-                        return err(
-                            *line,
-                            "Struktur kann nicht ausgegeben werden (nur Komponenten)",
-                        )
-                    }
-                    Val::Table(_) => {
-                        return err(*line, "Interne Tabelle kann nicht ausgegeben werden")
-                    }
-                    Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
-                    Val::Chars(p, n) => {
-                        self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
-                    }
-                    Val::Str(h) => self.call_void(self.rt.write_str, &[h.into()])?,
-                }
-                Ok(())
+                self.write_value(v, *line)
             }
             Stmt::If {
                 branches,
@@ -436,6 +495,37 @@ impl<'ctx> Codegen<'ctx> {
             self.i32t.const_int(len, false),
         ]));
         Ok(global.as_pointer_value())
+    }
+
+    /// Gibt einen Wert aus; Objekte, Strukturen und Tabellen sind nicht ausgabefähig.
+    pub(super) fn write_value(&mut self, v: Val<'ctx>, line: usize) -> CResult<()> {
+        match v {
+                    Val::Ref(..) => {
+                        return err(line, "Objektreferenz kann nicht ausgegeben werden")
+                    }
+                    Val::Mem(..) => {
+                        return err(
+                            line,
+                            "Struktur kann nicht ausgegeben werden (nur Komponenten)",
+                        )
+                    }
+                    Val::Table(_) => {
+                        return err(line, "Interne Tabelle kann nicht ausgegeben werden")
+                    }
+                    Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
+                    Val::Chars(p, n) => {
+                        self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
+                    }
+                    Val::Str(h) => self.call_void(self.rt.write_str, &[h.into()])?,
+        }
+        Ok(())
+    }
+
+    /// Zuweisung. Dynamische Feldsymbole werden zur Laufzeit gegen ihren Typ-Tag geprüft.
+    pub(super) fn assign_stmt(&mut self, target: &Target, value: &Expr, line: usize) -> CResult<()> {
+        let dst = self.dest(target, line)?;
+        let v = self.eval(value, line)?;
+        self.store(dst, v, line)
     }
 
     pub(super) fn store(&mut self, dst: Dest<'ctx>, v: Val<'ctx>, line: usize) -> CResult<()> {
@@ -917,3 +1007,4 @@ impl<'ctx> Codegen<'ctx> {
             .collect()
     }
 }
+

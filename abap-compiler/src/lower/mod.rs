@@ -78,6 +78,8 @@ fn struct_begin(s: &Statement) -> Option<(String, String)> {
 
 /// Zustand während der Übersetzung: bekannte Typnamen und Strukturdefinitionen.
 struct Lowerer {
+    /// Typen, die per ASSIGN in Feldsymbole gelangen können
+    dynamic_types: Vec<Ty>,
     /// Gesammelte Fehler; die Übersetzung läuft nach einem Fehler weiter.
     errors: Vec<CompileError>,
     structs: Vec<StructDef>,
@@ -124,6 +126,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         data_types: HashMap::new(),
         scope: None,
         external_parents: HashMap::new(),
+        dynamic_types: Vec::new(),
     };
     lw.preload_ddic(ddic);
     let mut stmts = Vec::new();
@@ -225,6 +228,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         classes: lw.classes,
         constants: lw.constants,
         dependencies: lw.external_types,
+        dynamic_types: lw.dynamic_types,
     })
 }
 

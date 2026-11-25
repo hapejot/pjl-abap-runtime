@@ -141,6 +141,7 @@ struct Rt<'ctx> {
     table_row: FunctionValue<'ctx>,
     table_clear: FunctionValue<'ctx>,
     fs_unassigned: FunctionValue<'ctx>,
+    type_mismatch: FunctionValue<'ctx>,
     obj_new: FunctionValue<'ctx>,
     unbound: FunctionValue<'ctx>,
     exception_raise: FunctionValue<'ctx>,
@@ -158,6 +159,10 @@ struct Rt<'ctx> {
 }
 
 pub struct Codegen<'ctx> {
+    /// Aktuell festgelegter Typ dynamischer Feldsymbole innerhalb einer spezialisierten Anweisung
+    fs_override: HashMap<String, Ty>,
+    /// Typwelt für dynamische Feldsymbole
+    dynamic_types: Vec<Ty>,
     ctx: &'ctx Context,
     pub module: Module<'ctx>,
     builder: Builder<'ctx>,
@@ -227,6 +232,7 @@ impl<'ctx> Codegen<'ctx> {
             table_row: f("abap_rt_table_row", ptrt.fn_type(&[ptrt.into(), i64t.into()], false)),
             table_clear: f("abap_rt_table_clear", void.fn_type(&[ptrt.into()], false)),
             fs_unassigned: f("abap_rt_fs_unassigned", void.fn_type(&[], false)),
+            type_mismatch: f("abap_rt_type_mismatch", void.fn_type(&[], false)),
             obj_new: f("abap_rt_obj_new", ptrt.fn_type(&[i64t.into()], false)),
             unbound: f("abap_rt_unbound", void.fn_type(&[], false)),
             exception_raise: f(
@@ -296,6 +302,8 @@ impl<'ctx> Codegen<'ctx> {
             body: None,
             rt,
             errors: Vec::new(),
+            dynamic_types: Vec::new(),
+            fs_override: HashMap::new(),
         }
     }
 
@@ -320,6 +328,7 @@ impl<'ctx> Codegen<'ctx> {
 
     fn emit_program_body(&mut self, ir: &Ir) -> CResult<()> {
         self.constants = ir.constants.clone();
+        self.dynamic_types = ir.dynamic_types.clone();
         self.build_layouts(&ir.structs);
         // Klassen: Methoden als Funktionen deklarieren (Objektzeiger als erster Parameter)
         let void = self.ctx.void_type();
