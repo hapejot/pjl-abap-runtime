@@ -15,6 +15,7 @@ mod data;
 mod routines;
 mod stmt;
 mod expr;
+mod packed;
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -77,6 +78,8 @@ enum Val<'ctx> {
     /// Struktur: Zeiger auf den Speicher und Index des Strukturtyps
     Mem(PointerValue<'ctx>, usize),
     Int(IntValue<'ctx>),
+    /// Gepackte Zahl: Handle auf einen Laufzeitwert `Dec`
+    Dec(PointerValue<'ctx>),
     /// Zeiger auf Zeichen und deren Länge
     Chars(PointerValue<'ctx>, usize),
     /// Handle auf einen Runtime-String
@@ -90,6 +93,8 @@ enum Dest<'ctx> {
     Ref(PointerValue<'ctx>, usize),
     Mem(PointerValue<'ctx>, usize),
     Int(PointerValue<'ctx>),
+    /// Gepackte Zahl: Speicherplatz, Bytezahl, Nachkommastellen
+    Packed(PointerValue<'ctx>, usize, usize),
     Chars(PointerValue<'ctx>, usize),
     /// Slot, der das String-Handle hält
     Str(PointerValue<'ctx>),
@@ -122,6 +127,20 @@ struct LoopCtx<'ctx> {
 /// Deklarierte Runtime-Funktionen.
 struct Rt<'ctx> {
     write_int: FunctionValue<'ctx>,
+    dec_unpack: FunctionValue<'ctx>,
+    dec_pack: FunctionValue<'ctx>,
+    dec_from_int: FunctionValue<'ctx>,
+    dec_add: FunctionValue<'ctx>,
+    dec_sub: FunctionValue<'ctx>,
+    dec_mul: FunctionValue<'ctx>,
+    dec_div: FunctionValue<'ctx>,
+    dec_mod: FunctionValue<'ctx>,
+    dec_mark: FunctionValue<'ctx>,
+    dec_release: FunctionValue<'ctx>,
+    dec_neg: FunctionValue<'ctx>,
+    dec_cmp: FunctionValue<'ctx>,
+    dec_to_int: FunctionValue<'ctx>,
+    dec_write: FunctionValue<'ctx>,
     write_chars: FunctionValue<'ctx>,
     write_str: FunctionValue<'ctx>,
     newline: FunctionValue<'ctx>,
@@ -207,6 +226,20 @@ impl<'ctx> Codegen<'ctx> {
         let f = |name: &str, ty| module.add_function(name, ty, Some(Linkage::External));
         let rt = Rt {
             write_int: f("abap_rt_write_int", void.fn_type(&[i32t.into()], false)),
+            dec_unpack: f("abap_rt_dec_unpack", ptrt.fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false)),
+            dec_pack: f("abap_rt_dec_pack", void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into(), i64t.into()], false)),
+            dec_from_int: f("abap_rt_dec_from_int", ptrt.fn_type(&[i32t.into()], false)),
+            dec_add: f("abap_rt_dec_add", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_sub: f("abap_rt_dec_sub", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_mul: f("abap_rt_dec_mul", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_div: f("abap_rt_dec_div", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_mod: f("abap_rt_dec_mod", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_mark: f("abap_rt_dec_mark", i64t.fn_type(&[], false)),
+            dec_release: f("abap_rt_dec_release", void.fn_type(&[i64t.into()], false)),
+            dec_neg: f("abap_rt_dec_neg", ptrt.fn_type(&[ptrt.into()], false)),
+            dec_cmp: f("abap_rt_dec_cmp", i32t.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_to_int: f("abap_rt_dec_to_int", i32t.fn_type(&[ptrt.into()], false)),
+            dec_write: f("abap_rt_dec_write", void.fn_type(&[ptrt.into(), i64t.into()], false)),
             write_chars: f("abap_rt_write_chars", void.fn_type(&[ptrt.into(), i64t.into()], false)),
             write_str: f("abap_rt_write_str", void.fn_type(&[ptrt.into()], false)),
             newline: f("abap_rt_newline", void.fn_type(&[], false)),

@@ -362,6 +362,7 @@ impl Lowerer {
             match t {
                 DdicType::Char(n) => Ty::Char(*n),
                 DdicType::Int => Ty::Int,
+                DdicType::Packed { bytes, scale } => Ty::Packed { bytes: *bytes, scale: *scale },
                 DdicType::Str => Ty::Str,
             }
         }

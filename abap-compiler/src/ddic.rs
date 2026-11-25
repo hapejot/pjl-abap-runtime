@@ -17,6 +17,8 @@ pub enum DdicType {
     Int,
     /// Variable Zeichenkette (STRG)
     Str,
+    /// Gepackte Dezimalzahl (DEC): Bytezahl und Nachkommastellen
+    Packed { bytes: usize, scale: usize },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -29,14 +31,27 @@ pub struct Ddic {
     pub skipped: Vec<String>,
 }
 
-/// Abbildung eines DDIC-Datentyps mit Länge auf einen Compilertyp.
-fn base_type(datatype: &str, leng: usize) -> Option<DdicType> {
+/// Abbildung eines DDIC-Datentyps auf einen Compilertyp. `block` ist der XML-Abschnitt mit LENG,
+/// DECIMALS und (bei Feldern aus DD03P) INTLEN.
+fn base_type(block: &str, datatype: &str) -> Option<DdicType> {
+    let leng = leng(block);
     match datatype {
-        "CHAR" | "NUMC" | "CLNT" | "LANG" | "ACCP" => Some(DdicType::Char(leng)),
+        "CHAR" | "NUMC" | "CLNT" | "LANG" | "ACCP" | "CUKY" | "UNIT" => Some(DdicType::Char(leng)),
         "DATS" => Some(DdicType::Char(8)),
         "TIMS" => Some(DdicType::Char(6)),
         "STRG" => Some(DdicType::Str),
         "INT4" => Some(DdicType::Int),
+        "DEC" => {
+            // Länge in Ziffern (LENG); INTLEN ist die Bytezahl, sonst gilt LENG / 2 + 1.
+            let bytes = xml_value(block, "INTLEN")
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(leng / 2 + 1);
+            let scale = xml_value(block, "DECIMALS")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0);
+            Some(DdicType::Packed { bytes, scale })
+        }
         _ => None,
     }
 }
@@ -60,7 +75,7 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
         };
         let name = xml_value(block, "DOMNAME").unwrap_or_default().to_lowercase();
         let datatype = xml_value(block, "DATATYPE").unwrap_or_default();
-        match base_type(&datatype, leng(block)) {
+        match base_type(block, &datatype) {
             Some(t) => {
                 domains.insert(name, t);
             }
@@ -79,7 +94,7 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
             let dom = xml_value(block, "DOMNAME").unwrap_or_default().to_lowercase();
             domains.get(&dom).cloned()
         } else {
-            base_type(&datatype, leng(block))
+            base_type(block, &datatype)
         };
         match ty {
             Some(t) => {
@@ -109,7 +124,7 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
                 break;
             }
             let ty = match xml_value(block, "DATATYPE") {
-                Some(dt) => base_type(&dt, leng(block)),
+                Some(dt) => base_type(block, &dt),
                 None => xml_value(block, "ROLLNAME")
                     .and_then(|r| elements.get(&r.to_lowercase()).cloned()),
             };
@@ -174,11 +189,35 @@ mod tests {
     #[test]
     fn unsupported_field_skips_whole_struct_with_reason() {
         let tabl = "<DD02V><TABNAME>ZD</TABNAME></DD02V>\
-<DD03P_TABLE><DD03P><FIELDNAME>PREIS</FIELDNAME><DATATYPE>DEC</DATATYPE><LENG>000010</LENG></DD03P></DD03P_TABLE>";
+<DD03P_TABLE><DD03P><FIELDNAME>PREIS</FIELDNAME><DATATYPE>FLTP</DATATYPE><LENG>000016</LENG></DD03P></DD03P_TABLE>";
         let d = from_files(&[("zd.tabl.xml".into(), tabl.into())]);
         assert!(d.structs.is_empty());
         assert_eq!(d.skipped.len(), 1);
         assert!(d.skipped[0].contains("PREIS"));
+    }
+
+    #[test]
+    fn dec_field_maps_to_packed_with_bytes_and_scale() {
+        let tabl = "<DD02V><TABNAME>ZD</TABNAME></DD02V>\
+<DD03P_TABLE><DD03P><FIELDNAME>PREIS</FIELDNAME><DATATYPE>DEC</DATATYPE><LENG>000010</LENG>\
+<DECIMALS>000002</DECIMALS><INTLEN>000006</INTLEN></DD03P></DD03P_TABLE>";
+        let d = from_files(&[("zd.tabl.xml".into(), tabl.into())]);
+        assert!(d.skipped.is_empty());
+        assert_eq!(
+            d.structs[0].1,
+            vec![("preis".to_string(), DdicType::Packed { bytes: 6, scale: 2 })]
+        );
+    }
+
+    #[test]
+    fn dec_without_intlen_uses_digit_count() {
+        let dtel = "<DD04V><ROLLNAME>ZBETR</ROLLNAME><DATATYPE>DEC</DATATYPE><LENG>000011</LENG>\
+<DECIMALS>000002</DECIMALS></DD04V>";
+        let d = from_files(&[("zbetr.dtel.xml".into(), dtel.into())]);
+        assert_eq!(
+            d.elements,
+            vec![("zbetr".to_string(), DdicType::Packed { bytes: 6, scale: 2 })]
+        );
     }
 
     #[test]

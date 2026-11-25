@@ -16,7 +16,19 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Anweisung mit dynamischem Feldsymbol: je Typ der Typwelt ein Zweig mit festgelegtem Typ.
     /// Zur Laufzeit wählt der Typ-Tag den Zweig; passt keiner, meldet das Programm einen Typkonflikt.
+    /// Jede Anweisung gibt am Ende ihre Zwischenwerte (DEC-Handles) frei. Nach einem Abschluss
+    /// des Blocks (RETURN, EXIT) entfällt die Freigabe; der Speicher wird dann nicht zurückgegeben.
     pub(super) fn emit_stmt(&mut self, s: &Stmt) -> CResult<()> {
+        let mark = self.call_int(self.rt.dec_mark, &[])?;
+        let result = self.emit_stmt_dispatch(s);
+        let open = self.builder.get_insert_block().is_some_and(|b| b.get_terminator().is_none());
+        if open {
+            self.call_void(self.rt.dec_release, &[mark.into()])?;
+        }
+        result
+    }
+
+    fn emit_stmt_dispatch(&mut self, s: &Stmt) -> CResult<()> {
         // Deklarationen erzeugen keinen Code und brauchen keinen Typzweig
         if matches!(s, Stmt::FieldSymbol { .. } | Stmt::Data { .. }) {
             return self.emit_stmt_plain(s);
@@ -338,6 +350,9 @@ impl<'ctx> Codegen<'ctx> {
                     Dest::Int(p) => {
                         llvm(self.builder.build_store(p, self.i32t.const_zero()))?;
                     }
+                    Dest::Packed(p, bytes, _) => {
+                        llvm(self.builder.build_store(p, self.packed_zero(bytes)))?;
+                    }
                     Dest::Chars(p, n) => {
                         self.call_void(
                             self.rt.chars_move,
@@ -513,6 +528,10 @@ impl<'ctx> Codegen<'ctx> {
                         return err(line, "Interne Tabelle kann nicht ausgegeben werden")
                     }
                     Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
+                    v @ Val::Dec(_) => {
+                        let h = self.dec_handle(v, line)?;
+                        self.write_packed(h)?
+                    }
                     Val::Chars(p, n) => {
                         self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
                     }
@@ -555,8 +574,15 @@ impl<'ctx> Codegen<'ctx> {
                 Val::Str(_) | Val::Chars(_, _) => Ok(()),
                 _ => err(line, "Wert kann nicht einer Struktur zugewiesen werden"),
             },
+            Dest::Packed(p, bytes, scale) => self.store_packed(p, bytes, scale, v, line),
             Dest::Int(p) => match v {
                 Val::Int(i) => {
+                    llvm(self.builder.build_store(p, i))?;
+                    Ok(())
+                }
+                // DEC -> ganze Zahl: Nachkommastellen fallen weg (zur Null hin)
+                Val::Dec(h) => {
+                    let i = self.dec_to_i32(h)?;
                     llvm(self.builder.build_store(p, i))?;
                     Ok(())
                 }
@@ -584,7 +610,7 @@ impl<'ctx> Codegen<'ctx> {
                     self.rt.str_to_chars,
                     &[p.into(), self.len(n).into(), h.into()],
                 ),
-                Val::Int(_) => err(
+                Val::Int(_) | Val::Dec(_) => err(
                     line,
                     "Zahl kann nicht einem Zeichenfeld zugewiesen werden (noch nicht unterstützt)",
                 ),
@@ -600,7 +626,7 @@ impl<'ctx> Codegen<'ctx> {
                     Val::Chars(sp, sl) => {
                         self.call_ptr(self.rt.str_from_chars, &[sp.into(), self.len(sl).into()])?
                     }
-                    Val::Int(_) => return err(
+                    Val::Int(_) | Val::Dec(_) => return err(
                         line,
                         "Zahl kann nicht einem String zugewiesen werden (noch nicht unterstützt)",
                     ),

@@ -204,6 +204,7 @@ impl<'ctx> Codegen<'ctx> {
         let zero = self.i32t.const_zero();
         match (a, b) {
             (Val::Int(x), Val::Int(y)) => llvm(self.builder.build_int_compare(pred, x, y, "cmp")),
+            (Val::Dec(_), _) | (_, Val::Dec(_)) => self.packed_compare(pred, a, b, line),
             (Val::Chars(p1, l1), Val::Chars(p2, l2)) => {
                 let r = self.call_int(self.rt.chars_cmp, &[p1.into(), self.len(l1).into(), p2.into(), self.len(l2).into()])?;
                 llvm(self.builder.build_int_compare(pred, r, zero, "ccmp"))
@@ -223,7 +224,7 @@ impl<'ctx> Codegen<'ctx> {
         match v {
             Val::Str(h) => Ok(h),
             Val::Chars(p, n) => self.call_ptr(self.rt.str_new, &[p.into(), self.len(n).into()]),
-            Val::Int(_) => err(line, format!("Zahl kann nicht {what} werden (nur Text)")),
+            Val::Int(_) | Val::Dec(_) => err(line, format!("Zahl kann nicht {what} werden (nur Text)")),
             Val::Mem(..) => err(line, format!("Struktur kann nicht {what} werden (nur Text)")),
             Val::Ref(..) => err(line, format!("Objektreferenz kann nicht {what} werden (nur Text)")),
             Val::Table(_) => err(line, format!("Tabelle kann nicht {what} werden (nur Text)")),
@@ -422,13 +423,20 @@ impl<'ctx> Codegen<'ctx> {
                     None => err(line, "leere Verkettung"),
                 }
             }
-            Expr::Neg(inner) => {
-                let v = self.int_operand(inner, line)?;
-                Ok(Val::Int(llvm(self.builder.build_int_neg(v, "neg"))?))
-            }
+            Expr::Neg(inner) => match self.eval(inner, line)? {
+                Val::Int(v) => Ok(Val::Int(llvm(self.builder.build_int_neg(v, "neg"))?)),
+                v @ Val::Dec(_) => self.packed_neg(v, line),
+                _ => err(line, "Arithmetik nur mit ganzzahligen Feldern oder DEC"),
+            },
             Expr::Bin(op, a, b) => {
-                let x = self.int_operand(a, line)?;
-                let y = self.int_operand(b, line)?;
+                let va = self.eval(a, line)?;
+                let vb = self.eval(b, line)?;
+                if matches!(va, Val::Dec(_)) || matches!(vb, Val::Dec(_)) {
+                    return self.packed_arith(*op, va, vb, line);
+                }
+                let (Val::Int(x), Val::Int(y)) = (va, vb) else {
+                    return err(line, "Arithmetik nur mit ganzzahligen Feldern oder DEC");
+                };
                 let r = match op {
                     BinOp::Add => llvm(self.builder.build_int_add(x, y, "add"))?,
                     BinOp::Sub => llvm(self.builder.build_int_sub(x, y, "sub"))?,
@@ -458,6 +466,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.i32t.const_zero(),
                 "is_initial_int",
             )),
+            v @ Val::Dec(_) => self.packed_is_zero(v, line),
             Val::Chars(pointer, length) => {
                 let empty = self.lit("");
                 let compared = self.call_int(

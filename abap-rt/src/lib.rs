@@ -6,6 +6,9 @@
 //! Zeichenfelder (`TYPE c`) sind Puffer fester Länge, der Compiler kennt die Länge.
 //! Strings (`TYPE string`) sind Handles auf `RtStr`. Sie werden nicht freigegeben (kein GC).
 
+pub mod packed;
+pub mod decimal;
+
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::atomic::AtomicU64;

@@ -19,6 +19,8 @@ pub enum Ty {
     External(usize),
     /// Zur Übersetzungszeit unbekannt: untypisiertes oder `TYPE any` Feldsymbol, Typ erst zur Laufzeit
     Dynamic,
+    /// Gepackte Dezimalzahl (DEC/P): Bytezahl im Speicher und Nachkommastellen
+    Packed { bytes: usize, scale: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]

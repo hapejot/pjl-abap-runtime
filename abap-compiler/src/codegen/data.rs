@@ -162,6 +162,7 @@ impl<'ctx> Codegen<'ctx> {
         match ty {
             Ty::Dynamic => err(line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
             Ty::Int => Ok(Dest::Int(p)),
+            Ty::Packed { bytes, scale } => Ok(Dest::Packed(p, bytes, scale)),
             Ty::Char(n) => Ok(Dest::Chars(p, n)),
             Ty::Str => Ok(Dest::Str(p)),
             Ty::Table(_) => err(line, "Tabelle kann nicht direkt zugewiesen werden"),
@@ -182,6 +183,7 @@ impl<'ctx> Codegen<'ctx> {
         match ty {
             Ty::Dynamic => err(_line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
             Ty::Int => Ok(Val::Int(llvm(self.builder.build_load(self.i32t, p, "ld"))?.into_int_value())),
+            Ty::Packed { bytes, scale } => self.load_packed(p, bytes, scale),
             Ty::Char(n) => Ok(Val::Chars(p, n)),
             Ty::Str => Ok(Val::Str(llvm(self.builder.build_load(self.ptrt, p, "lds"))?.into_pointer_value())),
             Ty::Table(_) => Ok(Val::Table(

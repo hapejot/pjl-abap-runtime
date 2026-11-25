@@ -19,9 +19,20 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Dynamic => self.ptrt.into(),
             Ty::Int => self.i32t.into(),
             Ty::Char(n) => self.char_array(n).into(),
+            Ty::Packed { bytes, .. } => self.ctx.i8_type().array_type(bytes as u32).into(),
             Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => self.ptrt.into(),
             Ty::Struct(i) => self.layouts[i].st.into(),
         }
+    }
+
+    /// Initialwert einer gepackten Zahl: Ziffer 0, Vorzeichen positiv (`C`) im letzten Halbbyte.
+    pub(super) fn packed_zero(&self, bytes: usize) -> inkwell::values::ArrayValue<'ctx> {
+        let i8t = self.ctx.i8_type();
+        let mut values: Vec<_> = (0..bytes).map(|_| i8t.const_zero()).collect();
+        if let Some(last) = values.last_mut() {
+            *last = i8t.const_int(0x0C, false);
+        }
+        i8t.const_array(&values)
     }
 
     /// Speicherbedarf eines Werts in Bytes (entspricht dem gepackten Layout).
@@ -30,6 +41,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Dynamic => 8,
             Ty::Int => 4,
             Ty::Char(n) => 2 * n as u64,
+            Ty::Packed { bytes, .. } => bytes as u64,
             Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => 8,
             Ty::Struct(i) => self.layouts[i].fields.iter().map(|(_, t)| self.size_of(*t)).sum(),
         }
@@ -60,6 +72,9 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Char(n) => {
                 llvm(b.build_store(slot, self.const_chars("", n)))?;
             }
+            Ty::Packed { bytes, .. } => {
+                llvm(b.build_store(slot, self.packed_zero(bytes)))?;
+            }
             Ty::Str => {
                 let e = self.empty_on(b)?;
                 llvm(b.build_store(slot, e))?;
@@ -79,7 +94,7 @@ impl<'ctx> Codegen<'ctx> {
                 let layout = self.layouts[i].clone();
                 llvm(b.build_store(slot, layout.st.const_zero()))?;
                 for (k, (_, fty)) in layout.fields.iter().enumerate() {
-                    if matches!(fty, Ty::Str | Ty::Char(_) | Ty::Table(_) | Ty::Struct(_)) {
+                    if matches!(fty, Ty::Str | Ty::Char(_) | Ty::Packed { .. } | Ty::Table(_) | Ty::Struct(_)) {
                         let fp = llvm(b.build_struct_gep(layout.st, slot, k as u32, "fi"))?;
                         self.init_value(b, fp, *fty)?;
                     }
