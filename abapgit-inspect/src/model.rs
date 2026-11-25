@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Serialize, Serializer};
 
-use crate::abap::{parse, Item, Kind, Program, Statement, Token, TopItem};
+use crate::abap::{parse_l1, Item, Kind, Program, Statement, Token, TopItem};
 
 #[derive(Debug, Default, Serialize)]
 pub struct DataModel {
@@ -816,7 +816,7 @@ fn literal_or_word(token: &Token) -> Option<String> {
     }
 }
 
-fn is_builtin_type(name: &str) -> bool {
+pub(crate) fn is_builtin_type(name: &str) -> bool {
     matches!(
         name.to_uppercase().as_str(),
         "ABAP_BOOL"
@@ -1106,7 +1106,7 @@ fn analyze_with_inventory(files: &[(String, String)], inventory_files: &[String]
         }
     }
     for (file, src) in files {
-        add_declared_inventory(&collect_program(&parse(src)), &mut inventory);
+        add_declared_inventory(&collect_program(&parse_l1(src)), &mut inventory);
         let key = crate::objects::object_key(file).unwrap_or_else(|| (String::new(), file.clone()));
         groups
             .entry(key)
@@ -1116,7 +1116,7 @@ fn analyze_with_inventory(files: &[(String, String)], inventory_files: &[String]
     for ((source_type, source), sources) in groups {
         let parsed: Vec<(String, Vec<Statement>)> = sources
             .iter()
-            .map(|(file, src)| (file.clone(), collect_program(&parse(src))))
+            .map(|(file, src)| (file.clone(), collect_program(&parse_l1(src))))
             .collect();
         let all_statements: Vec<Statement> = parsed
             .iter()

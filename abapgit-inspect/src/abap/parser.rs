@@ -478,7 +478,7 @@ fn parse_sig(s: &Statement) -> MethodSig {
 }
 
 /// Parst ABAP-Quelltext in eine Struktur aus Klassen, Routinen und Statements.
-pub fn parse(src: &str) -> Program {
+pub fn parse_l1(src: &str) -> Program {
     let mut c = Cursor {
         stmts: split_statements(tokenize(src)),
         pos: 0,

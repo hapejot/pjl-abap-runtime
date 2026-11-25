@@ -6,8 +6,10 @@ impl<'ctx> Codegen<'ctx> {
     // --- Statements --------------------------------------------------------
 
     pub(super) fn emit_block(&mut self, stmts: &[Stmt]) -> CResult<()> {
+        // Ein fehlerhaftes Statement wird gesammelt; die übrigen Statements werden weiter erzeugt.
         for s in stmts {
-            self.emit_stmt(s)?;
+            let result = self.emit_stmt(s);
+            self.collect(result);
         }
         Ok(())
     }
@@ -28,14 +30,20 @@ impl<'ctx> Codegen<'ctx> {
                 let function = self.lit(name);
                 self.call_void(
                     self.rt.external_call,
-                    &[function.into(), self.len(name.encode_utf16().count()).into()],
+                    &[
+                        function.into(),
+                        self.len(name.encode_utf16().count()).into(),
+                    ],
                 )
             }
             Stmt::ExternalOperation { name, .. } => {
                 let operation = self.lit(name);
                 self.call_void(
                     self.rt.external_call,
-                    &[operation.into(), self.len(name.encode_utf16().count()).into()],
+                    &[
+                        operation.into(),
+                        self.len(name.encode_utf16().count()).into(),
+                    ],
                 )
             }
             Stmt::Raise { exception, line } => {
@@ -53,7 +61,10 @@ impl<'ctx> Codegen<'ctx> {
                 .into_pointer_value();
                 self.call_void(
                     self.rt.exception_raise,
-                    &[object.into(), self.i64t.const_int(class_idx as u64 + 1, false).into()],
+                    &[
+                        object.into(),
+                        self.i64t.const_int(class_idx as u64 + 1, false).into(),
+                    ],
                 )?;
                 let Some(target) = self.exception_target.or(self.exit_fn) else {
                     return err(*line, "RAISE EXCEPTION ohne Rücksprungziel");
@@ -119,10 +130,10 @@ impl<'ctx> Codegen<'ctx> {
                     if !target_symbol.fs {
                         return err(*line, format!("ASSIGN-Ziel '{target}' ist kein Feldsymbol"));
                     }
-                    llvm(self.builder.build_store(
-                        target_symbol.slot,
-                        self.ptrt.const_null(),
-                    ))?;
+                    llvm(
+                        self.builder
+                            .build_store(target_symbol.slot, self.ptrt.const_null()),
+                    )?;
                     return Ok(());
                 }
                 let Ty::Struct(index) = ty else {
@@ -132,7 +143,8 @@ impl<'ctx> Codegen<'ctx> {
                     );
                 };
                 let layout = self.layouts[index].clone();
-                let Some(field_index) = layout.fields.iter().position(|(name, _)| name == component)
+                let Some(field_index) =
+                    layout.fields.iter().position(|(name, _)| name == component)
                 else {
                     return err(
                         *line,
@@ -186,10 +198,7 @@ impl<'ctx> Codegen<'ctx> {
                     self.i64t,
                     "read_index_i64",
                 ))?;
-                let row = self.call_ptr(
-                    self.rt.table_row,
-                    &[handle.into(), zero_based.into()],
-                )?;
+                let row = self.call_ptr(self.rt.table_row, &[handle.into(), zero_based.into()])?;
                 llvm(self.builder.build_store(target_symbol.slot, row))?;
                 Ok(())
             }
@@ -227,11 +236,14 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Write { newline, value, line } => {
+            Stmt::Write {
+                newline,
+                value,
+                line,
+            } => {
                 if *newline {
                     self.call_void(self.rt.newline, &[])?;
-                }
-                else {
+                } else {
                     self.call_void(self.rt.newfield, &[])?;
                 }
                 let Some(value) = value else {
@@ -302,7 +314,10 @@ impl<'ctx> Codegen<'ctx> {
                 let condition = self.cond(cond, *line)?;
                 let success = self.new_block("assert_ok")?;
                 let failure = self.new_block("assert_failed")?;
-                llvm(self.builder.build_conditional_branch(condition, success, failure))?;
+                llvm(
+                    self.builder
+                        .build_conditional_branch(condition, success, failure),
+                )?;
                 self.builder.position_at_end(failure);
                 self.call_void(self.rt.unbound, &[])?;
                 llvm(self.builder.build_unreachable())?;
@@ -348,6 +363,11 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 llvm(self.builder.build_store(p, n32))?;
                 Ok(())
+            }
+            Stmt::NotSupported { tokens } => {
+                let keyword = tokens.first().map(|t| t.text.to_uppercase()).unwrap_or_default();
+                let line = tokens.first().map_or(0, |t| t.line);
+                err(line, format!("Nicht unterstütztes Statement: {keyword}"))
             }
         }
     }
@@ -399,10 +419,7 @@ impl<'ctx> Codegen<'ctx> {
                     line,
                     "Objektreferenz kann keinem Zeichenfeld zugewiesen werden",
                 ),
-                Val::Table(_) => err(
-                    line,
-                    "Tabelle kann keinem Zeichenfeld zugewiesen werden",
-                ),
+                Val::Table(_) => err(line, "Tabelle kann keinem Zeichenfeld zugewiesen werden"),
                 // Zuweisung kürzt bzw. füllt mit Leerzeichen auf
                 Val::Chars(sp, sl) => self.call_void(
                     self.rt.chars_move,
@@ -683,7 +700,10 @@ impl<'ctx> Codegen<'ctx> {
             let expected = self.eval(&filter.value, line)?;
             let matches = self.compare(CmpOp::Eq, actual, expected, line)?;
             let filtered_body = self.new_block("loop_filter_body")?;
-            llvm(self.builder.build_conditional_branch(matches, filtered_body, latch))?;
+            llvm(
+                self.builder
+                    .build_conditional_branch(matches, filtered_body, latch),
+            )?;
             self.builder.position_at_end(filtered_body);
         }
         self.loops.push(LoopCtx { exit, next: latch });
@@ -729,7 +749,10 @@ impl<'ctx> Codegen<'ctx> {
                 self.i32t.const_zero(),
                 "exception_pending",
             ))?;
-            llvm(self.builder.build_conditional_branch(condition, dispatch, next))?;
+            llvm(
+                self.builder
+                    .build_conditional_branch(condition, dispatch, next),
+            )?;
             self.builder.position_at_end(next);
         }
         self.br_if_open(continuation)?;
@@ -766,7 +789,10 @@ impl<'ctx> Codegen<'ctx> {
                     self.i32t.const_zero(),
                     "catch_condition",
                 ))?;
-                llvm(self.builder.build_conditional_branch(condition, match_block, fallback))?;
+                llvm(
+                    self.builder
+                        .build_conditional_branch(condition, match_block, fallback),
+                )?;
             }
 
             self.builder.position_at_end(match_block);
@@ -814,8 +840,7 @@ impl<'ctx> Codegen<'ctx> {
                 let mut current = Some(*index);
                 while let Some(class_index) = current {
                     let candidate = &self.classes[class_index];
-                    if candidate.name == name
-                        || candidate.external_parent.as_deref() == Some(name)
+                    if candidate.name == name || candidate.external_parent.as_deref() == Some(name)
                     {
                         return true;
                     }

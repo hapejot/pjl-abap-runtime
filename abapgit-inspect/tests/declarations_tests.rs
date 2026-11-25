@@ -1,8 +1,8 @@
-use abapgit_inspect::abap::{declarations, parse};
+use abapgit_inspect::abap::{declarations, parse_l1};
 use abapgit_inspect::objects::{collect, render};
 
 fn decls(src: &str) -> Vec<(String, String)> {
-    declarations(&parse(src))
+    declarations(&parse_l1(src))
         .into_iter()
         .map(|d| (d.kind, d.name))
         .collect()
@@ -69,7 +69,7 @@ fn statements_inside_blocks_are_not_top_level() {
 #[test]
 fn class_definition_has_members_as_children() {
     let src = "CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    DATA mv TYPE i.\n    METHODS run.\n    CLASS-METHODS make.\nENDCLASS.";
-    let prog = parse(src);
+    let prog = parse_l1(src);
     let d = declarations(&prog);
     assert_eq!(d.len(), 1);
     assert_eq!(d[0].kind, "CLASS");
@@ -178,7 +178,7 @@ fn fugr_include_stays_within_function_group() {
 #[test]
 fn method_declaration_links_to_implementation_line() {
     let src = "CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    METHODS run IMPORTING iv_x TYPE i.\nENDCLASS.\n\nCLASS lcl IMPLEMENTATION.\n  METHOD run.\n  ENDMETHOD.\nENDCLASS.";
-    let d = declarations(&parse(src));
+    let d = declarations(&parse_l1(src));
     assert_eq!(d.len(), 1);
     let m = &d[0].children[0];
     assert_eq!(m.name, "run");

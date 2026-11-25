@@ -183,6 +183,8 @@ pub struct Codegen<'ctx> {
     exit_fn: Option<BasicBlock<'ctx>>,
     body: Option<BasicBlock<'ctx>>,
     rt: Rt<'ctx>,
+    /// Gesammelte Fehler; die Erzeugung läuft nach einem Fehler weiter.
+    errors: Vec<CompileError>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -291,11 +293,30 @@ impl<'ctx> Codegen<'ctx> {
             exit_fn: None,
             body: None,
             rt,
+            errors: Vec::new(),
+        }
+    }
+
+    /// Merkt einen Fehler, statt die Erzeugung abzubrechen.
+    fn collect(&mut self, result: CResult<()>) {
+        if let Err(e) = result {
+            self.errors.push(e);
         }
     }
 
     /// Erzeugt `main` mit allen Statements und die FORMs als eigene Funktionen.
-    pub fn emit_program(&mut self, ir: &Ir) -> CResult<()> {
+    /// Liefert alle gesammelten Fehler; leer heißt Erfolg.
+    pub fn emit_program(&mut self, ir: &Ir) -> Result<(), Vec<CompileError>> {
+        let result = self.emit_program_body(ir);
+        self.collect(result);
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(std::mem::take(&mut self.errors))
+        }
+    }
+
+    fn emit_program_body(&mut self, ir: &Ir) -> CResult<()> {
         self.constants = ir.constants.clone();
         self.build_layouts(&ir.structs);
         // Klassen: Methoden als Funktionen deklarieren (Objektzeiger als erster Parameter)
@@ -391,11 +412,13 @@ impl<'ctx> Codegen<'ctx> {
         llvm(self.alloca.build_unconditional_branch(body))?;
 
         for f in &ir.forms {
-            self.emit_form(f)?;
+            let result = self.emit_form(f);
+            self.collect(result);
         }
         for (ci, c) in ir.classes.iter().enumerate() {
             for m in &c.methods {
-                self.emit_method(ci, m)?;
+                let result = self.emit_method(ci, m);
+                self.collect(result);
             }
         }
         llvm(self.module.verify().map_err(|e| e.to_string()))

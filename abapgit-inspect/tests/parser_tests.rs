@@ -1,7 +1,7 @@
-use abapgit_inspect::abap::{parse, ClassKind, Item, MemberKind, TopItem, Visibility};
+use abapgit_inspect::abap::{parse_l1, ClassKind, Item, MemberKind, TopItem, Visibility};
 
 fn program(src: &str) -> abapgit_inspect::abap::Program {
-    parse(src)
+    parse_l1(src)
 }
 
 #[test]

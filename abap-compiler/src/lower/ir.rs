@@ -66,14 +66,29 @@ pub enum LoopTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Var(String),
-    Slice { name: String, off: usize, len: usize },
-    Attr { obj: String, attr: String },
+    Slice {
+        name: String,
+        off: usize,
+        len: usize,
+    },
+    Attr {
+        obj: String,
+        attr: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Data { name: String, ty: Ty, line: usize },
-    Assign { target: Target, value: Expr, line: usize },
+    Data {
+        name: String,
+        ty: Ty,
+        line: usize,
+    },
+    Assign {
+        target: Target,
+        value: Expr,
+        line: usize,
+    },
     AssignComponent {
         component: String,
         structure: String,
@@ -86,16 +101,48 @@ pub enum Stmt {
         index: Expr,
         line: usize,
     },
-    Clear { target: Target, line: usize },
+    Clear {
+        target: Target,
+        line: usize,
+    },
     /// WRITE [/] [wert]. `newline`: `/` vor dem Wert beendet die aktuelle Zeile.
-    Write { newline: bool, value: Option<Expr>, line: usize },
-    If { branches: Vec<(Cond, Vec<Stmt>)>, otherwise: Vec<Stmt>, line: usize },
-    Case { subject: Expr, whens: Vec<(Vec<Expr>, Vec<Stmt>)>, other: Vec<Stmt>, line: usize },
+    Write {
+        newline: bool,
+        value: Option<Expr>,
+        line: usize,
+    },
+    If {
+        branches: Vec<(Cond, Vec<Stmt>)>,
+        otherwise: Vec<Stmt>,
+        line: usize,
+    },
+    Case {
+        subject: Expr,
+        whens: Vec<(Vec<Expr>, Vec<Stmt>)>,
+        other: Vec<Stmt>,
+        line: usize,
+    },
     /// `DO n TIMES` (times = Some) oder endlose `DO` (times = None)
-    Do { times: Option<Expr>, body: Vec<Stmt>, line: usize },
-    While { cond: Cond, body: Vec<Stmt>, line: usize },
-    FieldSymbol { name: String, ty: Ty, line: usize },
-    Append { table: String, value: Expr, line: usize },
+    Do {
+        times: Option<Expr>,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    While {
+        cond: Cond,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    FieldSymbol {
+        name: String,
+        ty: Ty,
+        line: usize,
+    },
+    Append {
+        table: String,
+        value: Expr,
+        line: usize,
+    },
     Loop {
         table: String,
         target: LoopTarget,
@@ -103,27 +150,69 @@ pub enum Stmt {
         body: Vec<Stmt>,
         line: usize,
     },
-    Describe { table: String, target: String, line: usize },
-    Exit { line: usize },
-    Continue { line: usize },
-    Check { cond: Cond, line: usize },
-    Assert { cond: Cond, line: usize },
-    Perform { name: String, args: Vec<Arg>, line: usize },
+    Describe {
+        table: String,
+        target: String,
+        line: usize,
+    },
+    Exit {
+        line: usize,
+    },
+    Continue {
+        line: usize,
+    },
+    Check {
+        cond: Cond,
+        line: usize,
+    },
+    Assert {
+        cond: Cond,
+        line: usize,
+    },
+    Perform {
+        name: String,
+        args: Vec<Arg>,
+        line: usize,
+    },
     /// RETURN: Ende der aktuellen FORM oder Methode
-    Return { line: usize },
+    Return {
+        line: usize,
+    },
     /// CREATE OBJECT name [EXPORTING ...]
-    Create { name: String, args: Vec<NamedArg>, line: usize },
+    Create {
+        name: String,
+        args: Vec<NamedArg>,
+        line: usize,
+    },
     /// obj->methode( args ). Empfänger `me` ist erlaubt.
     /// Methodenaufruf; `receiving` ist das RECEIVING-Ziel bei CALL METHOD
-    MethodCall { recv: String, method: String, args: Vec<NamedArg>, receiving: Option<Target>, line: usize },
-    ExternalFunctionCall { name: String, line: usize },
-    ExternalOperation { name: String, line: usize },
-    Raise { exception: String, line: usize },
+    MethodCall {
+        recv: String,
+        method: String,
+        args: Vec<NamedArg>,
+        receiving: Option<Target>,
+        line: usize,
+    },
+    ExternalFunctionCall {
+        name: String,
+        line: usize,
+    },
+    ExternalOperation {
+        name: String,
+        line: usize,
+    },
+    Raise {
+        exception: String,
+        line: usize,
+    },
     Try {
         body: Vec<Stmt>,
         catches: Vec<CatchClause>,
         cleanup: Vec<Stmt>,
         line: usize,
+    },
+    NotSupported {
+        tokens: Vec<Token>,
     },
 }
 
@@ -207,5 +296,5 @@ pub struct Ir {
     pub structs: Vec<StructDef>,
     pub classes: Vec<ClassDef>,
     pub constants: HashMap<String, Expr>,
-    pub external_types: Vec<String>,
+    pub dependencies: Vec<String>,
 }

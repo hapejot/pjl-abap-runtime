@@ -2,7 +2,7 @@
 //!
 //! Aufruf: abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <runtime-lib>]
 
-use abap_compiler::{codegen::Codegen, lower::lower_source};
+use abap_compiler::{ast::CompileError, codegen::Codegen, lower::parse_source};
 use clap::Parser;
 use inkwell::context::Context;
 use inkwell::targets::{
@@ -42,6 +42,16 @@ fn default_runtime() -> PathBuf {
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(runtime_library_name())))
         .unwrap_or_else(|| PathBuf::from(runtime_library_name()))
+}
+
+/// Gibt alle gesammelten Fehler nach Zeile sortiert aus und beendet das Programm.
+fn fail_all(mut errors: Vec<CompileError>) -> ! {
+    errors.sort_by_key(|e| e.line);
+    for e in &errors {
+        eprintln!("abapc: {e}");
+    }
+    eprintln!("abapc: {} Fehler gefunden", errors.len());
+    process::exit(1);
 }
 
 fn fail(msg: impl std::fmt::Display) -> ! {
@@ -139,15 +149,15 @@ fn main() {
     let src = std::fs::read_to_string(&args.input)
         .unwrap_or_else(|e| fail(format!("{}: {e}", args.input.display())));
 
-    let ir = match lower_source(&src) {
+    let ir = match parse_source(&src) {
         Ok(ir) => ir,
-        Err(e) => fail(e),
+        Err(errors) => fail_all(errors),
     };
 
     let ctx = Context::create();
     let mut cg = Codegen::new(&ctx);
-    if let Err(e) = cg.emit_program(&ir) {
-        fail(e);
+    if let Err(errors) = cg.emit_program(&ir) {
+        fail_all(errors);
     }
     if let Some(ll) = &args.emit_ir {
         if let Err(e) = cg.module.print_to_file(ll) {

@@ -61,6 +61,14 @@ struct Options {
     #[arg(long)]
     model: bool,
 
+    /// Verwendungen als Kanten (Aufrufe, Vererbung, Typen je Member mit Datei und Zeile) als JSON ausgeben
+    #[arg(long)]
+    deps: bool,
+
+    /// Extern benötigte Klassen und Interfaces, aggregiert je Typ, als JSON ausgeben
+    #[arg(long)]
+    external: bool,
+
     /// Interaktive Oberflaeche: Objektliste mit Filter und Quelltext
     #[arg(long)]
     tui: bool,
@@ -158,7 +166,7 @@ fn main() {
     // ABAP-Datei parsen und Gliederung ausgeben
     if let Some(path) = &opts.ast {
         let src = read_entry(&mut archive, path);
-        let prog = abapgit_inspect::abap::parse(&src);
+        let prog = abapgit_inspect::abap::parse_l1(&src);
         print!("{}", abapgit_inspect::abap::outline(&prog));
         return;
     }
@@ -192,6 +200,32 @@ fn main() {
             &inventory,
         );
         match abapgit_inspect::model::render_json(&model) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if opts.external {
+        let files = read_abap_files(&mut archive);
+        let reqs = abapgit_inspect::abap::requirements::derive(&files);
+        match serde_json::to_string_pretty(&reqs) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if opts.deps {
+        let files = read_abap_files(&mut archive);
+        let graph = abapgit_inspect::abap::graph::build(&files);
+        match serde_json::to_string_pretty(&graph) {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
@@ -251,7 +285,7 @@ fn main() {
         let mut total_errors = 0;
         for name in &names {
             let src = read_entry(&mut archive, name);
-            let prog = abapgit_inspect::abap::parse(&src);
+            let prog = abapgit_inspect::abap::parse_l1(&src);
             if !prog.errors.is_empty() {
                 total_errors += prog.errors.len();
                 println!("{name}: {} Fehler", prog.errors.len());

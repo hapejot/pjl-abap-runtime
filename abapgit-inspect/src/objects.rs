@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::abap::{declarations, parse, Declaration};
+use crate::abap::{declarations, parse_l1, Declaration};
 
 #[derive(Debug, Clone)]
 pub struct ObjectDecls {
@@ -96,7 +96,14 @@ impl Entry {
     }
 }
 
-const ENTRY_KINDS: &[&str] = &["METHODS", "CLASS-METHODS", "FORM", "FUNCTION", "MODULE", "EVENT"];
+const ENTRY_KINDS: &[&str] = &[
+    "METHODS",
+    "CLASS-METHODS",
+    "FORM",
+    "FUNCTION",
+    "MODULE",
+    "EVENT",
+];
 
 fn walk(d: &Declaration, depth: usize, out: &mut Vec<Entry>) {
     match d.kind.as_str() {
@@ -181,7 +188,7 @@ pub fn collect(files: &[(String, String)]) -> Vec<ObjectDecls> {
             continue;
         };
         let file = path.rsplit('/').next().unwrap_or(path).to_string();
-        let mut decls = declarations(&parse(src));
+        let mut decls = declarations(&parse_l1(src));
         for d in decls.iter_mut() {
             set_file(d, &file);
         }
@@ -218,11 +225,16 @@ pub fn collect(files: &[(String, String)]) -> Vec<ObjectDecls> {
         let mut expanded: BTreeMap<usize, Vec<Declaration>> = BTreeMap::new();
         for &i in &roots {
             let mut visited = vec![i];
-            let decls = expand(&sources[i].decls, &sources, &index, &mut visited, &mut consumed);
+            let decls = expand(
+                &sources[i].decls,
+                &sources,
+                &index,
+                &mut visited,
+                &mut consumed,
+            );
             expanded.insert(i, decls);
         }
-        let lost = (0..sources.len())
-            .find(|i| !roots.contains(i) && !consumed.contains(i));
+        let lost = (0..sources.len()).find(|i| !roots.contains(i) && !consumed.contains(i));
         match lost {
             None => break (roots, expanded),
             Some(i) => {
@@ -249,8 +261,6 @@ pub fn collect(files: &[(String, String)]) -> Vec<ObjectDecls> {
 
     map.into_values().collect()
 }
-
-
 
 fn render_decl(out: &mut String, d: &Declaration, depth: usize) {
     out.push_str(&format!(

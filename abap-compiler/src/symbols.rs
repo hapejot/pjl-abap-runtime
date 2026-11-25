@@ -272,13 +272,13 @@ fn word_after_keyword<'a>(statement: &'a Statement, keyword: &str) -> Option<&'a
 
 #[cfg(test)]
 mod tests {
-    use abapgit_inspect::abap::parse;
+    use abapgit_inspect::abap::parse_l1;
 
     use super::{SymbolCatalog, SymbolKind, SymbolOrigin};
 
     #[test]
     fn resolves_internal_and_external_oo_symbols() {
-        let program = parse(
+        let program = parse_l1(
             "INTERFACE if_local.\n\
                METHODS run.\n\
              ENDINTERFACE.\n\
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn rejects_implementation_without_declaration() {
-        let error = SymbolCatalog::from_program(&parse("CLASS ghost IMPLEMENTATION.\nENDCLASS."))
+        let error = SymbolCatalog::from_program(&parse_l1("CLASS ghost IMPLEMENTATION.\nENDCLASS."))
             .unwrap_err();
 
         assert!(error.message.contains("unbekannte Klasse 'ghost'"));
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn rejects_undeclared_method_implementation() {
-        let error = SymbolCatalog::from_program(&parse(
+        let error = SymbolCatalog::from_program(&parse_l1(
             "CLASS example DEFINITION.\nENDCLASS.\n\
              CLASS example IMPLEMENTATION.\n\
                METHOD missing.\n\
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn reports_missing_method_implementations() {
-        let symbols = SymbolCatalog::from_program(&parse(
+        let symbols = SymbolCatalog::from_program(&parse_l1(
             "CLASS example DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS missing.\n\
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn accepts_methods_from_transitively_extended_interfaces() {
-        let symbols = SymbolCatalog::from_program(&parse(
+        let symbols = SymbolCatalog::from_program(&parse_l1(
             "INTERFACE if_base.\n\
                METHODS load.\n\
              ENDINTERFACE.\n\

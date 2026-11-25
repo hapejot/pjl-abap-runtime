@@ -9,23 +9,29 @@ mod tokens;
 
 pub use ir::*;
 use tokens::*;
+use tracing::error;
 
 use std::collections::{BTreeSet, HashMap};
 
 use abapgit_inspect::abap::{
-    parse, ClassDef as AbapClass, ClassKind, Item, Kind, MemberKind, Program, Statement, Token, TopItem,
+    parse_l1, ClassDef as AbapClass, ClassKind, Item, Kind, MemberKind, Program, Statement, Token,
+    TopItem,
 };
 
-use crate::ast::{err, literal_content, parse_call_args, parse_cond, parse_expr, CompileError, Cond, Expr, NamedArg};
+use crate::ast::{
+    err, literal_content, parse_call_args, parse_cond, parse_expr, CompileError, Cond, Expr,
+    NamedArg,
+};
 use crate::symbols::SymbolCatalog;
 
 /// Parst und übersetzt ein ABAP-Programm in die IR.
-pub fn lower_source(src: &str) -> Result<Ir, CompileError> {
-    let prog = parse(src);
-    if let Some(e) = prog.errors.first() {
-        return err(e.line, format!("Syntaxfehler: {}", e.message));
+/// Alle Fehler der Übersetzung; leer heißt Erfolg. Fehler je Anweisung werden gesammelt.
+pub fn parse_source(src: &str) -> Result<Ir, Vec<CompileError>> {
+    let prog = parse_l1(src);
+    for e in prog.errors.iter() {
+        error!("L1 Error: {} {}", e.line, e.message);
     }
-    lower_program(&prog)
+    parse_l2_program(&prog)
 }
 
 /// Eine Anweisung im Ablauf: einfaches Statement oder Block mit Körper.
@@ -61,6 +67,8 @@ fn struct_begin(s: &Statement) -> Option<(String, String)> {
 
 /// Zustand während der Übersetzung: bekannte Typnamen und Strukturdefinitionen.
 struct Lowerer {
+    /// Gesammelte Fehler; die Übersetzung läuft nach einem Fehler weiter.
+    errors: Vec<CompileError>,
     structs: Vec<StructDef>,
     /// Typname (klein) -> Typ; enthält Strukturen, Aliase und Klassen (als Ref)
     names: HashMap<String, Ty>,
@@ -84,9 +92,10 @@ struct MethodSig {
     is_static: bool,
 }
 
-fn lower_program(prog: &Program) -> Result<Ir, CompileError> {
-    let _symbols = SymbolCatalog::from_program(prog)?;
+fn parse_l2_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
+    let _symbols = SymbolCatalog::from_program(prog).map_err(|e| vec![e])?;
     let mut lw = Lowerer {
+        errors: Vec::new(),
         structs: Vec::new(),
         names: HashMap::new(),
         classes: Vec::new(),
@@ -117,25 +126,42 @@ fn lower_program(prog: &Program) -> Result<Ir, CompileError> {
                 top.extend(nodes(body));
             }
             TopItem::Routine { kind, .. } if kind == "FORM" => form_items.push(item),
-            TopItem::Routine { kind, head, .. } if kind == "AT" && head.tokens.iter().any(|t| t.is_word("SELECTION-SCREEN")) => {
+            TopItem::Routine { kind, head, .. }
+                if kind == "AT" && head.tokens.iter().any(|t| t.is_word("SELECTION-SCREEN")) =>
+            {
                 // Selection-screen callbacks are SAP GUI kernel events and do not run in
                 // a native report executable.
             }
-            TopItem::Routine { kind, head, .. } => {
-                return err(head.line, format!("Nicht unterstütztes Ereignis/Routine: {kind}"))
-            }
+            TopItem::Routine { kind, head, .. } => lw.errors.push(CompileError {
+                line: head.line,
+                message: format!("Nicht unterstütztes Ereignis/Routine: {kind}"),
+            }),
             TopItem::Class(c) => top.push(Node::C(c)),
         }
     }
-    lw.lower_nodes(&top, &mut stmts)?;
-    lw.check_all_implemented()?;
+    if let Err(e) = lw.lower_nodes(&top, &mut stmts) {
+        lw.errors.push(e);
+    }
+    if let Err(e) = lw.check_all_implemented() {
+        lw.errors.push(e);
+    }
 
     let mut forms = Vec::new();
     for item in form_items {
-        let TopItem::Routine { head, body, .. } = item else { continue };
-        let params = lw.parse_params(head.tokens.get(2..).unwrap_or(&[]), head.line)?;
+        let TopItem::Routine { head, body, .. } = item else {
+            continue;
+        };
+        let params = match lw.parse_params(head.tokens.get(2..).unwrap_or(&[]), head.line) {
+            Ok(params) => params,
+            Err(e) => {
+                lw.errors.push(e);
+                continue;
+            }
+        };
         let mut fbody = Vec::new();
-        lw.lower_nodes(&nodes(body), &mut fbody)?;
+        if let Err(e) = lw.lower_nodes(&nodes(body), &mut fbody) {
+            lw.errors.push(e);
+        }
         forms.push(Form {
             name: head.tokens.get(1).map(word).unwrap_or_default(),
             params,
@@ -144,20 +170,27 @@ fn lower_program(prog: &Program) -> Result<Ir, CompileError> {
         });
     }
 
+    if !lw.errors.is_empty() {
+        return Err(lw.errors);
+    }
     Ok(Ir {
         stmts,
         forms,
         structs: lw.structs,
         classes: lw.classes,
         constants: lw.constants,
-        external_types: lw.external_types,
+        dependencies: lw.external_types,
     })
 }
 
 impl Lowerer {
     /// Übersetzt eine Folge von Anweisungen. Strukturdefinitionen (BEGIN OF ... END OF) werden
     /// über mehrere Statements hinweg zusammengefasst, Typaliase registriert.
-    pub(super) fn lower_nodes(&mut self, seq: &[Node], out: &mut Vec<Stmt>) -> Result<(), CompileError> {
+    pub(super) fn lower_nodes(
+        &mut self,
+        seq: &[Node],
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
         let mut i = 0;
         while i < seq.len() {
             if let Node::S(s) = seq[i] {
@@ -170,20 +203,34 @@ impl Lowerer {
                             return err(line, format!("END OF {name} fehlt"));
                         };
                         match node {
-                            Node::S(f) if f.keyword() == kw && f.tokens.get(1).is_some_and(|t| t.is_word("END")) => break,
-                            Node::S(f) if f.keyword() == kw
-                                && f.tokens.get(1).is_some_and(|token| token.is_word("BEGIN")) =>
+                            Node::S(f)
+                                if f.keyword() == kw
+                                    && f.tokens.get(1).is_some_and(|t| t.is_word("END")) =>
+                            {
+                                break
+                            }
+                            Node::S(f)
+                                if f.keyword() == kw
+                                    && f.tokens
+                                        .get(1)
+                                        .is_some_and(|token| token.is_word("BEGIN")) =>
                             {
                                 let mut depth = 1usize;
                                 j += 1;
                                 while j < seq.len() && depth > 0 {
                                     if let Node::S(nested) = &seq[j] {
                                         if nested.keyword() == kw
-                                            && nested.tokens.get(1).is_some_and(|token| token.is_word("BEGIN"))
+                                            && nested
+                                                .tokens
+                                                .get(1)
+                                                .is_some_and(|token| token.is_word("BEGIN"))
                                         {
                                             depth += 1;
                                         } else if nested.keyword() == kw
-                                            && nested.tokens.get(1).is_some_and(|token| token.is_word("END"))
+                                            && nested
+                                                .tokens
+                                                .get(1)
+                                                .is_some_and(|token| token.is_word("END"))
                                         {
                                             depth -= 1;
                                         }
@@ -192,13 +239,24 @@ impl Lowerer {
                                 }
                                 continue;
                             }
-                            Node::S(f) if f.keyword() == kw
-                                && f.tokens.get(1).is_some_and(|token| token.is_word("INCLUDE")) => {}
-                            Node::S(f) if f.tokens.iter().any(|token| token.is_word("INCLUDE")) => {}
+                            Node::S(f)
+                                if f.keyword() == kw
+                                    && f.tokens
+                                        .get(1)
+                                        .is_some_and(|token| token.is_word("INCLUDE")) => {}
+                            Node::S(f) if f.tokens.iter().any(|token| token.is_word("INCLUDE")) => {
+                            }
                             Node::S(f) if f.keyword() == kw => fields.push(self.field(f)?),
                             Node::S(f) => return err(f.line, "Struktur unvollständig"),
-                            Node::B(h, _) => return err(h.line, "Blöcke in Strukturen werden nicht unterstützt"),
-                            Node::C(c) => return err(c.head.line, "Klassen in Strukturen werden nicht unterstützt"),
+                            Node::B(h, _) => {
+                                return err(h.line, "Blöcke in Strukturen werden nicht unterstützt")
+                            }
+                            Node::C(c) => {
+                                return err(
+                                    c.head.line,
+                                    "Klassen in Strukturen werden nicht unterstützt",
+                                )
+                            }
                         }
                         j += 1;
                     }
@@ -206,7 +264,11 @@ impl Lowerer {
                     if kw == "TYPES" {
                         self.names.insert(name.to_lowercase(), Ty::Struct(idx));
                     } else {
-                        out.push(Stmt::Data { name: name.to_lowercase(), ty: Ty::Struct(idx), line });
+                        out.push(Stmt::Data {
+                            name: name.to_lowercase(),
+                            ty: Ty::Struct(idx),
+                            line,
+                        });
                     }
                     i = j + 1;
                     continue;
@@ -220,14 +282,18 @@ impl Lowerer {
                 }
             }
 
-            match seq[i] {
-                Node::S(s) => self.lower_stmt(s, out)?,
-                Node::B(h, b) => self.lower_block(h, b, out)?,
+            // Ein fehlerhaftes Statement wird gesammelt; die Folge läuft weiter.
+            let result = match seq[i] {
+                Node::S(s) => self.lower_stmt(s, out),
+                Node::B(h, b) => self.lower_block(h, b, out),
                 Node::C(c) => match c.kind {
-                    ClassKind::Definition => self.define_class(c)?,
-                    ClassKind::Implementation => self.implement_class(c)?,
-                    ClassKind::Interface => self.define_interface(c)?,
+                    ClassKind::Definition => self.define_class(c),
+                    ClassKind::Implementation => self.implement_class(c),
+                    ClassKind::Interface => self.define_interface(c),
                 },
+            };
+            if let Err(e) = result {
+                self.errors.push(e);
             }
             i += 1;
         }
@@ -247,22 +313,25 @@ impl Lowerer {
 
     fn external_type_index(&mut self, name: &str) -> usize {
         let name = name.to_lowercase();
-        *self.external_type_indices.entry(name.clone()).or_insert_with(|| {
-            let index = self.external_types.len();
-            self.external_types.push(name);
-            index
-        })
+        *self
+            .external_type_indices
+            .entry(name.clone())
+            .or_insert_with(|| {
+                let index = self.external_types.len();
+                self.external_types.push(name);
+                index
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::lower_source;
+    use super::parse_source;
     use crate::lower::{ClassParent, InterfaceRef};
 
     #[test]
     fn lowers_initialization_before_start_of_selection() {
-        let ir = lower_source(
+        let ir = parse_source(
             "INITIALIZATION.\n\
              DATA value TYPE i.\n\
              value = 1.\n\
@@ -276,7 +345,7 @@ mod tests {
 
     #[test]
     fn ignores_selection_screen_kernel_events() {
-        let ir = lower_source(
+        let ir = parse_source(
             "AT SELECTION-SCREEN OUTPUT.\n\
              WRITE 'screen'.\n\
              START-OF-SELECTION.\n\
@@ -289,7 +358,7 @@ mod tests {
 
     #[test]
     fn inherits_internal_parent_layout_and_metadata() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS base DEFINITION.\n\
                PUBLIC SECTION.\n\
                  DATA id TYPE i.\n\
@@ -312,7 +381,7 @@ mod tests {
 
     #[test]
     fn records_external_parent_as_kernel_symbol() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS child DEFINITION INHERITING FROM cx_static_check.\n\
              ENDCLASS.\n\
              CLASS child IMPLEMENTATION.\n\
@@ -328,7 +397,7 @@ mod tests {
 
     #[test]
     fn registers_internal_and_external_interfaces() {
-        let ir = lower_source(
+        let ir = parse_source(
             "INTERFACE if_contract.\n\
                METHODS load IMPORTING value TYPE i.\n\
              ENDINTERFACE.\n\
@@ -357,7 +426,7 @@ mod tests {
 
     #[test]
     fn resolves_class_and_interface_types() {
-        let ir = lower_source(
+        let ir = parse_source(
             "INTERFACE if_types.\n\
                TYPES ty_id TYPE i.\n\
                TYPES: BEGIN OF ty_pair,\n\
@@ -391,7 +460,7 @@ mod tests {
 
     #[test]
     fn resolves_like_class_attribute_in_local_structure() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS holder DEFINITION.\n\
                PUBLIC SECTION.\n\
                  DATA text TYPE string.\n\
@@ -416,7 +485,7 @@ mod tests {
 
     #[test]
     fn registers_scalar_and_structured_constants() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS settings DEFINITION.\n\
                PUBLIC SECTION.\n\
                  CONSTANTS limit TYPE i VALUE 4.\n\
@@ -441,7 +510,7 @@ mod tests {
 
     #[test]
     fn ignores_escaped_parameter_names() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS worker DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS run IMPORTING !VALUE TYPE i.\n\
@@ -459,7 +528,7 @@ mod tests {
 
     #[test]
     fn parses_is_initial_and_is_not_initial() {
-        lower_source(
+        parse_source(
             "DATA value TYPE i.\n\
              IF value IS INITIAL.\n\
                value = 1.\n\
@@ -471,10 +540,9 @@ mod tests {
         .unwrap();
     }
 
-
     #[test]
     fn accepts_like_parameter_as_external_type() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS worker DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS run IMPORTING !TEXTID LIKE if_t100_message=>t100key OPTIONAL.\n\
@@ -491,14 +559,14 @@ mod tests {
             crate::lower::Ty::External(_)
         ));
         assert_eq!(
-            ir.external_types,
+            ir.dependencies,
             vec!["if_t100_message=>t100key".to_string()]
         );
     }
 
     #[test]
     fn accepts_like_inherited_attribute_as_external_type() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS child DEFINITION INHERITING FROM cx_root.\n\
                PUBLIC SECTION.\n\
                  METHODS constructor IMPORTING previous LIKE previous OPTIONAL.\n\
@@ -510,15 +578,12 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            ir.external_types,
-            vec!["child=>previous".to_string()]
-        );
+        assert_eq!(ir.dependencies, vec!["child=>previous".to_string()]);
     }
 
     #[test]
     fn lowers_static_class_data_and_method() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS counter DEFINITION.\n\
                PUBLIC SECTION.\n\
                  CLASS-DATA value TYPE i.\n\
@@ -538,7 +603,7 @@ mod tests {
 
     #[test]
     fn includes_interface_attributes_in_class_layout() {
-        let ir = lower_source(
+        let ir = parse_source(
             "INTERFACE if_contract.\n\
                DATA value TYPE i.\n\
              ENDINTERFACE.\n\
@@ -563,7 +628,7 @@ mod tests {
 
     #[test]
     fn lowers_constructor_arguments() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS item DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS constructor IMPORTING value TYPE i.\n\
@@ -586,7 +651,7 @@ mod tests {
 
     #[test]
     fn lowers_try_catch_raise() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS failure DEFINITION INHERITING FROM cx_static_check.\n\
              ENDCLASS.\n\
              CLASS failure IMPLEMENTATION.\n\
@@ -612,7 +677,7 @@ mod tests {
 
     #[test]
     fn lowers_assign_component_of_known_structure() {
-        let ir = lower_source(
+        let ir = parse_source(
             "TYPES: BEGIN OF state,\n\
                value TYPE i,\n\
              END OF state.\n\
@@ -631,7 +696,7 @@ mod tests {
 
     #[test]
     fn parses_is_assigned() {
-        lower_source(
+        parse_source(
             "TYPES: BEGIN OF state, value TYPE i, END OF state.\n\
              DATA record TYPE state.\n\
              FIELD-SYMBOLS <value> TYPE i.\n\
@@ -645,7 +710,7 @@ mod tests {
 
     #[test]
     fn parses_string_templates() {
-        let ir = lower_source(
+        let ir = parse_source(
             "DATA count TYPE i.\n\
              count = 42.\n\
              DATA text TYPE string.\n\
@@ -664,7 +729,7 @@ mod tests {
 
     #[test]
     fn resolves_like_qualified_class_attribute_and_external_ddic() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS source DEFINITION.\n\
                PUBLIC SECTION.\n\
                  DATA program TYPE progname.\n\
@@ -680,35 +745,27 @@ mod tests {
         )
         .unwrap();
 
-        assert!(ir
-            .external_types
-            .contains(&"source=>progname".to_string()));
-        assert!(ir
-            .external_types
-            .contains(&"source=>program".to_string())
-            || ir
-                .structs
-                .iter()
-                .any(|structure| structure.name == "class consumer"
-                    && structure
-                        .fields
-                        .iter()
-                        .any(|(name, _)| name == "copy")));
+        assert!(ir.dependencies.contains(&"source=>progname".to_string()));
+        assert!(
+            ir.dependencies.contains(&"source=>program".to_string())
+                || ir
+                    .structs
+                    .iter()
+                    .any(|structure| structure.name == "class consumer"
+                        && structure.fields.iter().any(|(name, _)| name == "copy"))
+        );
     }
 
     #[test]
     fn records_external_interface_reference() {
-        let ir = lower_source(
-            "DATA log TYPE REF TO zif_external_log.",
-        )
-        .unwrap();
+        let ir = parse_source("DATA log TYPE REF TO zif_external_log.").unwrap();
 
-        assert_eq!(ir.external_types, vec!["ref=>zif_external_log"]);
+        assert_eq!(ir.dependencies, vec!["ref=>zif_external_log"]);
     }
 
     #[test]
     fn allows_structured_class_attributes() {
-        let ir = lower_source(
+        let ir = parse_source(
             "TYPES: BEGIN OF state, value TYPE i, END OF state.\n\
              CLASS holder DEFINITION.\n\
                PUBLIC SECTION.\n\
@@ -727,7 +784,7 @@ mod tests {
 
     #[test]
     fn ignores_redefinition_modifier_in_method_signature() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS base DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS run.\n\
@@ -752,7 +809,7 @@ mod tests {
 
     #[test]
     fn lowers_unqualified_instance_method_call() {
-        let ir = lower_source(
+        let ir = parse_source(
             "CLASS worker DEFINITION.\n\
                PUBLIC SECTION.\n\
                  METHODS run.\n\
@@ -777,7 +834,7 @@ mod tests {
 
     #[test]
     fn lowers_field_symbol_like_line_of_table() {
-        let ir = lower_source(
+        let ir = parse_source(
             "TYPES: BEGIN OF row, value TYPE i, END OF row.\n\
              DATA rows TYPE TABLE OF row.\n\
              FIELD-SYMBOLS <row> LIKE LINE OF rows.",
@@ -795,7 +852,7 @@ mod tests {
 
     #[test]
     fn lowers_read_table_assigning_index() {
-        let ir = lower_source(
+        let ir = parse_source(
             "TYPES: BEGIN OF row, value TYPE i, END OF row.\n\
              DATA rows TYPE TABLE OF row.\n\
              FIELD-SYMBOLS <row> LIKE LINE OF rows.\n\
@@ -811,7 +868,7 @@ mod tests {
 
     #[test]
     fn lowers_external_function_call_as_kernel_dependency() {
-        let ir = lower_source("CALL FUNCTION 'DOCU_GET' EXPORTING id = 'NA'.").unwrap();
+        let ir = parse_source("CALL FUNCTION 'DOCU_GET' EXPORTING id = 'NA'.").unwrap();
         assert!(matches!(
             ir.stmts[0],
             crate::lower::Stmt::ExternalFunctionCall { ref name, .. } if name == "docu_get"

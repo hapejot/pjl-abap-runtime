@@ -1,6 +1,7 @@
 //! Ausdrucks- und Bedingungs-AST sowie ihr Parser über die Tokens des ABAP-Parsers.
 
 use abapgit_inspect::abap::{Kind, Token};
+use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -9,9 +10,16 @@ pub enum Expr {
     Lit(String),
     Var(String),
     /// Attribut eines Objekts: `obj->attr` (auch `me->attr`)
-    Attr { obj: String, attr: String },
+    Attr {
+        obj: String,
+        attr: String,
+    },
     /// Methodenaufruf im Ausdruck mit Rückgabewert: `obj->methode( p = a )`
-    Call { recv: String, method: String, args: Vec<NamedArg> },
+    Call {
+        recv: String,
+        method: String,
+        args: Vec<NamedArg>,
+    },
     StaticCall {
         class: String,
         method: String,
@@ -27,7 +35,11 @@ pub enum Expr {
         len: Box<Expr>,
     },
     /// Teilfeld `name+off(len)` (Offset 0-basiert, wie in ABAP)
-    Slice { name: String, off: usize, len: usize },
+    Slice {
+        name: String,
+        off: usize,
+        len: usize,
+    },
     /// Verkettung mit `&&`
     Concat(Vec<Expr>),
     /// Verkettung wie CONCATENATE ... COMPRESSED: nachgestellte Leerzeichen der Operanden entfallen
@@ -118,7 +130,10 @@ impl std::fmt::Display for CompileError {
 }
 
 pub fn err<T>(line: usize, msg: impl Into<String>) -> Result<T, CompileError> {
-    Err(CompileError { line, message: msg.into() })
+    Err(CompileError {
+        line,
+        message: msg.into(),
+    })
 }
 
 /// Parst einen Ausdruck. Die gesamte Tokenfolge muss verbraucht werden.
@@ -159,7 +174,10 @@ pub fn literal_content(text: &str) -> Option<String> {
 }
 
 fn parse_template(text: &str, line: usize) -> Result<Expr, CompileError> {
-    let Some(inner) = text.strip_prefix('|').and_then(|value| value.strip_suffix('|')) else {
+    let Some(inner) = text
+        .strip_prefix('|')
+        .and_then(|value| value.strip_suffix('|'))
+    else {
         return err(line, "String-Template unvollständig");
     };
     let chars: Vec<char> = inner.chars().collect();
@@ -252,7 +270,11 @@ impl Parser<'_> {
 
     fn finish(&self, toks: &[Token]) -> Result<(), CompileError> {
         if self.pos != toks.len() {
-            return err(self.line, format!("unerwartetes Token '{}'", toks[self.pos].text));
+            error!("statement is not nicht zuende: {:?}", toks);
+            return err(
+                self.line,
+                format!("unerwartetes Token '{}'", toks[self.pos].text),
+            );
         }
         Ok(())
     }
@@ -424,7 +446,10 @@ impl Parser<'_> {
                         condition
                     });
                 }
-                return err(self.line, "IS erwartet INITIAL, ASSIGNED, BOUND oder SUPPLIED");
+                return err(
+                    self.line,
+                    "IS erwartet INITIAL, ASSIGNED, BOUND oder SUPPLIED",
+                );
             }
             self.pos += 1;
             let condition = Cond::Initial(lhs);
@@ -578,7 +603,8 @@ impl Parser<'_> {
                 self.pos = self.toks.len();
                 break;
             }
-            let named = t.kind == Kind::Word && matches!(self.peek_at(1), Some(n) if n.is_punct("="));
+            let named =
+                t.kind == Kind::Word && matches!(self.peek_at(1), Some(n) if n.is_punct("="));
             let name = if named {
                 self.pos += 2;
                 Some(t.text.to_lowercase())
@@ -592,7 +618,11 @@ impl Parser<'_> {
                 }
                 receiving = Some(expr);
             } else {
-                args.push(NamedArg { name, changing, expr });
+                args.push(NamedArg {
+                    name,
+                    changing,
+                    expr,
+                });
             }
         }
         Ok((args, receiving))
@@ -624,14 +654,19 @@ impl Parser<'_> {
                 .parse::<i64>()
                 .map(Expr::Int)
                 .or_else(|_| err(self.line, format!("Zahl zu groß: {}", t.text))),
-            Kind::Word
-                if matches!(self.peek(), Some(n) if n.is_punct("=>") || n.is_punct("~")) =>
-            {
+            Kind::Word if matches!(self.peek(), Some(n) if n.is_punct("=>") || n.is_punct("~")) => {
                 let separator = self.peek().cloned().unwrap();
                 self.pos += 1;
-                let Some(mut name) = self.peek().cloned().filter(|name| name.kind == Kind::Word) else {
-                    return err(self.line, "Konstantenname nach '=>' erwartet");
+                let Some(mut name) = self.peek().cloned().filter(|name| name.kind == Kind::Word)
+                else {
+                    return err(self.line, "Name wird nach '{separator}' erwartet");
                 };
+                info!(
+                    "parsed: {}{:?}{:?}",
+                    name.text,
+                    separator,
+                    self.peek().cloned()
+                );
                 self.pos += 1;
                 if matches!(self.peek(), Some(token) if token.is_punct("~")) {
                     self.pos += 1;
@@ -660,16 +695,12 @@ impl Parser<'_> {
                         return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
                     }
                     let method = if separator == "~" {
-                            format!("{}~{}", t.text.to_lowercase(), name.text.to_lowercase())
-                        } else {
-                            name.text.to_lowercase()
-                        };
+                        format!("{}~{}", t.text.to_lowercase(), name.text.to_lowercase())
+                    } else {
+                        name.text.to_lowercase()
+                    };
                     if matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                        let mut chain = format!(
-                            "{}=>{}",
-                            t.text.to_lowercase(),
-                            method
-                        );
+                        let mut chain = format!("{}=>{}", t.text.to_lowercase(), method);
                         while matches!(self.peek(), Some(token) if token.is_punct("->")) {
                             self.pos += 1;
                             let chained = self
@@ -699,11 +730,7 @@ impl Parser<'_> {
                 if separator == "~" {
                     Ok(Expr::Attr {
                         obj: "me".into(),
-                        attr: format!(
-                            "{}~{}",
-                            t.text.to_lowercase(),
-                            name.text.to_lowercase()
-                        ),
+                        attr: format!("{}~{}", t.text.to_lowercase(), name.text.to_lowercase()),
                     })
                 } else {
                     Ok(Expr::Var(format!(
@@ -732,7 +759,10 @@ impl Parser<'_> {
                 }
                 self.pos += 1;
                 let Expr::Int(len) = simple_slice_expr(&len, self.line)? else {
-                    return err(self.line, "dynamisches Teilfeld als Feldsymbol wird extern behandelt");
+                    return err(
+                        self.line,
+                        "dynamisches Teilfeld als Feldsymbol wird extern behandelt",
+                    );
                 };
                 Ok(Expr::Slice {
                     name: t.text.to_lowercase(),
@@ -836,11 +866,7 @@ impl Parser<'_> {
                         return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
                     }
                     if matches!(self.peek(), Some(token) if token.is_punct("->")) {
-                        let mut chain = format!(
-                            "{}->{}",
-                            t.text.to_lowercase(),
-                            method_name
-                        );
+                        let mut chain = format!("{}->{}", t.text.to_lowercase(), method_name);
                         while matches!(self.peek(), Some(token) if token.is_punct("->")) {
                             self.pos += 1;
                             let next = self
@@ -876,13 +902,22 @@ impl Parser<'_> {
                 Some(s) => Ok(s),
                 None => Ok(Expr::Var(t.text.to_lowercase())),
             },
-            _ => err(self.line, format!("unerwartetes Token '{}'", t.text)),
+            _ => {
+                error!(
+                    "unerwartetes Token hier {}:{} {:?}",
+                    self.line, self.pos, self.toks
+                );
+                err(self.line, format!("unerwartetes Token '{}'", t.text))
+            }
         }
     }
 }
 
 /// Parameterliste ohne Klammern (CALL METHOD ... EXPORTING ...). Liefert Argumente und RECEIVING-Ziel.
-pub fn parse_call_args(toks: &[Token], line: usize) -> Result<(Vec<NamedArg>, Option<Expr>), CompileError> {
+pub fn parse_call_args(
+    toks: &[Token],
+    line: usize,
+) -> Result<(Vec<NamedArg>, Option<Expr>), CompileError> {
     let mut p = Parser { toks, pos: 0, line };
     let r = p.arg_list(false)?;
     p.finish(toks)?;

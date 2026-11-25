@@ -3,7 +3,11 @@
 use super::*;
 
 impl Lowerer {
-    pub(super) fn lower_stmt(&mut self, s: &Statement, out: &mut Vec<Stmt>) -> Result<(), CompileError> {
+    pub(super) fn lower_stmt(
+        &mut self,
+        s: &Statement,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
         let line = s.line;
         let pragma_start = s
             .tokens
@@ -35,9 +39,7 @@ impl Lowerer {
                     recv: word(&toks[0]),
                     method: format!("{}~{}", word(&toks[2]), word(&toks[4])),
                     args,
-                    receiving: rec
-                        .map(|value| expr_to_target(value, line))
-                        .transpose()?,
+                    receiving: rec.map(|value| expr_to_target(value, line)).transpose()?,
                     line,
                 });
                 return Ok(());
@@ -67,7 +69,8 @@ impl Lowerer {
                 Ok(())
             }
             "CONSTANTS" => {
-                let Some(value_index) = toks.iter().rposition(|token| token.is_word("VALUE")) else {
+                let Some(value_index) = toks.iter().rposition(|token| token.is_word("VALUE"))
+                else {
                     return Ok(());
                 };
                 let name = toks
@@ -120,7 +123,13 @@ impl Lowerer {
             "FIELD-SYMBOLS" => {
                 // FIELD-SYMBOLS <fs> TYPE typ
                 let name = match toks.get(1) {
-                    Some(t) if t.kind == Kind::Word && t.text.starts_with('<') && t.text.ends_with('>') => word(t),
+                    Some(t)
+                        if t.kind == Kind::Word
+                            && t.text.starts_with('<')
+                            && t.text.ends_with('>') =>
+                    {
+                        word(t)
+                    }
                     _ => return err(line, "FIELD-SYMBOLS erwartet <name>"),
                 };
                 let ty = if toks.get(2).is_some_and(|t| t.is_word("TYPE")) {
@@ -158,7 +167,11 @@ impl Lowerer {
                 };
                 let target = parse_target(&toks[to + 1..], line)?;
                 let value = parse_expr(&toks[1..to], line)?;
-                out.push(Stmt::Assign { target, value, line });
+                out.push(Stmt::Assign {
+                    target,
+                    value,
+                    line,
+                });
                 Ok(())
             }
             "MOVE-CORRESPONDING" => {
@@ -176,7 +189,8 @@ impl Lowerer {
                 Ok(())
             }
             "ASSIGN" => {
-                let Some(component_index) = toks.iter().position(|token| token.is_word("COMPONENT"))
+                let Some(component_index) =
+                    toks.iter().position(|token| token.is_word("COMPONENT"))
                 else {
                     let Some(to_index) = toks.iter().position(|token| token.is_word("TO")) else {
                         return err(line, "ASSIGN erwartet TO");
@@ -194,16 +208,16 @@ impl Lowerer {
                     });
                     return Ok(());
                 };
-                let Some(structure_index) = toks.iter().position(|token| token.is_word("STRUCTURE"))
+                let Some(structure_index) =
+                    toks.iter().position(|token| token.is_word("STRUCTURE"))
                 else {
                     return err(line, "ASSIGN COMPONENT erwartet OF STRUCTURE");
                 };
                 let Some(to_index) = toks.iter().position(|token| token.is_word("TO")) else {
                     return err(line, "ASSIGN erwartet TO");
                 };
-                let component_token = toks
-                    .get(component_index + 1)
-                    .ok_or_else(|| CompileError {
+                let component_token =
+                    toks.get(component_index + 1).ok_or_else(|| CompileError {
                         line,
                         message: "ASSIGN COMPONENT ohne Komponente".into(),
                     })?;
@@ -222,7 +236,10 @@ impl Lowerer {
                         .iter()
                         .any(|token| token.is_word("OF"))
                 {
-                    return err(line, "ASSIGN COMPONENT erwartet 'COMPONENT name OF STRUCTURE'");
+                    return err(
+                        line,
+                        "ASSIGN COMPONENT erwartet 'COMPONENT name OF STRUCTURE'",
+                    );
                 }
                 let structure = toks
                     .get(structure_index + 1)
@@ -246,9 +263,7 @@ impl Lowerer {
                 });
                 Ok(())
             }
-            "READ"
-                if toks.get(1).is_some_and(|token| token.is_word("TABLE")) =>
-            {
+            "READ" if toks.get(1).is_some_and(|token| token.is_word("TABLE")) => {
                 let table = toks
                     .get(2)
                     .filter(|token| token.kind == Kind::Word)
@@ -256,9 +271,7 @@ impl Lowerer {
                         line,
                         message: "READ TABLE erwartet Tabellennamen".into(),
                     })?;
-                let assigning_index = toks
-                    .iter()
-                    .position(|token| token.is_word("ASSIGNING"));
+                let assigning_index = toks.iter().position(|token| token.is_word("ASSIGNING"));
                 let Some(assigning) = assigning_index
                     .and_then(|index| toks.get(index + 1))
                     .filter(|token| token.kind == Kind::Word)
@@ -295,16 +308,13 @@ impl Lowerer {
                 Ok(())
             }
             "CONCATENATE" => {
-                if toks
-                    .iter()
-                    .any(|token| {
-                        token.is_punct("+")
-                            || token.is_punct("=>")
-                            || token.is_word("BYTE")
-                            || token.is_word("MODE")
-                            || token.is_word("RESPECTING")
-                    })
-                {
+                if toks.iter().any(|token| {
+                    token.is_punct("+")
+                        || token.is_punct("=>")
+                        || token.is_word("BYTE")
+                        || token.is_word("MODE")
+                        || token.is_word("RESPECTING")
+                }) {
                     out.push(Stmt::ExternalOperation {
                         name: "concatenate_bytes".into(),
                         line,
@@ -331,14 +341,21 @@ impl Lowerer {
                 if compressed {
                     target_toks = &target_toks[..target_toks.len() - 1];
                 }
-                let parts = operands.iter().map(|t| single_operand(t, line)).collect::<Result<Vec<_>, _>>()?;
+                let parts = operands
+                    .iter()
+                    .map(|t| single_operand(t, line))
+                    .collect::<Result<Vec<_>, _>>()?;
                 let target = parse_target(target_toks, line)?;
                 let value = match (parts.len(), compressed) {
                     (1, false) => parts.into_iter().next().unwrap(),
                     (_, false) => Expr::Concat(parts),
                     (_, true) => Expr::Compressed(parts),
                 };
-                out.push(Stmt::Assign { target, value, line });
+                out.push(Stmt::Assign {
+                    target,
+                    value,
+                    line,
+                });
                 Ok(())
             }
             "WRITE" => {
@@ -357,8 +374,16 @@ impl Lowerer {
                     }
                     _ => (false, &toks[1..]),
                 };
-                let value = if rest.is_empty() { None } else { Some(parse_expr(rest, line)?) };
-                out.push(Stmt::Write { newline, value, line });
+                let value = if rest.is_empty() {
+                    None
+                } else {
+                    Some(parse_expr(rest, line)?)
+                };
+                out.push(Stmt::Write {
+                    newline,
+                    value,
+                    line,
+                });
                 Ok(())
             }
             "APPEND" => {
@@ -400,15 +425,26 @@ impl Lowerer {
                     return err(line, "APPEND erwartet 'APPEND wert TO tabelle.'");
                 }
                 let value = parse_expr(&toks[1..to], line)?;
-                out.push(Stmt::Append { table: word(&toks[to + 1]), value, line });
+                out.push(Stmt::Append {
+                    table: word(&toks[to + 1]),
+                    value,
+                    line,
+                });
                 Ok(())
             }
             "DESCRIBE" => {
                 // DESCRIBE TABLE tabelle LINES ziel
                 if toks.len() != 5 || !toks[1].is_word("TABLE") || !toks[3].is_word("LINES") {
-                    return err(line, "DESCRIBE unterstützt nur 'DESCRIBE TABLE tab LINES ziel.'");
+                    return err(
+                        line,
+                        "DESCRIBE unterstützt nur 'DESCRIBE TABLE tab LINES ziel.'",
+                    );
                 }
-                out.push(Stmt::Describe { table: word(&toks[2]), target: word(&toks[4]), line });
+                out.push(Stmt::Describe {
+                    table: word(&toks[2]),
+                    target: word(&toks[4]),
+                    line,
+                });
                 Ok(())
             }
             "PERFORM" => {
@@ -424,14 +460,16 @@ impl Lowerer {
                     return err(line, "PERFORM ohne Routinennamen");
                 };
                 let args = parse_args(&toks[2..], line)?;
-                out.push(Stmt::Perform { name: word(name_tok), args, line });
+                out.push(Stmt::Perform {
+                    name: word(name_tok),
+                    args,
+                    line,
+                });
                 Ok(())
             }
             "CALL" => {
                 if toks.get(1).is_some_and(|token| token.is_word("FUNCTION")) {
-                    let Some(name) = toks
-                        .get(2)
-                        .and_then(|token| literal_content(&token.text))
+                    let Some(name) = toks.get(2).and_then(|token| literal_content(&token.text))
                     else {
                         out.push(Stmt::ExternalOperation {
                             name: "call_function_dynamic".into(),
@@ -447,9 +485,7 @@ impl Lowerer {
                 }
                 if toks.get(1).is_some_and(|token| token.is_word("METHOD"))
                     && (toks.get(2).is_some_and(|token| token.is_punct("("))
-                        || toks
-                            .get(4)
-                            .is_some_and(|token| token.is_punct("(")))
+                        || toks.get(4).is_some_and(|token| token.is_punct("(")))
                 {
                     out.push(Stmt::ExternalOperation {
                         name: "call_method_dynamic".into(),
@@ -457,14 +493,20 @@ impl Lowerer {
                     });
                     return Ok(());
                 }
-                if toks.get(1).is_some_and(|token| token.is_word("TRANSFORMATION")) {
+                if toks
+                    .get(1)
+                    .is_some_and(|token| token.is_word("TRANSFORMATION"))
+                {
                     out.push(Stmt::ExternalOperation {
                         name: "call_transformation".into(),
                         line,
                     });
                     return Ok(());
                 }
-                if toks.get(1).is_some_and(|token| token.is_word("SELECTION-SCREEN")) {
+                if toks
+                    .get(1)
+                    .is_some_and(|token| token.is_word("SELECTION-SCREEN"))
+                {
                     out.push(Stmt::ExternalOperation {
                         name: "call_selection_screen".into(),
                         line,
@@ -472,7 +514,12 @@ impl Lowerer {
                     return Ok(());
                 }
                 // CALL METHOD obj->meth [EXPORTING ...] [RECEIVING r = x]   (auch mit Klammern)
-                if toks.len() < 5 || !toks[1].is_word("METHOD") || toks[2].kind != Kind::Word || !toks[3].is_punct("->") || toks[4].kind != Kind::Word {
+                if toks.len() < 5
+                    || !toks[1].is_word("METHOD")
+                    || toks[2].kind != Kind::Word
+                    || !toks[3].is_punct("->")
+                    || toks[4].kind != Kind::Word
+                {
                     return err(line, "CALL unterstützt nur 'CALL METHOD obj->meth ...'");
                 }
                 let mut rest = &toks[5..];
@@ -487,7 +534,13 @@ impl Lowerer {
                     Some(e) => Some(expr_to_target(e, line)?),
                     None => None,
                 };
-                out.push(Stmt::MethodCall { recv: word(&toks[2]), method: word(&toks[4]), args, receiving, line });
+                out.push(Stmt::MethodCall {
+                    recv: word(&toks[2]),
+                    method: word(&toks[4]),
+                    args,
+                    receiving,
+                    line,
+                });
                 Ok(())
             }
             "CREATE" => {
@@ -651,10 +704,7 @@ impl Lowerer {
                 Ok(())
             }
             "FREE" => {
-                let target = toks
-                    .get(1)
-                    .map(|_| "free")
-                    .unwrap_or("free");
+                let target = toks.get(1).map(|_| "free").unwrap_or("free");
                 out.push(Stmt::ExternalOperation {
                     name: target.into(),
                     line,
@@ -728,10 +778,10 @@ impl Lowerer {
                     .iter()
                     .any(|token| token.is_punct("=") || token.is_punct("?="))
                     && toks
-                    .iter()
-                    .filter(|token| token.is_punct("->") || token.is_punct("=>"))
-                    .count()
-                    > 1
+                        .iter()
+                        .filter(|token| token.is_punct("->") || token.is_punct("=>"))
+                        .count()
+                        > 1
                 {
                     out.push(Stmt::ExternalOperation {
                         name: "chained_method_call".into(),
@@ -750,7 +800,9 @@ impl Lowerer {
                         recv: "me".into(),
                         method: word(&toks[0]),
                         args,
-                        receiving: receiving.map(|value| expr_to_target(value, line)).transpose()?,
+                        receiving: receiving
+                            .map(|value| expr_to_target(value, line))
+                            .transpose()?,
                         line,
                     });
                     return Ok(());
@@ -766,9 +818,7 @@ impl Lowerer {
                         recv: word(&toks[0]),
                         method: format!("{}~{}", word(&toks[2]), word(&toks[4])),
                         args,
-                        receiving: rec
-                            .map(|value| expr_to_target(value, line))
-                            .transpose()?,
+                        receiving: rec.map(|value| expr_to_target(value, line)).transpose()?,
                         line,
                     });
                     return Ok(());
@@ -783,9 +833,7 @@ impl Lowerer {
                         recv: word(&toks[0]),
                         method: word(&toks[2]),
                         args,
-                        receiving: rec
-                            .map(|value| expr_to_target(value, line))
-                            .transpose()?,
+                        receiving: rec.map(|value| expr_to_target(value, line)).transpose()?,
                         line,
                     });
                     return Ok(());
@@ -810,15 +858,17 @@ impl Lowerer {
                     });
                     return Ok(());
                 }
-                if toks.len() >= 5 && toks[1].is_punct("->") && toks[3].is_punct("(") && toks.last().is_some_and(|t| t.is_punct(")")) {
+                if toks.len() >= 5
+                    && toks[1].is_punct("->")
+                    && toks[3].is_punct("(")
+                    && toks.last().is_some_and(|t| t.is_punct(")"))
+                {
                     let (args, rec) = parse_call_args(&toks[4..toks.len() - 1], line)?;
                     out.push(Stmt::MethodCall {
                         recv: word(&toks[0]),
                         method: word(&toks[2]),
                         args,
-                        receiving: rec
-                            .map(|value| expr_to_target(value, line))
-                            .transpose()?,
+                        receiving: rec.map(|value| expr_to_target(value, line)).transpose()?,
                         line,
                     });
                     return Ok(());
@@ -833,16 +883,11 @@ impl Lowerer {
                             .iter()
                             .position(|token| token.is_punct("+"))
                             .is_some_and(|plus| {
-                                !toks[..eq]
-                                    .get(plus + 1)
-                                    .is_some_and(|token| {
-                                        token.text.chars().all(|c| c.is_ascii_digit())
-                                    })
-                                    || !toks[..eq]
-                                        .get(plus + 3)
-                                        .is_some_and(|token| {
-                                            token.text.chars().all(|c| c.is_ascii_digit())
-                                        })
+                                !toks[..eq].get(plus + 1).is_some_and(|token| {
+                                    token.text.chars().all(|c| c.is_ascii_digit())
+                                }) || !toks[..eq].get(plus + 3).is_some_and(|token| {
+                                    token.text.chars().all(|c| c.is_ascii_digit())
+                                })
                             });
                         if dynamic_slice {
                             out.push(Stmt::ExternalOperation {
@@ -853,22 +898,25 @@ impl Lowerer {
                         }
                         let target = parse_target(&toks[..eq], line)?;
                         let value = parse_expr(&toks[eq + 1..], line)?;
-                        out.push(Stmt::Assign { target, value, line });
+                        out.push(Stmt::Assign {
+                            target,
+                            value,
+                            line,
+                        });
                         return Ok(());
                     }
                 }
 
-                err(line, format!("Nicht unterstütztes Statement: {kw}"))
+                out.push(Stmt::NotSupported {
+                    tokens: toks.into(),
+                });
+                Ok(())
             }
         }
-
     }
 }
 
-pub(super) fn parse_constant_expr(
-    tokens: &[Token],
-    line: usize,
-) -> Result<Expr, CompileError> {
+pub(super) fn parse_constant_expr(tokens: &[Token], line: usize) -> Result<Expr, CompileError> {
     if tokens
         .iter()
         .all(|token| token.kind == Kind::Literal || token.is_punct("&"))

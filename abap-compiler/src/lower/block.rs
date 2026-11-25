@@ -18,7 +18,12 @@ pub(super) fn when_values(toks: &[Token], line: usize) -> Result<Option<Vec<Expr
 }
 
 impl Lowerer {
-    pub(super) fn lower_block(&mut self, head: &Statement, body: &[Item], out: &mut Vec<Stmt>) -> Result<(), CompileError> {
+    pub(super) fn lower_block(
+        &mut self,
+        head: &Statement,
+        body: &[Item],
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
         let line = head.line;
         let toks = &head.tokens;
         match head.keyword().as_str() {
@@ -53,7 +58,11 @@ impl Lowerer {
                         None => otherwise = lowered,
                     }
                 }
-                out.push(Stmt::If { branches, otherwise, line });
+                out.push(Stmt::If {
+                    branches,
+                    otherwise,
+                    line,
+                });
                 Ok(())
             }
             "CASE" => {
@@ -88,7 +97,12 @@ impl Lowerer {
                         None => other = lowered,
                     }
                 }
-                out.push(Stmt::Case { subject, whens, other, line });
+                out.push(Stmt::Case {
+                    subject,
+                    whens,
+                    other,
+                    line,
+                });
                 Ok(())
             }
             "DO" => {
@@ -103,14 +117,22 @@ impl Lowerer {
                 };
                 let mut inner = Vec::new();
                 self.lower_nodes(&nodes(body), &mut inner)?;
-                out.push(Stmt::Do { times, body: inner, line });
+                out.push(Stmt::Do {
+                    times,
+                    body: inner,
+                    line,
+                });
                 Ok(())
             }
             "WHILE" => {
                 let cond = parse_cond(&toks[1..], line)?;
                 let mut inner = Vec::new();
                 self.lower_nodes(&nodes(body), &mut inner)?;
-                out.push(Stmt::While { cond, body: inner, line });
+                out.push(Stmt::While {
+                    cond,
+                    body: inner,
+                    line,
+                });
                 Ok(())
             }
             "LOOP" => {
@@ -150,7 +172,10 @@ impl Lowerer {
                     self.lower_nodes(&nodes(body), out)?;
                     return Ok(());
                 }
-                if toks.iter().any(|token| token.is_word("FROM") || token.is_word("TO")) {
+                if toks
+                    .iter()
+                    .any(|token| token.is_word("FROM") || token.is_word("TO"))
+                {
                     out.push(Stmt::ExternalOperation {
                         name: "loop_range".into(),
                         line,
@@ -159,7 +184,10 @@ impl Lowerer {
                     return Ok(());
                 }
                 if toks.len() < 5 || !toks[1].is_word("AT") || toks[2].kind != Kind::Word {
-                    return err(line, "LOOP unterstützt nur 'LOOP AT tabelle INTO|ASSIGNING ziel.'");
+                    return err(
+                        line,
+                        "LOOP unterstützt nur 'LOOP AT tabelle INTO|ASSIGNING ziel.'",
+                    );
                 }
                 let table = word(&toks[2]);
                 let target = if toks[3].is_word("INTO") {
@@ -169,13 +197,13 @@ impl Lowerer {
                 } else {
                     return err(line, "LOOP erwartet INTO oder ASSIGNING");
                 };
-                let filter = match toks
-                    .iter()
-                    .position(|token| token.is_word("WHERE"))
-                {
+                let filter = match toks.iter().position(|token| token.is_word("WHERE")) {
                     None => None,
                     Some(where_index) => {
-                        if toks.get(where_index + 1).is_some_and(|token| token.is_punct("(")) {
+                        if toks
+                            .get(where_index + 1)
+                            .is_some_and(|token| token.is_punct("("))
+                        {
                             None
                         } else if toks[where_index + 1..]
                             .iter()
@@ -183,26 +211,24 @@ impl Lowerer {
                         {
                             None
                         } else {
-                        if !toks
-                            .get(where_index + 2)
-                            .is_some_and(|token| {
-                                token.is_punct("=")
-                            })
-                        {
-                            None
-                        } else {
-                            let component = toks
-                                .get(where_index + 1)
-                                .filter(|token| token.kind == Kind::Word)
-                                .ok_or_else(|| CompileError {
-                                    line,
-                                    message: "LOOP WHERE ohne Komponente".into(),
-                                })?;
-                            Some(LoopFilter {
-                                component: word(component),
-                                value: parse_expr(&toks[where_index + 3..], line)?,
-                            })
-                        }
+                            if !toks
+                                .get(where_index + 2)
+                                .is_some_and(|token| token.is_punct("="))
+                            {
+                                None
+                            } else {
+                                let component = toks
+                                    .get(where_index + 1)
+                                    .filter(|token| token.kind == Kind::Word)
+                                    .ok_or_else(|| CompileError {
+                                        line,
+                                        message: "LOOP WHERE ohne Komponente".into(),
+                                    })?;
+                                Some(LoopFilter {
+                                    component: word(component),
+                                    value: parse_expr(&toks[where_index + 3..], line)?,
+                                })
+                            }
                         }
                     }
                 };
@@ -244,12 +270,7 @@ impl Lowerer {
                                 .and_then(|index| statement.tokens.get(index + 1))
                                 .filter(|token| token.kind == Kind::Word)
                                 .map(word);
-                            catches.push((
-                                class,
-                                target,
-                                statement.line,
-                                Vec::new(),
-                            ));
+                            catches.push((class, target, statement.line, Vec::new()));
                             destination = &mut catches.last_mut().unwrap().3;
                         }
                         Item::Statement(statement)
@@ -297,7 +318,10 @@ impl Lowerer {
                 self.lower_nodes(&nodes(body), out)?;
                 Ok(())
             }
-            other => err(line, format!("Nicht unterstütztes Statement: {other}")),
+            other => err(
+                line,
+                format!("Nicht unterstütztes block Statement: {other}"),
+            ),
         }
     }
 }
