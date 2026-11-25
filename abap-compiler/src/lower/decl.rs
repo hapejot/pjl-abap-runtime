@@ -3,8 +3,19 @@
 use super::*;
 
 impl Lowerer {
-    /// CLASS ... DEFINITION: Attribute werden zu einer Struktur, Methodensignaturen gemerkt.
+    /// CLASS ... DEFINITION. Schlägt die Definition fehl, wird der vorab eingetragene Klassenname
+    /// wieder entfernt, damit spätere Verwendungen keinen ungültigen Klassenindex finden.
     pub(super) fn define_class(&mut self, c: &AbapClass) -> Result<(), CompileError> {
+        let name = c.name.to_lowercase();
+        let result = self.define_class_inner(c);
+        if result.is_err() {
+            self.names.remove(&name);
+        }
+        result
+    }
+
+    /// CLASS ... DEFINITION: Attribute werden zu einer Struktur, Methodensignaturen gemerkt.
+    fn define_class_inner(&mut self, c: &AbapClass) -> Result<(), CompileError> {
         let line = c.head.line;
         let name = c.name.to_lowercase();
         if self.names.contains_key(&name) {
@@ -31,6 +42,18 @@ impl Lowerer {
                 })
                 .unwrap_or_else(|| ClassParent::External(parent_name.clone()))
         });
+        match &parent {
+            Some(ClassParent::External(external)) => {
+                self.external_parents.insert(name.clone(), external.clone());
+            }
+            // Erbt von einer internen Klasse: deren externe Wurzel gilt auch hier
+            Some(ClassParent::Internal(_)) => {
+                if let Some(root) = parent_name.as_ref().and_then(|p| self.external_parents.get(p)).cloned() {
+                    self.external_parents.insert(name.clone(), root);
+                }
+            }
+            None => {}
+        }
         let mut fields = match parent {
             Some(ClassParent::Internal(parent_idx)) => {
                 let parent_struct = self.classes[parent_idx].struct_idx;
@@ -305,7 +328,23 @@ impl Lowerer {
             }
             let mut body = Vec::new();
             self.scope = Some(name.clone());
-            self.lower_nodes(&nodes(&m.body), &mut body)?;
+            // Parameter der Methode sind im Rumpf als Variablen bekannt (z.B. für LIKE)
+            let mut bindings: Vec<(String, Ty)> = sig.params.iter().map(|p| (p.name.clone(), p.ty)).collect();
+            if let Some(ret) = &sig.ret {
+                bindings.push((ret.name.clone(), ret.ty));
+            }
+            let saved: Vec<(String, Option<Ty>)> = bindings
+                .into_iter()
+                .map(|(name, ty)| (name.clone(), self.data_types.insert(name, ty)))
+                .collect();
+            let result = self.lower_nodes(&nodes(&m.body), &mut body);
+            for (param, previous) in saved {
+                match previous {
+                    Some(ty) => self.data_types.insert(param, ty),
+                    None => self.data_types.remove(&param),
+                };
+            }
+            result?;
             self.scope = None;
             self.classes[idx].methods.push(ClassMethod {
                 name: mname,
@@ -590,6 +629,31 @@ impl Lowerer {
         Ok(())
     }
 
+    /// Felder aus `INCLUDE TYPE name` (eigene Anweisung, Name einfach oder qualifiziert).
+    /// Liefert None, wenn die Anweisung kein INCLUDE ist (z.B. ein Feld namens include).
+    pub(super) fn include_type_fields(
+        &mut self,
+        statement: &crate::inspect::abap::Statement,
+    ) -> Result<Option<Vec<(String, Ty)>>, CompileError> {
+        if statement.tokens.first().is_none_or(|t| !t.is_word("INCLUDE")) {
+            return Ok(None);
+        }
+        let start = 2;
+        let len = if statement.tokens.get(start + 1).is_some_and(|t| t.is_punct("=>") || t.is_punct("~")) {
+            3
+        } else {
+            1
+        };
+        let Some(name_tokens) = statement.tokens.get(start..start + len) else {
+            return err(statement.line, "INCLUDE TYPE ohne Typ");
+        };
+        let label: String = name_tokens.iter().map(|t| t.text.as_str()).collect();
+        match self.ty_of(name_tokens, statement.line)? {
+            Ty::Struct(structure) => Ok(Some(self.structs[structure].fields.clone())),
+            _ => err(statement.line, format!("INCLUDE {label}: kein Struktur-Typ")),
+        }
+    }
+
     fn define_local_structure(
         &mut self,
         members: &[crate::inspect::abap::Member],
@@ -615,7 +679,8 @@ impl Lowerer {
                 let struct_index = self.define_struct(&qualified, fields, begin.line)?;
                 return Ok((qualified, Ty::Struct(struct_index), index + 1));
             }
-            if !matches!(member.kind, MemberKind::Types) {
+            // INCLUDE TYPE gehört zur Struktur, auch wenn der Parser es nicht als TYPES einordnet
+            if !matches!(member.kind, MemberKind::Types) && statement.keyword() != "INCLUDE" {
                 index += 1;
                 continue;
             }
@@ -629,16 +694,9 @@ impl Lowerer {
                 fields.push((nested_name, nested));
                 index = next;
             } else {
-                if statement.tokens.get(1).is_some_and(|token| token.is_word("INCLUDE")) {
-                    let Some(type_token) = statement.tokens.get(3) else {
-                        return err(statement.line, "INCLUDE TYPE ohne Typ");
-                    };
-                    let ty = self.ty_of(&statement.tokens[3..], statement.line)?;
-                    if let Ty::Struct(structure) = ty {
-                        fields.extend(self.structs[structure].fields.clone());
-                    } else {
-                        let _ = type_token;
-                    }
+                // INCLUDE TYPE name als eigene Anweisung
+                if let Some(included) = self.include_type_fields(statement)? {
+                    fields.extend(included);
                     index += 1;
                     continue;
                 }
@@ -712,12 +770,12 @@ impl Lowerer {
                 .copied()
             {
                 Some(Ty::Ref(i)) => Ty::Ref(i),
-                Some(_) => self.external_type(&format!("ref=>{referenced}")),
+                Some(_) => self.external_type(&referenced),
                 None if self.interfaces.contains_key(&referenced) => {
-                    self.external_type(&format!("ref=>{referenced}"))
+                    self.external_type(&referenced)
                 }
                 None if referenced == "data" || referenced == "object" => {
-                    self.external_type(&format!("ref=>{referenced}"))
+                    self.external_type(&referenced)
                 }
                 None if ["if_", "zif_", "zcl_", "cl_", "cx_", "zcx_", "trwbo_", "/"]
                     .iter()
@@ -725,7 +783,7 @@ impl Lowerer {
                     || referenced.starts_with("ty_")
                     || referenced == "devclass" =>
                 {
-                    self.external_type(&format!("ref=>{referenced}"))
+                    self.external_type(&referenced)
                 }
                 None => return err(line, format!("Klasse '{referenced}' nicht definiert")),
             });
@@ -740,7 +798,7 @@ impl Lowerer {
             if elem.len() >= 3 && elem[0].is_word("REF") && elem[1].is_word("TO") {
                 let referenced = word(&elem[2]);
                 return Ok(Ty::Table(Elem::External(
-                    self.external_type_index(&format!("ref=>{referenced}")),
+                    self.external_type_index(&referenced),
                 )));
             }
             return Ok(Ty::Table(self.elem_of(&elem[..end], line)?));
@@ -770,6 +828,31 @@ impl Lowerer {
             }
         }
         Ok(self.elem_of(toks, line)?.ty())
+    }
+
+    /// Typ eines Attributs der laufenden Klasse, auch Komponente (`attr-komp`). Die Struktur der Klasse
+    /// enthält die Attribute samt geerbter Felder.
+    fn class_attribute_type(&self, name: &str) -> Option<Ty> {
+        let scope = self.scope.as_ref()?;
+        let Some(Ty::Ref(index)) = self.names.get(scope) else {
+            return None;
+        };
+        let class = self.classes.get(*index)?;
+        let fields = &self.structs[class.struct_idx].fields;
+        match name.split_once('-') {
+            None => fields.iter().find(|(f, _)| f == name).map(|(_, ty)| *ty),
+            Some((base, component)) => {
+                let (_, ty) = fields.iter().find(|(f, _)| f == base)?;
+                match ty {
+                    Ty::Struct(i) => self.structs[*i]
+                        .fields
+                        .iter()
+                        .find(|(f, _)| f == component)
+                        .map(|(_, ty)| *ty),
+                    _ => None,
+                }
+            }
+        }
     }
 
     pub(super) fn ty_of_like(
@@ -818,13 +901,53 @@ impl Lowerer {
         }
         if let [name] = toks {
             let qualified = self.qualified_type(&word(name));
+            // Systemfelder mit festem Typ
+            // Typ der Systemfelder (SAP-Standard, ABAP-Schlüsselwort-Felder)
+            match word(name).as_str() {
+                "sy-subrc" | "sy-tabix" | "sy-index" | "sy-dbcnt" | "sy-cucol" | "sy-curow" | "sy-fdpos" | "sy-tfill" => {
+                    return Ok(Ty::Int);
+                }
+                "sy-repid" => return Ok(Ty::Char(40)),
+                "sy-uname" => return Ok(Ty::Char(12)),
+                "sy-ucomm" => return Ok(Ty::Char(70)),
+                "sy-langu" | "sy-msgty" => return Ok(Ty::Char(1)),
+                _ => {}
+            }
+            // Attribut der eigenen Klasse (auch geerbt)
+            if let Some(ty) = self.class_attribute_type(&word(name)) {
+                return Ok(ty);
+            }
+            // Komponente einer bekannten Struktur: LIKE a-b
+            if let Some((base, component)) = word(name).split_once('-') {
+                if let Some(Ty::Struct(index)) = self.data_types.get(base).copied() {
+                    if let Some((_, ty)) = self.structs[index].fields.iter().find(|(f, _)| f == component) {
+                        return Ok(*ty);
+                    }
+                }
+            }
+            // Lokale Variable oder Parameter der laufenden Verarbeitung
+            if let Some(ty) = self.data_types.get(&word(name)).copied() {
+                return Ok(ty);
+            }
             if let Some(ty) = self.names.get(&word(name)).copied() {
                 return Ok(ty);
             }
             if let Some(ty) = self.names.get(&qualified).copied() {
                 return Ok(ty);
             }
-            return Ok(self.external_type(&qualified));
+            // Unqualifizierter Name, den die Klasse nicht kennt: Attribut der externen Oberklasse
+            let parent = self
+                .scope
+                .as_ref()
+                .and_then(|scope| self.external_parents.get(scope))
+                .cloned();
+            return match parent {
+                Some(parent) => Ok(self.external_type(&format!("{parent}=>{}", word(name)))),
+                None => err(
+                    line,
+                    format!("LIKE {}: Name ist nicht bekannt", word(name)),
+                ),
+            };
         }
         self.ty_of(toks, line)
     }

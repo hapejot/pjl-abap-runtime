@@ -42,3 +42,20 @@ fn messages_without_names_are_counted_by_template() {
     assert!(r.total_messages >= 1);
     assert!(r.other_messages.keys().any(|k| k.contains("Nicht unterstütztes Statement")));
 }
+
+#[test]
+fn external_object_in_library_is_known_others_are_unknown() {
+    use abap_compiler::analyze::analyze_with;
+    use abap_compiler::library::{Library, Object, ObjectKind, Origin, Status};
+
+    let mut lib = Library::new("test", Origin::Manual);
+    lib.insert(Object::new("cl_gui_alv_tree", ObjectKind::Class, Status::SignatureOnly));
+    let src = "REPORT zt.\nSTART-OF-SELECTION.\n  cl_gui_alv_tree=>run( ).\n  zcl_unbekannt=>run( ).\n";
+    let r = analyze_with(src, "zt", &[lib]);
+
+    let known = r.names.iter().find(|n| n.name == "cl_gui_alv_tree").expect("Name erwartet");
+    assert_eq!(known.classification, "in_bibliothek");
+    assert_eq!(known.library.as_deref(), Some("test"));
+    assert!(r.unknown.iter().any(|o| o.name == "zcl_unbekannt"));
+    assert!(!r.unknown.iter().any(|o| o.name == "cl_gui_alv_tree"));
+}

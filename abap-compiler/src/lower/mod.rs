@@ -22,6 +22,7 @@ use crate::ast::{
     err, literal_content, parse_call_args, parse_cond, parse_expr, CompileError, Cond, Expr,
     NamedArg,
 };
+use crate::ddic::{Ddic, DdicType};
 use crate::symbols::SymbolCatalog;
 
 /// Parst und übersetzt ein ABAP-Programm in die IR.
@@ -31,7 +32,17 @@ pub fn parse_source(src: &str) -> Result<Ir, Vec<CompileError>> {
     for e in prog.errors.iter() {
         error!("L1 Error: {} {}", e.line, e.message);
     }
-    parse_l2_program(&prog)
+    lower_program(&prog)
+}
+
+/// Übersetzt ein bereits geparstes Programm (z.B. mit aufgelösten Includes) in die IR.
+pub fn lower_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
+    parse_l2_program(prog, &Ddic::default())
+}
+
+/// Wie `lower_program`, mit DDIC-Strukturen und Datenelementen aus dem Export.
+pub fn lower_program_with(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>> {
+    parse_l2_program(prog, ddic)
 }
 
 /// Eine Anweisung im Ablauf: einfaches Statement oder Block mit Körper.
@@ -82,6 +93,8 @@ struct Lowerer {
     external_type_indices: HashMap<String, usize>,
     data_types: HashMap<String, Ty>,
     scope: Option<String>,
+    /// Externe Oberklasse je Klasse; ein nicht auflösbarer LIKE-Name ist ein Attribut dieser Oberklasse
+    external_parents: HashMap<String, String>,
 }
 
 /// Signatur einer Methode aus der Klassendefinition.
@@ -92,7 +105,7 @@ struct MethodSig {
     is_static: bool,
 }
 
-fn parse_l2_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
+fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>> {
     let _symbols = SymbolCatalog::from_program(prog).map_err(|e| vec![e])?;
     let mut lw = Lowerer {
         errors: Vec::new(),
@@ -110,27 +123,55 @@ fn parse_l2_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
         external_type_indices: HashMap::new(),
         data_types: HashMap::new(),
         scope: None,
+        external_parents: HashMap::new(),
     };
+    lw.preload_ddic(ddic);
     let mut stmts = Vec::new();
     let mut form_items: Vec<&TopItem> = Vec::new();
+    let mut inactive_events: Vec<InactiveEvent> = Vec::new();
+    // Inaktive Ereignisse werden als FORM übersetzt, die niemand aufruft: Fehler bleiben sichtbar
+    let mut inactive_forms: Vec<Form> = Vec::new();
 
     // Erst die Programmebene (Typen, Daten, START-OF-SELECTION), danach die FORMs.
+    // Ablauf in ABAP: Anweisungen vor dem ersten Ereignis, dann INITIALIZATION, dann START-OF-SELECTION,
+    // unabhängig von ihrer Reihenfolge im Quelltext.
     let mut top: Vec<Node> = Vec::new();
+    let mut initialization: Vec<Node> = Vec::new();
+    let mut start: Vec<Node> = Vec::new();
     for item in &prog.items {
         match item {
             TopItem::Statement(s) => top.push(Node::S(s)),
             TopItem::Block { head, body } => top.push(Node::B(head, body)),
-            TopItem::Routine { kind, body, .. }
-                if matches!(kind.as_str(), "INITIALIZATION" | "START-OF-SELECTION") =>
-            {
-                top.extend(nodes(body));
+            TopItem::Routine { kind, body, .. } if kind == "INITIALIZATION" => {
+                initialization.extend(nodes(body));
+            }
+            TopItem::Routine { kind, body, .. } if kind == "START-OF-SELECTION" => {
+                start.extend(nodes(body));
             }
             TopItem::Routine { kind, .. } if kind == "FORM" => form_items.push(item),
-            TopItem::Routine { kind, head, .. }
+            TopItem::Routine { kind, head, body, .. }
                 if kind == "AT" && head.tokens.iter().any(|t| t.is_word("SELECTION-SCREEN")) =>
             {
-                // Selection-screen callbacks are SAP GUI kernel events and do not run in
-                // a native report executable.
+                // Ereignisse der Selektionsmaske laufen nur mit einer Maske (SAP GUI). Im Ziel gibt es keine
+                // Maske, daher werden sie nie ausgeführt. Der Code wird trotzdem übersetzt, damit Fehler
+                // sichtbar bleiben; Variablen aus dem Block gelten nicht außerhalb.
+                let saved_types = lw.data_types.clone();
+                let mut event_body = Vec::new();
+                if let Err(e) = lw.lower_nodes(&nodes(body), &mut event_body) {
+                    lw.errors.push(e);
+                }
+                lw.data_types = saved_types;
+                // Name mit Sonderzeichen: kein ABAP-Programm kann diese FORM aufrufen
+                inactive_forms.push(Form {
+                    name: format!("__inactive_event_{}", head.line),
+                    params: Vec::new(),
+                    body: event_body,
+                    line: head.line,
+                });
+                inactive_events.push(InactiveEvent {
+                    name: head.text(),
+                    line: head.line,
+                });
             }
             TopItem::Routine { kind, head, .. } => lw.errors.push(CompileError {
                 line: head.line,
@@ -139,6 +180,8 @@ fn parse_l2_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
             TopItem::Class(c) => top.push(Node::C(c)),
         }
     }
+    top.extend(initialization);
+    top.extend(start);
     if let Err(e) = lw.lower_nodes(&top, &mut stmts) {
         lw.errors.push(e);
     }
@@ -170,10 +213,12 @@ fn parse_l2_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
         });
     }
 
+    forms.extend(inactive_forms);
     if !lw.errors.is_empty() {
         return Err(lw.errors);
     }
     Ok(Ir {
+        inactive_events,
         stmts,
         forms,
         structs: lw.structs,
@@ -239,12 +284,8 @@ impl Lowerer {
                                 }
                                 continue;
                             }
-                            Node::S(f)
-                                if f.keyword() == kw
-                                    && f.tokens
-                                        .get(1)
-                                        .is_some_and(|token| token.is_word("INCLUDE")) => {}
-                            Node::S(f) if f.tokens.iter().any(|token| token.is_word("INCLUDE")) => {
+                            Node::S(f) if f.keyword() == "INCLUDE" => {
+                                fields.extend(self.include_type_fields(f)?.unwrap_or_default());
                             }
                             Node::S(f) if f.keyword() == kw => fields.push(self.field(f)?),
                             Node::S(f) => return err(f.line, "Struktur unvollständig"),
@@ -311,6 +352,26 @@ impl Lowerer {
         Ty::External(self.external_type_index(name))
     }
 
+    /// Trägt DDIC-Datenelemente und -Strukturen als bekannte Typen ein.
+    fn preload_ddic(&mut self, ddic: &Ddic) {
+        fn ty(t: &DdicType) -> Ty {
+            match t {
+                DdicType::Char(n) => Ty::Char(*n),
+                DdicType::Int => Ty::Int,
+                DdicType::Str => Ty::Str,
+            }
+        }
+        for (name, t) in &ddic.elements {
+            self.names.insert(name.clone(), ty(t));
+        }
+        for (name, fields) in &ddic.structs {
+            let fields: Vec<(String, Ty)> = fields.iter().map(|(f, t)| (f.clone(), ty(t))).collect();
+            if let Ok(index) = self.define_struct(name, fields, 0) {
+                self.names.insert(name.clone(), Ty::Struct(index));
+            }
+        }
+    }
+
     fn external_type_index(&mut self, name: &str) -> usize {
         let name = name.to_lowercase();
         *self
@@ -332,28 +393,60 @@ mod tests {
     #[test]
     fn lowers_initialization_before_start_of_selection() {
         let ir = parse_source(
-            "INITIALIZATION.\n\
-             DATA value TYPE i.\n\
-             value = 1.\n\
-             START-OF-SELECTION.\n\
-             WRITE value.",
+            "START-OF-SELECTION.\n\
+             WRITE 'gestartet'.\n\
+             INITIALIZATION.\n\
+             WRITE 'initialisiert'.",
         )
         .unwrap();
 
-        assert_eq!(ir.stmts.len(), 3);
+        // Reihenfolge im Programm ist unabhängig von der Quelltext-Reihenfolge der Ereignisse
+        let text = format!("{:?}", ir.stmts);
+        assert_eq!(ir.stmts.len(), 2);
+        assert!(text.find("initialisiert").unwrap() < text.find("gestartet").unwrap());
     }
 
     #[test]
-    fn ignores_selection_screen_kernel_events() {
+    fn models_selection_screen_events_as_inactive() {
         let ir = parse_source(
-            "AT SELECTION-SCREEN OUTPUT.\n\
-             WRITE 'screen'.\n\
-             START-OF-SELECTION.\n\
-             WRITE 'run'.",
+            "AT SELECTION-SCREEN OUTPUT.
+             WRITE screen.
+             START-OF-SELECTION.
+             WRITE run.",
+        )
+        .expect("Selektionsereignisse müssen übersetzbar sein");
+
+        assert_eq!(ir.inactive_events.len(), 1);
+        assert_eq!(ir.inactive_events[0].line, 1);
+        // Der Code des Ereignisses landet nicht im Programm
+        let text = format!("{:?}", ir.stmts);
+        assert!(!text.contains("screen"));
+        assert!(text.contains("run"));
+    }
+
+    #[test]
+    fn errors_inside_selection_screen_events_are_still_reported() {
+        let errors = parse_source(
+            "AT SELECTION-SCREEN.
+             DATA x LIKE unbekannt_typ.
+             START-OF-SELECTION.
+             WRITE run.",
+        )
+        .err()
+        .expect("Fehler im Ereignis muss gemeldet werden");
+        assert!(errors.iter().any(|e| e.message.contains("unbekannt_typ")));
+    }
+
+    #[test]
+    fn inactive_event_is_translated_as_uncalled_form() {
+        let ir = parse_source(
+            "AT SELECTION-SCREEN.
+             WRITE eingabe.
+             START-OF-SELECTION.
+             WRITE run.",
         )
         .unwrap();
-
-        assert_eq!(ir.stmts.len(), 1);
+        assert!(ir.forms.iter().any(|f| f.name == "__inactive_event_1"));
     }
 
     #[test]
@@ -528,7 +621,7 @@ mod tests {
 
     #[test]
     fn parses_is_initial_and_is_not_initial() {
-        parse_source(
+        let ir = parse_source(
             "DATA value TYPE i.\n\
              IF value IS INITIAL.\n\
                value = 1.\n\
@@ -538,6 +631,13 @@ mod tests {
              ENDIF.",
         )
         .unwrap();
+
+        let ifs = ir
+            .stmts
+            .iter()
+            .filter(|s| matches!(s, crate::lower::Stmt::If { .. }))
+            .count();
+        assert_eq!(ifs, 2);
     }
 
     #[test]
@@ -578,7 +678,26 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ir.dependencies, vec!["child=>previous".to_string()]);
+        // previous ist Attribut der externen Oberklasse, nicht der Klasse selbst
+        assert_eq!(ir.dependencies, vec!["cx_root=>previous".to_string()]);
+    }
+
+    #[test]
+    fn rejects_unqualified_like_without_external_parent() {
+        let errors = parse_source(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS run IMPORTING value LIKE unknown_thing.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD run.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.",
+        )
+        .err()
+        .expect("Fehler erwartet");
+
+        assert!(errors.iter().any(|e| e.message.contains("LIKE unknown_thing")));
     }
 
     #[test]
@@ -696,7 +815,7 @@ mod tests {
 
     #[test]
     fn parses_is_assigned() {
-        parse_source(
+        let ir = parse_source(
             "TYPES: BEGIN OF state, value TYPE i, END OF state.\n\
              DATA record TYPE state.\n\
              FIELD-SYMBOLS <value> TYPE i.\n\
@@ -706,6 +825,15 @@ mod tests {
              ENDIF.",
         )
         .unwrap();
+
+        assert!(ir
+            .stmts
+            .iter()
+            .any(|s| matches!(s, crate::lower::Stmt::If { .. })));
+        assert!(ir
+            .stmts
+            .iter()
+            .any(|s| matches!(s, crate::lower::Stmt::AssignComponent { .. })));
     }
 
     #[test]
@@ -745,22 +873,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(ir.dependencies.contains(&"source=>progname".to_string()));
-        assert!(
-            ir.dependencies.contains(&"source=>program".to_string())
-                || ir
-                    .structs
-                    .iter()
-                    .any(|structure| structure.name == "class consumer"
-                        && structure.fields.iter().any(|(name, _)| name == "copy"))
-        );
+        // Das DDIC-Element gehört zur Klasse source; consumer erbt den Typ über LIKE
+        assert_eq!(ir.dependencies, vec!["source=>progname".to_string()]);
     }
 
     #[test]
     fn records_external_interface_reference() {
         let ir = parse_source("DATA log TYPE REF TO zif_external_log.").unwrap();
 
-        assert_eq!(ir.dependencies, vec!["ref=>zif_external_log"]);
+        assert_eq!(ir.dependencies, vec!["zif_external_log"]);
     }
 
     #[test]
@@ -860,10 +981,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(
-            ir.stmts.last(),
-            Some(crate::lower::Stmt::ReadTable { .. })
-        ));
+        match ir.stmts.last() {
+            Some(crate::lower::Stmt::ReadTable { table, target, index, .. }) => {
+                assert_eq!(table, "rows");
+                assert_eq!(target, "<row>");
+                assert_eq!(*index, crate::ast::Expr::Int(1));
+            }
+            other => panic!("ReadTable erwartet, erhalten: {other:?}"),
+        }
     }
 
     #[test]
@@ -873,5 +998,84 @@ mod tests {
             ir.stmts[0],
             crate::lower::Stmt::ExternalFunctionCall { ref name, .. } if name == "docu_get"
         ));
+    }
+
+    #[test]
+    fn include_if_found_without_file_is_not_an_error() {
+        assert!(parse_source("REPORT zt.
+INCLUDE zinc IF FOUND.
+").is_ok());
+    }
+
+    #[test]
+    fn include_without_if_found_without_file_is_an_error() {
+        assert!(parse_source("REPORT zt.
+INCLUDE zinc.
+").is_err());
+    }
+
+    #[test]
+    fn like_inherited_through_internal_parent_resolves_to_external_root() {
+        let ir = parse_source(
+            "CLASS base DEFINITION INHERITING FROM cx_root.
+             ENDCLASS.
+             CLASS base IMPLEMENTATION.
+             ENDCLASS.
+             CLASS child DEFINITION INHERITING FROM base.
+               PUBLIC SECTION.
+                 METHODS constructor IMPORTING previous LIKE previous OPTIONAL.
+             ENDCLASS.
+             CLASS child IMPLEMENTATION.
+               METHOD constructor.
+               ENDMETHOD.
+             ENDCLASS.",
+        )
+        .expect("LIKE auf geerbtes Attribut muss auflösbar sein");
+        assert_eq!(ir.dependencies, vec!["cx_root=>previous".to_string()]);
+    }
+
+    #[test]
+    fn like_resolves_class_attribute_and_its_component_in_method() {
+        parse_source(
+            "TYPES: BEGIN OF state, value TYPE i, END OF state.
+             CLASS holder DEFINITION.
+               PUBLIC SECTION.
+                 DATA current TYPE state.
+                 METHODS run.
+             ENDCLASS.
+             CLASS holder IMPLEMENTATION.
+               METHOD run.
+                 DATA copy LIKE current-value.
+                 DATA whole LIKE current.
+               ENDMETHOD.
+             ENDCLASS.",
+        )
+        .expect("LIKE auf Attribut und Komponente der eigenen Klasse");
+    }
+
+    #[test]
+    fn include_type_in_structure_contributes_fields() {
+        let ir = parse_source(
+            "TYPES: BEGIN OF base, obj_name TYPE c LENGTH 30, END OF base.
+             TYPES: BEGIN OF item.
+               INCLUDE TYPE base.
+             TYPES: inactive TYPE c LENGTH 1, END OF item.
+             DATA ls TYPE item.
+             DATA name LIKE ls-obj_name.",
+        )
+        .expect("Felder aus INCLUDE TYPE müssen bekannt sein");
+        assert!(ir.structs.iter().any(|st| st.name == "item" && st.fields.iter().any(|(f, _)| f == "obj_name")));
+    }
+
+    #[test]
+    fn field_named_include_is_not_an_include_statement() {
+        assert!(parse_source(
+            "TYPES: BEGIN OF s,
+               program TYPE c LENGTH 10,
+               include TYPE c LENGTH 10,
+             END OF s.
+",
+        )
+        .is_ok());
     }
 }

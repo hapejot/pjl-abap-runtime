@@ -4,5 +4,8 @@ pub mod analyze;
 pub mod ast;
 pub mod inspect;
 pub mod codegen;
+pub mod ddic;
+pub mod library;
 pub mod lower;
+pub mod project;
 pub mod symbols;

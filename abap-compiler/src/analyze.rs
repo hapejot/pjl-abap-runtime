@@ -18,6 +18,7 @@ use crate::ast::CompileError;
 use crate::codegen::Codegen;
 use crate::inspect::abap::requirements::{derive, Requirement, TypeKind};
 use crate::lower::parse_source;
+use crate::library::{Library, Object, ObjectKind, Status};
 
 const BUILTIN: &[&str] = &["me", "abap_true", "abap_false", "abap_undefined", "sy", "syst", "space", "super"];
 const KEYWORDS: &[&str] = &[
@@ -43,6 +44,12 @@ pub struct Options {
     /// Anzahl der Namen, die in der Übersicht gezeigt werden
     #[arg(long, default_value_t = 15)]
     pub top: usize,
+    /// Bibliothek mit bekannten externen Objekten (JSON, wiederholbar)
+    #[arg(long = "library", value_name = "DATEI")]
+    pub library: Vec<PathBuf>,
+    /// Objekte ohne Quelle in diese Bibliothek-Datei (JSON) schreiben
+    #[arg(long = "unknown-out", value_name = "DATEI")]
+    pub unknown_out: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -69,6 +76,8 @@ pub struct UnknownName {
     pub kind_from_requirements: Option<&'static str>,
     pub methods: Vec<String>,
     pub implements: Vec<String>,
+    /// Name der Bibliothek, in der das Objekt steht (Klasse `in_bibliothek`)
+    pub library: Option<String>,
     /// Beispielzeilen: (Zeile, Text)
     pub samples: Vec<(usize, String)>,
 }
@@ -81,6 +90,8 @@ pub struct Report {
     pub names: Vec<UnknownName>,
     /// Meldungen ohne Namensbezug, nach Meldungsmuster gezählt
     pub other_messages: BTreeMap<String, usize>,
+    /// Objekte ohne Quelle (für die Bibliothek `unbekannt`)
+    pub unknown: Vec<Object>,
 }
 
 /// Fehlerart mit Namen aus einer Compilermeldung.
@@ -251,6 +262,11 @@ fn token_index(lines: &[&str]) -> HashMap<String, Vec<usize>> {
 
 /// Erzeugt den Bericht zu einem Programm.
 pub fn analyze(src: &str, program_name: &str) -> Report {
+    analyze_with(src, program_name, &[])
+}
+
+/// Wie `analyze`, mit bekannten externen Objekten aus Bibliotheken.
+pub fn analyze_with(src: &str, program_name: &str, libraries: &[Library]) -> Report {
     let errors = collect_errors(src);
     let lines: Vec<&str> = src.lines().collect();
     let index = token_index(&lines);
@@ -306,13 +322,25 @@ pub fn analyze(src: &str, program_name: &str) -> Report {
     for (name, (categories, sample_lines, structs)) in groups {
         let base = name.split('-').next().unwrap_or("").to_string();
         let message_count: usize = categories.values().sum();
-        let (classification, declared_at, kind_req) =
+        let (mut classification, declared_at, kind_req) =
             classify(&base, &decls, &in_export, &externals, &method_names);
         let candidates: &[usize] = index.get(&base).map_or(&[], |v| v.as_slice());
-        let (inferred, evidence) = match kind_req {
+        let (mut inferred, evidence) = match kind_req {
             Some(k) => (k.to_string(), BTreeMap::new()),
             None => infer_kind(&base, &lines, candidates),
         };
+        // Externe Objekte, die in einer Bibliothek stehen, gelten als bekannt
+        let mut library_name = None;
+        if matches!(classification, "extern_klasse_oder_interface" | "unbekannt_extern_oder_fehlend") {
+            let found = libraries
+                .iter()
+                .find_map(|l| l.get(&base).map(|o| (l.name.clone(), o.kind)));
+            if let Some((lib, kind)) = found {
+                classification = "in_bibliothek";
+                inferred = format!("{kind:?}").to_lowercase();
+                library_name = Some(lib);
+            }
+        }
         let (methods, implements) = externals
             .get(&base)
             .map(|r| (r.methods.clone(), r.implements.clone()))
@@ -336,13 +364,30 @@ pub fn analyze(src: &str, program_name: &str) -> Report {
             kind_from_requirements: kind_req,
             methods,
             implements,
+            library: library_name,
             samples,
         });
     }
+    // Objekte ohne Quelle: weder im Quelltext noch in einer Bibliothek
+    report.unknown = report
+        .names
+        .iter()
+        .filter(|n| matches!(n.classification, "unbekannt_extern_oder_fehlend" | "extern_klasse_oder_interface"))
+        .map(|n| Object::new(&n.name, object_kind(&n.inferred_kind), Status::Unknown))
+        .collect();
     report
         .names
         .sort_by(|a, b| a.classification.cmp(b.classification).then(b.message_count.cmp(&a.message_count)));
     report
+}
+
+/// Objektart aus der Bezeichnung der Art (Anforderungen oder Verwendungsmuster).
+fn object_kind(kind: &str) -> ObjectKind {
+    match kind {
+        "class" | "klasse_statisch" | "klasse_oder_interface" => ObjectKind::Class,
+        "interface" => ObjectKind::Interface,
+        _ => ObjectKind::Unknown,
+    }
 }
 
 /// Ordnet einen Namen einer Klasse zu. Liefert Klasse, Deklarationszeile und Art aus den Anforderungen.
@@ -416,8 +461,28 @@ pub fn run(opts: Options) {
         .and_then(|s| s.to_str())
         .unwrap_or("program")
         .to_lowercase();
-    let report = analyze(&src, &name);
+    let libraries: Vec<Library> = opts
+        .library
+        .iter()
+        .map(|p| Library::load(p))
+        .collect::<Result<_, _>>()
+        .unwrap_or_else(|e| {
+            eprintln!("abapc: {e}");
+            std::process::exit(1);
+        });
+    let report = analyze_with(&src, &name, &libraries);
     print_summary(&report, opts.top);
+    if let Some(path) = &opts.unknown_out {
+        let mut unknown = Library::unknown();
+        for object in &report.unknown {
+            unknown.insert(object.clone());
+        }
+        if let Err(e) = unknown.save(path) {
+            eprintln!("abapc: {e}");
+            std::process::exit(1);
+        }
+        println!("Unbekannte Objekte ({}): {}", unknown.objects.len(), path.display());
+    }
     if let Some(path) = &opts.json {
         match serde_json::to_string_pretty(&report) {
             Ok(json) => {

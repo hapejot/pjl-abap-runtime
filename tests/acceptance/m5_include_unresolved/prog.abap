@@ -1,0 +1,4 @@
+REPORT zt.
+INCLUDE zinc.
+START-OF-SELECTION.
+  WRITE 'x'.

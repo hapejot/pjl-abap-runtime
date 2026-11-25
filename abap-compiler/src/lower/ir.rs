@@ -295,8 +295,18 @@ pub struct Form {
     pub line: usize,
 }
 
+/// Ereignis, das im Ziel nie ausgeführt wird (z.B. AT SELECTION-SCREEN ohne Selektionsmaske).
+/// Der Code wird übersetzt und geprüft, aber nicht in das Programm übernommen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InactiveEvent {
+    pub name: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Ir {
     pub stmts: Vec<Stmt>,
+    pub inactive_events: Vec<InactiveEvent>,
     pub forms: Vec<Form>,
     pub structs: Vec<StructDef>,
     pub classes: Vec<ClassDef>,

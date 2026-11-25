@@ -65,7 +65,16 @@ impl Lowerer {
         match kw.as_str() {
             "REPORT" | "TYPES" => Ok(()),
             "SELECTION-SCREEN" | "TABLES" | "PARAMETERS" | "SELECT-OPTIONS" => Ok(()),
-            "INCLUDE" => Ok(()),
+            // Auflösbare Includes ersetzt project::expand_includes; was hier ankommt, fehlt im Export.
+            // INCLUDE name IF FOUND: fehlt die Datei, ist das kein Fehler
+            "INCLUDE" if toks.iter().any(|t| t.is_word("FOUND")) => Ok(()),
+            "INCLUDE" => err(
+                line,
+                format!(
+                    "INCLUDE {} konnte nicht aufgelöst werden (Datei nicht im Export)",
+                    toks.get(1).map(word).unwrap_or_default()
+                ),
+            ),
             "SELECT" | "UPDATE" | "MODIFY" => {
                 out.push(Stmt::ExternalOperation {
                     name: kw.to_lowercase(),

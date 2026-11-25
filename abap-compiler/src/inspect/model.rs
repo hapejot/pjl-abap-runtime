@@ -1157,7 +1157,7 @@ pub fn analyze(files: &[(String, String)]) -> DataModel {
     analyze_with_inventory(files, &inventory)
 }
 
-fn xml_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
+pub(crate) fn xml_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let mut blocks = Vec::new();
@@ -1173,7 +1173,7 @@ fn xml_blocks<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     blocks
 }
 
-fn xml_value(block: &str, tag: &str) -> Option<String> {
+pub(crate) fn xml_value(block: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let start = block.find(&open)? + open.len();

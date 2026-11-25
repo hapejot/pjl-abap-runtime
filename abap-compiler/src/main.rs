@@ -4,7 +4,15 @@
 //!   abapc <prog.abap> -o <exe> [--emit-ir <datei.ll>] [--runtime <runtime-lib>]
 //!   abapc inspect <export.zip> [--check|--objects|--deps|--external|--model|--tui|...]
 
-use abap_compiler::{analyze, ast::CompileError, codegen::Codegen, inspect, lower::parse_source};
+use abap_compiler::{
+    analyze,
+    ast::CompileError,
+    codegen::Codegen,
+    inspect,
+    library,
+    lower::{lower_program_with, parse_source},
+    project,
+};
 use clap::{Parser, Subcommand};
 use inkwell::context::Context;
 use inkwell::targets::{
@@ -32,6 +40,9 @@ struct Cli {
     /// Optional: Laufzeitbibliothek
     #[clap(long = "runtime")]
     runtime: Option<PathBuf>,
+    /// Bei ZIP-Eingabe: Hauptprogramm aus dem Export (sonst das einzige Programm mit REPORT)
+    #[clap(long = "program")]
+    program: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -40,6 +51,15 @@ enum Sub {
     Inspect(inspect::cli::Options),
     /// Übersetzungsfehler auswerten: unbekannte Namen, vermutete Art, Compiler-Lücken
     Analyze(analyze::Options),
+    /// Externe Bibliotheken verwalten
+    #[command(subcommand)]
+    Library(LibraryCmd),
+}
+
+#[derive(Debug, Subcommand)]
+enum LibraryCmd {
+    /// Bibliothek aus Quelltext (Ordner oder ZIP) als JSON erzeugen
+    Build(library::BuildOptions),
 }
 
 /// Argumente der Übersetzung, nachdem die Pflichtangaben geprüft sind.
@@ -48,6 +68,7 @@ struct Args {
     output: PathBuf,
     emit_ir: Option<PathBuf>,
     runtime: Option<PathBuf>,
+    program: Option<String>,
 }
 
 fn runtime_library_name() -> &'static str {
@@ -166,19 +187,24 @@ fn main() {
             analyze::run(opts);
             return;
         }
+        Some(Sub::Library(LibraryCmd::Build(opts))) => {
+            if let Err(e) = library::build(opts) {
+                fail(e);
+            }
+            return;
+        }
         None => {}
     }
     let (Some(input), Some(output)) = (cli.input, cli.output) else {
         fail("Eingabedatei und -o <ausgabe> angeben (Analyse: abapc inspect <zip>)")
     };
-    if input.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
-        fail("ZIP-Dateien werden noch nicht übersetzt; zur Untersuchung: abapc inspect <zip>");
-    }
+    let is_zip = input.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
     let args = Args {
         input,
         output,
         emit_ir: cli.emit_ir,
         runtime: cli.runtime,
+        program: cli.program,
     };
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -190,12 +216,27 @@ fn main() {
         args.input.display(),
         args.output.display()
     );
-    let src = std::fs::read_to_string(&args.input)
-        .unwrap_or_else(|e| fail(format!("{}: {e}", args.input.display())));
-
-    let ir = match parse_source(&src) {
-        Ok(ir) => ir,
-        Err(errors) => fail_all(errors),
+    let ir = if is_zip {
+        // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
+        let mut programs = project::load_programs(&args.input).unwrap_or_else(|e| fail(e));
+        let name = project::main_program(&programs, args.program.as_deref()).unwrap_or_else(|e| fail(e));
+        let mut prog = programs.remove(&name).expect("Hauptprogramm ist im Export vorhanden");
+        project::expand_includes(&mut prog, &programs);
+        let ddic = project::load_ddic(&args.input).unwrap_or_else(|e| fail(e));
+        for skipped in &ddic.skipped {
+            eprintln!("abapc: Hinweis: DDIC-Objekt übersprungen: {skipped}");
+        }
+        match lower_program_with(&prog, &ddic) {
+            Ok(ir) => ir,
+            Err(errors) => fail_all(errors),
+        }
+    } else {
+        let src = std::fs::read_to_string(&args.input)
+            .unwrap_or_else(|e| fail(format!("{}: {e}", args.input.display())));
+        match parse_source(&src) {
+            Ok(ir) => ir,
+            Err(errors) => fail_all(errors),
+        }
     };
 
     let ctx = Context::create();

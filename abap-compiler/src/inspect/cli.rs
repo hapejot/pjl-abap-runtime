@@ -74,7 +74,7 @@ pub struct Options {
 }
 
 /// Alle `.abap`-Dateien als `(Pfad, Quelltext)`.
-fn read_abap_files(archive: &mut ZipArchive<File>) -> Vec<(String, String)> {
+pub fn read_abap_files(archive: &mut ZipArchive<File>) -> Vec<(String, String)> {
     abap_entries(archive)
         .into_iter()
         .map(|n| {
