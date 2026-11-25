@@ -70,7 +70,7 @@ impl<'ctx> Codegen<'ctx> {
             // Parameter ist ein Zeiger auf den Speicher des Aufrufers; wie ein Feldsymbol abgelegt
             let slot = llvm(self.alloca.build_alloca(self.ptrt, &p.name))?;
             llvm(self.alloca.build_store(slot, arg))?;
-            self.vars.insert(p.name.clone(), Var { slot, ty: p.ty, fs: true });
+            self.vars.insert(p.name.clone(), Var { slot, ty: p.ty, fs: true, tag: None });
         }
         if let Some((rname, rty)) = ret {
             let idx = params.len() as u32 + offset;
@@ -80,7 +80,7 @@ impl<'ctx> Codegen<'ctx> {
             };
             let slot = llvm(self.alloca.build_alloca(self.ptrt, rname))?;
             llvm(self.alloca.build_store(slot, arg))?;
-            self.vars.insert(rname.to_string(), Var { slot, ty: rty, fs: true });
+            self.vars.insert(rname.to_string(), Var { slot, ty: rty, fs: true, tag: None });
         }
 
         self.hoist(body_stmts)?;

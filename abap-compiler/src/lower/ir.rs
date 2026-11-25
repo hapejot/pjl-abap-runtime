@@ -17,6 +17,8 @@ pub enum Ty {
     Ref(usize),
     /// Externer SAP-/DDIC-Typ, Index in `Ir::external_types`
     External(usize),
+    /// Zur Übersetzungszeit unbekannt: untypisiertes oder `TYPE any` Feldsymbol, Typ erst zur Laufzeit
+    Dynamic,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +133,12 @@ pub enum Stmt {
     While {
         cond: Cond,
         body: Vec<Stmt>,
+        line: usize,
+    },
+    /// ASSIGN quelle TO <fs>: Feldsymbol zeigt auf die Quelle, Typ-Tag wird übernommen
+    AssignFs {
+        fs: String,
+        source: String,
         line: usize,
     },
     FieldSymbol {

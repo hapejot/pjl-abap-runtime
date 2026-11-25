@@ -155,6 +155,7 @@ impl<'ctx> Codegen<'ctx> {
 
     pub(super) fn dest_of(&self, ty: Ty, p: PointerValue<'ctx>, line: usize) -> CResult<Dest<'ctx>> {
         match ty {
+            Ty::Dynamic => err(line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
             Ty::Int => Ok(Dest::Int(p)),
             Ty::Char(n) => Ok(Dest::Chars(p, n)),
             Ty::Str => Ok(Dest::Str(p)),
@@ -174,6 +175,7 @@ impl<'ctx> Codegen<'ctx> {
     /// Liest einen Wert aus einem Speicherplatz des angegebenen Typs.
     pub(super) fn load_val(&self, p: PointerValue<'ctx>, ty: Ty, _line: usize) -> CResult<Val<'ctx>> {
         match ty {
+            Ty::Dynamic => err(_line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
             Ty::Int => Ok(Val::Int(llvm(self.builder.build_load(self.i32t, p, "ld"))?.into_int_value())),
             Ty::Char(n) => Ok(Val::Chars(p, n)),
             Ty::Str => Ok(Val::Str(llvm(self.builder.build_load(self.ptrt, p, "lds"))?.into_pointer_value())),

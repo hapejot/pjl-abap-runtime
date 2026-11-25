@@ -46,6 +46,43 @@ impl<'ctx> Codegen<'ctx> {
                     ],
                 )
             }
+            Stmt::AssignFs { fs, source, line } => {
+                let target = self.var(fs, *line)?.clone();
+                if !target.fs {
+                    return err(*line, format!("ASSIGN-Ziel '{fs}' ist kein Feldsymbol"));
+                }
+                let Some(tag_slot) = target.tag else {
+                    return err(*line, format!("Feldsymbol '{fs}' hat keinen Typ-Tag"));
+                };
+                let (p, ty) = self.data(source, *line)?;
+                if ty == Ty::Dynamic {
+                    // Quelle ist ein dynamisches Feldsymbol: Zeiger und Tag werden übernommen
+                    if target.ty != Ty::Dynamic {
+                        return err(
+                            *line,
+                            format!("ASSIGN: dynamische Quelle '{source}' für typisiertes Feldsymbol '{fs}' braucht eine Laufzeitprüfung (noch nicht unterstützt)"),
+                        );
+                    }
+                    let src = self.var(source, *line)?.clone();
+                    let Some(src_tag) = src.tag else {
+                        return err(*line, format!("Quelle '{source}' hat keinen Typ-Tag"));
+                    };
+                    let tag = llvm(self.builder.build_load(self.ptrt, src_tag, "src_tag"))?.into_pointer_value();
+                    llvm(self.builder.build_store(target.slot, p))?;
+                    llvm(self.builder.build_store(tag_slot, tag))?;
+                    return Ok(());
+                }
+                if target.ty != Ty::Dynamic && target.ty != ty {
+                    return err(
+                        *line,
+                        format!("ASSIGN: '{source}' passt nicht zu Feldsymbol '{fs}'"),
+                    );
+                }
+                let descriptor = self.type_descriptor(ty, *line)?;
+                llvm(self.builder.build_store(target.slot, p))?;
+                llvm(self.builder.build_store(tag_slot, descriptor))?;
+                Ok(())
+            }
             Stmt::ExprStmt { expr, line } => {
                 // Rückgabewert wird verworfen
                 self.eval(expr, *line)?;
@@ -378,6 +415,29 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// Schreibt einen Wert in ein Ziel, mit ABAP-Konvertierung.
+    /// Typdeskriptor zur Laufzeit: {Art, Länge}. Art: 1 Ganzzahl, 2 Zeichen, 3 String, 4 Struktur.
+    pub(super) fn type_descriptor(&self, ty: Ty, line: usize) -> CResult<PointerValue<'ctx>> {
+        let (kind, len): (u64, u64) = match ty {
+            Ty::Int => (1, 4),
+            Ty::Char(n) => (2, n as u64),
+            Ty::Str => (3, 0),
+            Ty::Struct(_) => (4, self.size_of(ty)),
+            _ => return err(line, "ASSIGN auf diesen Typ wird noch nicht unterstützt"),
+        };
+        let name = format!("abap_td_{kind}_{len}");
+        if let Some(global) = self.module.get_global(&name) {
+            return Ok(global.as_pointer_value());
+        }
+        let descriptor_ty = self.i32t.array_type(2);
+        let global = self.module.add_global(descriptor_ty, None, &name);
+        global.set_constant(true);
+        global.set_initializer(&self.i32t.const_array(&[
+            self.i32t.const_int(kind, false),
+            self.i32t.const_int(len, false),
+        ]));
+        Ok(global.as_pointer_value())
+    }
+
     pub(super) fn store(&mut self, dst: Dest<'ctx>, v: Val<'ctx>, line: usize) -> CResult<()> {
         match dst {
             Dest::Ref(slot, c) => match v {

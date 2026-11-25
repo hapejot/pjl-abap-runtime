@@ -1056,6 +1056,7 @@ impl Lowerer {
                 Some(Ty::Table(_)) => err(line, format!("Tabelle '{}' kann nicht Element einer Tabelle sein", t.text)),
                 Some(Ty::Ref(_)) => err(line, "Objektreferenzen als Tabellenelement werden noch nicht unterstützt"),
                 Some(Ty::External(i)) => Ok(Elem::External(*i)),
+                Some(Ty::Dynamic) => err(line, "dynamisch typisiertes Feldsymbol kann nicht Element einer Tabelle sein"),
                 None => {
                     let name = self.qualified_type(&word(t));
                     match self.names.get(&name).copied() {
@@ -1064,6 +1065,7 @@ impl Lowerer {
                         Some(Ty::Char(n)) => Ok(Elem::Char(n)),
                         Some(Ty::Struct(i)) => Ok(Elem::Struct(i)),
                         Some(Ty::External(i)) => Ok(Elem::External(i)),
+                        Some(Ty::Dynamic) => err(line, "dynamisch typisiertes Feldsymbol kann nicht Element einer Tabelle sein"),
                         Some(Ty::Table(_)) => err(
                             line,
                             format!("Tabelle '{}' kann nicht Element einer Tabelle sein", t.text),
@@ -1093,6 +1095,7 @@ impl Lowerer {
             Some(Ty::Table(_)) => err(line, format!("Tabelle '{name}' kann nicht Element einer Tabelle sein")),
             Some(Ty::Ref(_)) => err(line, "Objektreferenzen als Tabellenelement werden noch nicht unterstützt"),
             Some(Ty::External(i)) => Ok(Elem::External(*i)),
+            Some(Ty::Dynamic) => err(line, "dynamisch typisiertes Feldsymbol kann nicht Element einer Tabelle sein"),
             None => Ok(Elem::External(self.external_type_index(name))),
         }
     }

@@ -50,11 +50,11 @@ impl<'ctx> Codegen<'ctx> {
         self.check_new(name, line)?;
         if self.in_form {
             let slot = self.alloca_slot(name, ty)?;
-            self.vars.insert(name.to_string(), Var { slot, ty, fs: false });
+            self.vars.insert(name.to_string(), Var { slot, ty, fs: false, tag: None });
         } else {
             let slot = self.global_slot(name, ty);
             self.pending_init.push((slot, ty));
-            self.globals.insert(name.to_string(), Var { slot, ty, fs: false });
+            self.globals.insert(name.to_string(), Var { slot, ty, fs: false, tag: None });
         }
         Ok(())
     }
@@ -72,7 +72,7 @@ impl<'ctx> Codegen<'ctx> {
         let init: BasicValueEnum<'ctx> = match ty {
             Ty::Int => self.i32t.const_zero().into(),
             Ty::Char(n) => self.const_chars("", n).into(),
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => self.ptrt.const_null().into(),
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) | Ty::Dynamic => self.ptrt.const_null().into(),
             Ty::Struct(i) => self.layouts[i].st.const_zero().into(),
         };
         let g = self.module.add_global(lt, None, &format!("abap_g_{name}"));
@@ -85,12 +85,16 @@ impl<'ctx> Codegen<'ctx> {
         if self.in_form {
             let slot = llvm(self.alloca.build_alloca(self.ptrt, name))?;
             llvm(self.alloca.build_store(slot, self.ptrt.const_null()))?;
-            self.vars.insert(name.to_string(), Var { slot, ty, fs: true });
+            let tag = llvm(self.alloca.build_alloca(self.ptrt, &format!("{name}.tag")))?;
+            llvm(self.alloca.build_store(tag, self.ptrt.const_null()))?;
+            self.vars.insert(name.to_string(), Var { slot, ty, fs: true, tag: Some(tag) });
         } else {
             let g = self.module.add_global(self.ptrt, None, &format!("abap_g_{name}"));
             g.set_initializer(&self.ptrt.const_null());
+            let tag_global = self.module.add_global(self.ptrt, None, &format!("abap_g_{name}.tag"));
+            tag_global.set_initializer(&self.ptrt.const_null());
             self.globals
-                .insert(name.to_string(), Var { slot: g.as_pointer_value(), ty, fs: true });
+                .insert(name.to_string(), Var { slot: g.as_pointer_value(), ty, fs: true, tag: Some(tag_global.as_pointer_value()) });
         }
         Ok(())
     }

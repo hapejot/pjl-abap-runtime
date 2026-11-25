@@ -16,6 +16,7 @@ impl<'ctx> Codegen<'ctx> {
     /// LLVM-Typ eines ABAP-Typs. Zeiger für Strings und Tabellen.
     pub(super) fn llvm_ty(&self, ty: Ty) -> inkwell::types::BasicTypeEnum<'ctx> {
         match ty {
+            Ty::Dynamic => self.ptrt.into(),
             Ty::Int => self.i32t.into(),
             Ty::Char(n) => self.char_array(n).into(),
             Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => self.ptrt.into(),
@@ -26,6 +27,7 @@ impl<'ctx> Codegen<'ctx> {
     /// Speicherbedarf eines Werts in Bytes (entspricht dem gepackten Layout).
     pub(super) fn size_of(&self, ty: Ty) -> u64 {
         match ty {
+            Ty::Dynamic => 8,
             Ty::Int => 4,
             Ty::Char(n) => 2 * n as u64,
             Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => 8,
@@ -49,6 +51,9 @@ impl<'ctx> Codegen<'ctx> {
     /// String leer, Tabelle neu angelegt, Struktur mit Leerzeichen bzw. leeren Strings in den Komponenten.
     pub(super) fn init_value(&self, b: &Builder<'ctx>, slot: PointerValue<'ctx>, ty: Ty) -> CResult<()> {
         match ty {
+            Ty::Dynamic => {
+                llvm(b.build_store(slot, self.ptrt.const_null()))?;
+            }
             Ty::Int => {
                 llvm(b.build_store(slot, self.i32t.const_zero()))?;
             }

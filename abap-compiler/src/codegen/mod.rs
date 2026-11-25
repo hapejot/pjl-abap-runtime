@@ -108,6 +108,8 @@ struct Var<'ctx> {
     slot: PointerValue<'ctx>,
     ty: Ty,
     fs: bool,
+    /// Typ-Tag (Zeiger auf den Typdeskriptor); nur bei Feldsymbolen
+    tag: Option<PointerValue<'ctx>>,
 }
 
 /// Sprungziele einer Schleife: EXIT springt nach `exit`, CHECK nach `next`.
@@ -395,6 +397,7 @@ impl<'ctx> Codegen<'ctx> {
                         slot,
                         ty: *ty,
                         fs: false,
+                        tag: None,
                     },
                 );
             }

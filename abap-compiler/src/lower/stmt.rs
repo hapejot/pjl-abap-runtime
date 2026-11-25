@@ -146,13 +146,22 @@ impl Lowerer {
                     }
                     _ => return err(line, "FIELD-SYMBOLS erwartet <name>"),
                 };
-                let ty = if toks.get(2).is_some_and(|t| t.is_word("TYPE")) {
-                    self.ty_of(&toks[3..], line)?
+                // Ohne TYPE, mit TYPE any/data: Typ erst zur Laufzeit (dynamisch)
+                let ty = if toks.len() == 2 {
+                    Ty::Dynamic
+                } else if toks.get(2).is_some_and(|t| t.is_word("TYPE")) {
+                    if toks.len() == 4 && (toks[3].is_word("any") || toks[3].is_word("data")) {
+                        Ty::Dynamic
+                    } else {
+                        self.ty_of(&toks[3..], line)?
+                    }
                 } else if toks.get(2).is_some_and(|t| t.is_word("LIKE")) {
                     self.field_symbol_like_type(&toks[3..], line)?
                 } else {
                     return err(line, "FIELD-SYMBOLS erwartet TYPE oder LIKE");
                 };
+                // Feldsymbol ist für LIKE wie eine Variable verwendbar
+                self.data_types.insert(name.clone(), ty);
                 out.push(Stmt::FieldSymbol { name, ty, line });
                 Ok(())
             }
@@ -212,6 +221,20 @@ impl Lowerer {
                     if to_index == 1 && toks.get(to_index + 1).is_some() {
                         out.push(Stmt::ExternalOperation {
                             name: "assign".into(),
+                            line,
+                        });
+                        return Ok(());
+                    }
+                    // ASSIGN quelle TO <fs>
+                    if to_index == 2
+                        && toks.len() == 4
+                        && toks[1].kind == Kind::Word
+                        && toks[3].kind == Kind::Word
+                        && toks[3].text.starts_with('<')
+                    {
+                        out.push(Stmt::AssignFs {
+                            fs: word(&toks[3]),
+                            source: word(&toks[1]),
                             line,
                         });
                         return Ok(());

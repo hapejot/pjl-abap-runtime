@@ -1078,4 +1078,16 @@ INCLUDE zinc.
         )
         .is_ok());
     }
+
+    #[test]
+    fn like_resolves_field_symbol_type() {
+        parse_source(
+            "DATA values TYPE TABLE OF i.
+             FIELD-SYMBOLS <value> TYPE i.
+             DATA copy LIKE <value>.
+             LOOP AT values ASSIGNING <value>.
+             ENDLOOP.",
+        )
+        .expect("LIKE auf Feldsymbol muss auflösbar sein");
+    }
 }
