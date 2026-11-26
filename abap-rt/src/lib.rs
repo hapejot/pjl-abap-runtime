@@ -495,3 +495,14 @@ pub extern "C" fn abap_rt_type_mismatch() -> ! {
     eprintln!("Laufzeitfehler: Typ des Feldsymbols passt nicht (CASTING)");
     std::process::exit(1)
 }
+
+/// Laufzeitfehler bei ganzzahliger Arithmetik: 0 = Überlauf von `TYPE i`, 1 = Division durch 0.
+#[no_mangle]
+pub extern "C" fn abap_rt_arith_error(kind: i32) -> ! {
+    let _ = io::stdout().flush();
+    match kind {
+        0 => eprintln!("Laufzeitfehler: arithmetischer Überlauf bei ganzer Zahl (TYPE i)"),
+        _ => eprintln!("Laufzeitfehler: Division durch 0"),
+    }
+    std::process::exit(1)
+}

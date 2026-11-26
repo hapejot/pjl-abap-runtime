@@ -424,7 +424,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
             Expr::Neg(inner) => match self.eval(inner, line)? {
-                Val::Int(v) => Ok(Val::Int(llvm(self.builder.build_int_neg(v, "neg"))?)),
+                Val::Int(v) => Ok(Val::Int(self.checked_neg(v)?)),
                 v @ Val::Dec(_) => self.packed_neg(v, line),
                 _ => err(line, "Arithmetik nur mit ganzzahligen Feldern oder DEC"),
             },
@@ -437,16 +437,7 @@ impl<'ctx> Codegen<'ctx> {
                 let (Val::Int(x), Val::Int(y)) = (va, vb) else {
                     return err(line, "Arithmetik nur mit ganzzahligen Feldern oder DEC");
                 };
-                let r = match op {
-                    BinOp::Add => llvm(self.builder.build_int_add(x, y, "add"))?,
-                    BinOp::Sub => llvm(self.builder.build_int_sub(x, y, "sub"))?,
-                    BinOp::Mul => llvm(self.builder.build_int_mul(x, y, "mul"))?,
-                    // ABAP: Division bei i schneidet ab (wie C)
-                    BinOp::Div => llvm(self.builder.build_int_signed_div(x, y, "div"))?,
-                    BinOp::Mod => llvm(self.builder.build_int_signed_rem(x, y, "mod"))?,
-                    BinOp::BitAnd => llvm(self.builder.build_and(x, y, "bit_and"))?,
-                };
-                Ok(Val::Int(r))
+                Ok(Val::Int(self.checked_int(*op, x, y)?))
             }
         }
     }

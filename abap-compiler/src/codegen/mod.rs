@@ -16,6 +16,7 @@ mod routines;
 mod stmt;
 mod expr;
 mod packed;
+mod arith;
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -136,6 +137,7 @@ struct Rt<'ctx> {
     dec_div: FunctionValue<'ctx>,
     dec_mod: FunctionValue<'ctx>,
     dec_mark: FunctionValue<'ctx>,
+    arith_error: FunctionValue<'ctx>,
     dec_release: FunctionValue<'ctx>,
     dec_neg: FunctionValue<'ctx>,
     dec_cmp: FunctionValue<'ctx>,
@@ -237,6 +239,7 @@ impl<'ctx> Codegen<'ctx> {
             dec_div: f("abap_rt_dec_div", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
             dec_mod: f("abap_rt_dec_mod", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
             dec_mark: f("abap_rt_dec_mark", i64t.fn_type(&[], false)),
+            arith_error: f("abap_rt_arith_error", void.fn_type(&[i32t.into()], false)),
             dec_release: f("abap_rt_dec_release", void.fn_type(&[i64t.into()], false)),
             dec_neg: f("abap_rt_dec_neg", ptrt.fn_type(&[ptrt.into()], false)),
             dec_cmp: f("abap_rt_dec_cmp", i32t.fn_type(&[ptrt.into(), ptrt.into()], false)),

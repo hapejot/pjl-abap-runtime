@@ -1,0 +1,6 @@
+REPORT zt.
+DATA n TYPE i.
+START-OF-SELECTION.
+  n = 100000.
+  n = n * 100000.
+  WRITE n.
