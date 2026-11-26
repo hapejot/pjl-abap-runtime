@@ -204,6 +204,8 @@ pub struct Codegen<'ctx> {
     /// Im Methodenrumpf: Speicherplatz des Objektzeigers (`me`) und Klassenindex
     self_ctx: Option<(PointerValue<'ctx>, usize)>,
     loops: Vec<LoopCtx<'ctx>>,
+    /// Marken der gerade übersetzten Anweisungen (innen zuletzt): Grundlage für die Freigabe bei Sprüngen.
+    stmt_marks: Vec<IntValue<'ctx>>,
     exception_target: Option<BasicBlock<'ctx>>,
     /// Ziel von CHECK außerhalb von Schleifen (Ende des Programms)
     exit_fn: Option<BasicBlock<'ctx>>,
@@ -330,6 +332,7 @@ impl<'ctx> Codegen<'ctx> {
             constants: HashMap::new(),
             self_ctx: None,
             loops: Vec::new(),
+            stmt_marks: Vec::new(),
             exception_target: None,
             exit_fn: None,
             body: None,

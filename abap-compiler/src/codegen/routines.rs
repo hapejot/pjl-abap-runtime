@@ -85,10 +85,13 @@ impl<'ctx> Codegen<'ctx> {
 
         self.hoist(body_stmts)?;
         self.builder.position_at_end(body);
+        // Marke des Rumpfs: RETURN springt in den Austrittsblock, dort werden alle Zwischenwerte freigegeben
+        let routine_mark = self.call_int(self.rt.dec_mark, &[])?;
         self.emit_block(body_stmts)?;
         self.br_if_open(exit)?;
 
         self.builder.position_at_end(exit);
+        self.release_to(routine_mark)?;
         llvm(self.builder.build_return(None))?;
         llvm(self.alloca.build_unconditional_branch(body))?;
 

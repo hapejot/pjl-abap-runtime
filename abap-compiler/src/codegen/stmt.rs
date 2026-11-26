@@ -20,12 +20,25 @@ impl<'ctx> Codegen<'ctx> {
     /// des Blocks (RETURN, EXIT) entfällt die Freigabe; der Speicher wird dann nicht zurückgegeben.
     pub(super) fn emit_stmt(&mut self, s: &Stmt) -> CResult<()> {
         let mark = self.call_int(self.rt.dec_mark, &[])?;
+        self.stmt_marks.push(mark);
         let result = self.emit_stmt_dispatch(s);
+        self.stmt_marks.pop();
         let open = self.builder.get_insert_block().is_some_and(|b| b.get_terminator().is_none());
         if open {
-            self.call_void(self.rt.dec_release, &[mark.into()])?;
+            self.release_to(mark)?;
         }
         result
+    }
+
+    /// Gibt die Zwischenwerte seit der Marke frei. Vor jedem Sprung, der eine Anweisung verlässt,
+    /// muss das geschehen, sonst bleiben ihre Zwischenwerte bis zum Programmende stehen.
+    pub(super) fn release_to(&self, mark: IntValue<'ctx>) -> CResult<()> {
+        self.call_void(self.rt.dec_release, &[mark.into()])
+    }
+
+    /// Marke der innersten Anweisung, die gerade übersetzt wird.
+    fn innermost_mark(&self) -> Option<IntValue<'ctx>> {
+        self.stmt_marks.last().copied()
     }
 
     fn emit_stmt_dispatch(&mut self, s: &Stmt) -> CResult<()> {
@@ -760,6 +773,9 @@ impl<'ctx> Codegen<'ctx> {
         self.br_if_open(latch)?;
 
         self.builder.position_at_end(latch);
+        if let Some(mark) = self.innermost_mark() {
+            self.release_to(mark)?;
+        }
         if let Some((cnt, _)) = counter_limit {
             let cur = llvm(self.builder.build_load(self.i32t, cnt, "cnt"))?.into_int_value();
             let inc = llvm(
@@ -781,6 +797,10 @@ impl<'ctx> Codegen<'ctx> {
         self.br_if_open(head)?;
 
         self.builder.position_at_end(head);
+        // Rücksprung zum Kopf (auch CONTINUE): Zwischenwerte des vorigen Durchlaufs freigeben
+        if let Some(mark) = self.innermost_mark() {
+            self.release_to(mark)?;
+        }
         let c = self.cond(cond, line)?;
         llvm(self.builder.build_conditional_branch(c, bodyb, exit))?;
 
@@ -893,6 +913,9 @@ impl<'ctx> Codegen<'ctx> {
         self.br_if_open(latch)?;
 
         self.builder.position_at_end(latch);
+        if let Some(mark) = self.innermost_mark() {
+            self.release_to(mark)?;
+        }
         let cur_l = llvm(self.builder.build_load(self.i64t, idx, "ll"))?.into_int_value();
         let inc = llvm(
             self.builder
@@ -916,6 +939,7 @@ impl<'ctx> Codegen<'ctx> {
         let continuation = self.new_block("try_done")?;
         let outer_target = self.exception_target;
         self.exception_target = Some(dispatch);
+        let try_mark = self.innermost_mark();
 
         for statement in body {
             self.emit_stmt(statement)?;
@@ -938,6 +962,10 @@ impl<'ctx> Codegen<'ctx> {
         }
         self.br_if_open(continuation)?;
         self.builder.position_at_end(dispatch);
+        // Ausnahme: Zwischenwerte der auslösenden Anweisungen im TRY-Block freigeben
+        if let Some(mark) = try_mark {
+            self.release_to(mark)?;
+        }
 
         let pending_class = self.call_int(self.rt.exception_class, &[])?;
         let mut next_test = dispatch;
