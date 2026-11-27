@@ -65,7 +65,6 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
             .iter()
             .map(|m| (m.phase, m.name.clone()))
             .collect(),
-        statuses: &statuses,
     };
     for item in &f.items {
         match item {
@@ -141,7 +140,6 @@ struct Ctx<'a> {
     field_types: &'a HashMap<String, FieldType>,
     /// Definierte MODULEs als (Phase, Name)
     modules: HashSet<(Phase, String)>,
-    statuses: &'a HashMap<String, usize>,
 }
 
 /// Belegter Bereich einer Zeile, für die Überlappungsprüfung.
@@ -181,15 +179,14 @@ fn check_dynpro(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
         ));
         return;
     }
-    if let Some(status) = &d.status {
-        if !c.statuses.contains_key(&status.to_lowercase()) {
-            out.push(DynproError::error(
-                c.file,
-                d.status_line,
-                1,
-                format!("GUI status '{status}' is not defined in {}", c.file),
-            ));
-        }
+    let exit_entries: Vec<&FlowEntry> = d.flow.iter().filter(|fe| fe.at_exit).collect();
+    if exit_entries.len() > 1 {
+        out.push(DynproError::error(
+            c.file,
+            exit_entries[1].line,
+            1,
+            "Only one AT EXIT-COMMAND module is allowed per DYNPRO".to_string(),
+        ));
     }
     for fe in &d.flow {
         let kind = match fe.phase {
@@ -408,7 +405,6 @@ ENDMODULE.
 DYNPRO 0100
   SIZE 20 80
   TITLE 'Kunde anlegen'
-  STATUS STATUS_0100
   TEXT 2 2 'Kundennummer'
   FIELD ZKUNNR 2 20 INPUT REQUIRED
   TEXT 4 2 'Name'
@@ -450,7 +446,7 @@ ENDGUISTATUS
             messages(&errs),
             vec!["Field 'ZFEHLT' is not a global variable of the program".to_string()]
         );
-        assert_eq!(errs[0].line, 8);
+        assert_eq!(errs[0].line, 7);
     }
 
     #[test]
@@ -510,6 +506,18 @@ ENDGUISTATUS
             .expect("an error for the missing dynpro");
         assert_eq!((e.file.as_str(), e.line), ("prog.abap", 7));
         assert!(e.message.contains("refers to DYNPRO 0200"));
+    }
+
+    #[test]
+    fn second_exit_command_module_in_one_dynpro_is_an_error() {
+        let dynp = DYNP_OK.replace(
+            "      MODULE USER_COMMAND_0100\n",
+            "      MODULE USER_COMMAND_0100\n      MODULE USER_COMMAND_0100 AT EXIT-COMMAND\n      MODULE USER_COMMAND_0100 AT EXIT-COMMAND\n",
+        );
+        let errs = run(ABAP, &dynp);
+        assert!(messages(&errs)
+            .iter()
+            .any(|m| m.contains("Only one AT EXIT-COMMAND module is allowed")));
     }
 
     #[test]

@@ -146,9 +146,6 @@ pub struct Dynpro {
     pub rows: usize,
     pub cols: usize,
     pub title: String,
-    /// `STATUS name`: Name des GUI-Status und Zeile der Angabe
-    pub status: Option<String>,
-    pub status_line: usize,
     pub elements: Vec<Element>,
     pub flow: Vec<FlowEntry>,
 }

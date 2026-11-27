@@ -290,8 +290,6 @@ impl<'a> Lines<'a> {
             rows: 20,
             cols: 80,
             title: String::new(),
-            status: None,
-            status_line: 0,
             elements: Vec::new(),
             flow: Vec::new(),
         };
@@ -315,9 +313,13 @@ impl<'a> Lines<'a> {
                     self.expect_end(ln, &toks, 2)?;
                 }
                 "STATUS" => {
-                    d.status = Some(self.expect_word(ln, &toks, 1, "GUI status name")?);
-                    d.status_line = ln;
-                    self.expect_end(ln, &toks, 2)?;
+                    return Err(DynproError::error(
+                        self.file,
+                        ln,
+                        1,
+                        "STATUS in DYNPRO is not supported; call SET PF-STATUS in a PBO module"
+                            .to_string(),
+                    ))
                 }
                 "TEXT" => d.elements.push(self.text_element(ln, &toks)?),
                 "FIELD" => d.elements.push(self.field_element(ln, &toks)?),
@@ -726,7 +728,6 @@ mod tests {
 DYNPRO 0100
   SIZE 20 80
   TITLE 'Kunde anlegen'
-  STATUS STATUS_0100
 
   TEXT 2 2 'Kundennummer'
   FIELD ZKUNNR 2 20 INPUT REQUIRED
@@ -782,7 +783,6 @@ ENDGUISTATUS
         let f = parse(SPEC_EXAMPLE).unwrap();
         assert_eq!(f.items.len(), 2);
         let d = only_dynpro(&f);
-        assert_eq!(d.status.as_deref(), Some("STATUS_0100"));
         assert_eq!(d.elements.len(), 7);
         assert_eq!(d.flow.len(), 3);
         assert_eq!(d.flow[0].phase, Phase::Pbo);

@@ -108,7 +108,7 @@ fn run_loop(run: &mut Run) -> Result<Exit, String> {
     loop {
         if run.need_pbo {
             set_dynnr(run.dynpro.no)?;
-            let phase = run_phase(&run.dynpro.pbo, false)?;
+            let phase = run_phase(&run.dynpro.pbo);
             if let Some(status) = phase.status {
                 run.status = Some(status);
             }
@@ -148,11 +148,34 @@ fn run_loop(run: &mut Run) -> Result<Exit, String> {
 }
 
 /// Übertragung zum PAI (Abschnitt 6.4). Liefert `Some`, wenn die Schleife endet.
+///
+/// Ablauf bei `AT EXIT-COMMAND` (Spec 12.8, Vorgabe des Auftraggebers): Bei einem Funktionscode vom Typ E läuft
+/// das Exit-Modul zuerst. Vorher werden keine Felder übertragen und keine Prüfungen ausgeführt. Verlässt das Modul
+/// das Dynpro nicht, folgen Übertragung, Prüfungen und die übrigen PAI-Module. Das Exit-Modul läuft nicht noch einmal.
 fn transfer(run: &mut Run, fcode: &str, kind: FKind) -> Result<Option<Exit>, String> {
     // Eine Meldung bleibt bis zur nächsten Übertragung stehen (Abschnitt 6.5).
     state().message = None;
-    let exit_kind = kind.is_exit();
-    let values = if exit_kind {
+    set_dynnr(run.dynpro.no)?;
+    set_ucomm(fcode)?;
+
+    let exit_module = if kind == FKind::Exit {
+        run.dynpro.pai.iter().find(|m| m.at_exit).copied()
+    } else {
+        None
+    };
+    if let Some(module) = exit_module {
+        let phase = run_exit_module(module);
+        if let Some(status) = phase.status {
+            run.status = Some(status);
+        }
+        if let Some(nav) = phase.nav {
+            return apply_nav(run, nav);
+        }
+    }
+
+    // Lenient nur, wenn kein Exit-Modul das Dynpro weiterlaufen ließ (siehe 6.4 für B, C, E).
+    let lenient = kind.is_exit() && exit_module.is_none();
+    let values = if lenient {
         run.editor.check_lenient(&run.dynpro)
     } else {
         match run.editor.check(&run.dynpro) {
@@ -164,23 +187,28 @@ fn transfer(run: &mut Run, fcode: &str, kind: FKind) -> Result<Option<Exit>, Str
         }
     };
     write_values(&run.dynpro, &values)?;
-    set_dynnr(run.dynpro.no)?;
-    set_ucomm(fcode)?;
 
-    let phase = run_phase(&run.dynpro.pai, exit_kind)?;
+    let phase = run_phase(&run.dynpro.pai);
     if let Some(status) = phase.status {
         run.status = Some(status);
     }
     // Nach dem PAI: PBO des gleichen Dynpros (Abschnitt 6.1), außer die Aktion verlangt etwas anderes.
     run.need_pbo = true;
     match phase.nav {
-        Some(Nav::Leave) => Ok(Some(Exit::Leave)),
-        Some(Nav::LeaveTo(no)) => Ok(Some(Exit::LeaveTo(no))),
-        Some(Nav::SetScreen(no)) => {
+        Some(nav) => apply_nav(run, nav),
+        None => Ok(None),
+    }
+}
+
+/// Wendet eine Navigation an. `Some`, wenn die Schleife des Dynpros endet.
+fn apply_nav(run: &mut Run, nav: Nav) -> Result<Option<Exit>, String> {
+    match nav {
+        Nav::Leave => Ok(Some(Exit::Leave)),
+        Nav::LeaveTo(no) => Ok(Some(Exit::LeaveTo(no))),
+        Nav::SetScreen(no) => {
             switch_to(run, no)?;
             Ok(None)
         }
-        None => Ok(None),
     }
 }
 
@@ -204,27 +232,35 @@ fn switch_to(run: &mut Run, no: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Führt die Module einer Phase aus. Nach jedem Modul wird die Aktion ausgewertet: `LEAVE` beendet die Phase.
+/// Führt die Module einer PAI-Phase aus, ohne das `AT EXIT-COMMAND`-Modul (das läuft in `run_exit_module`).
+/// Nach jedem Modul wird die Aktion ausgewertet: `LEAVE` beendet die Phase.
 /// Mehrere `SET SCREEN` im selben Vorgang: die letzte Aktion gilt (Annahme, siehe Bericht).
-/// Module mit `AT EXIT-COMMAND` laufen nur bei Funktionscodes vom Typ B, C oder E.
-fn run_phase(modules: &[Module], exit_kind: bool) -> Result<Phase, String> {
+fn run_phase(modules: &[Module]) -> Phase {
     state().pending_nav = None;
-    for module in modules {
-        if module.at_exit && !exit_kind {
-            continue;
-        }
+    for module in modules.iter().filter(|m| !m.at_exit) {
         (module.func)();
         let nav = state().pending_nav;
         if matches!(nav, Some(Nav::Leave | Nav::LeaveTo(_))) {
             break;
         }
     }
+    take_actions()
+}
+
+/// Führt das `AT EXIT-COMMAND`-Modul allein aus (Spec 12.8).
+fn run_exit_module(module: Module) -> Phase {
+    state().pending_nav = None;
+    (module.func)();
+    take_actions()
+}
+
+fn take_actions() -> Phase {
     let mut guard = state();
     let st = &mut *guard;
-    Ok(Phase {
+    Phase {
         nav: st.pending_nav.take(),
         status: st.pending_status.take(),
-    })
+    }
 }
 
 fn draw(run: &Run) -> Result<(), String> {
@@ -418,12 +454,20 @@ mod tests {
     fn install_status() {
         state().statuses.push(Arc::new(GuiStatus {
             name: "STATUS".into(),
-            fkeys: vec![FKey {
-                key: 3,
-                text: "Back".into(),
-                fcode: "BACK".into(),
-                kind: FKind::Back,
-            }],
+            fkeys: vec![
+                FKey {
+                    key: 3,
+                    text: "Back".into(),
+                    fcode: "BACK".into(),
+                    kind: FKind::Back,
+                },
+                FKey {
+                    key: 12,
+                    text: "Exit".into(),
+                    fcode: "EXIT".into(),
+                    kind: FKind::Exit,
+                },
+            ],
         }));
     }
 
@@ -471,6 +515,11 @@ mod tests {
     extern "C" fn pai_exit_leave() {
         EXIT_CALLS.fetch_add(1, Ordering::SeqCst);
         abap_rt_leave_screen();
+    }
+
+    /// Exit-Modul, das das Dynpro nicht verlässt.
+    extern "C" fn pai_exit_stay() {
+        EXIT_CALLS.fetch_add(1, Ordering::SeqCst);
     }
 
     /// PAI-Modul: beim ersten Aufruf eine Meldung E, danach verlassen.
@@ -669,7 +718,7 @@ mod tests {
 
     #[test]
     fn at_exit_module_runs_only_for_exit_function_codes() {
-        let h = Harness::new("KEY ENTER\nKEY F3\n");
+        let h = Harness::new("KEY ENTER\nKEY F3\nKEY F12\n");
         install_status();
         h.install(dynpro(
             100,
@@ -680,9 +729,28 @@ mod tests {
 
         call(100).unwrap();
 
-        // Enter: normales PAI, kein Verlassen. F3 (Typ B): normales PAI und AT EXIT-COMMAND.
+        // Enter: normales PAI. F3 (Typ B): normales PAI, kein Exit-Modul. F12 (Typ E): nur das Exit-Modul, das verlässt.
         assert_eq!(NORMAL_CALLS.load(Ordering::SeqCst), 2);
         assert_eq!(EXIT_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn exit_module_that_stays_is_followed_by_checks_and_normal_pai_once() {
+        let h = Harness::new("KEY F12\nKEY F3\n");
+        install_status();
+        h.install(dynpro(
+            100,
+            vec![],
+            vec![module(pbo_status, false)],
+            vec![module(pai_normal, false), module(pai_exit_stay, true)],
+        ));
+
+        // Das Dynpro wird nie verlassen, das Skript endet beim Warten auf Eingabe.
+        assert!(call(100).is_err());
+
+        // Exit-Modul einmal (F12), danach normales PAI (F12 und F3): das Exit-Modul läuft nicht noch einmal.
+        assert_eq!(EXIT_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(NORMAL_CALLS.load(Ordering::SeqCst), 2);
     }
 
     #[test]

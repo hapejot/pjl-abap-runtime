@@ -3,6 +3,7 @@
 //! - `prog.abap`: ABAP-Quelltext
 //! - `expected.txt`: erwartete stdout-Ausgabe des übersetzten Programms (exakt)
 //! - `expected_error.txt`: Teil der Fehlermeldung, wenn die Übersetzung scheitern muss
+//! - `input.keys` und `expected_screen.txt`: Dynpro-Fälle. Eingabeskript und Gitterabzüge der Headless-Laufzeit
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,18 @@ fn run_case(dir: &Path, work: &Path) -> Result<(), String> {
         return Err(format!("translation failed: {stderr}"));
     }
 
-    let run = Command::new(&exe)
+    // Dynpro-Fall: Eingabeskript und Gitterabzüge über die Headless-Schiene der Laufzeit (Spec 9.2, 9.3a)
+    let script = dir.join("input.keys");
+    let has_screen = script.exists();
+    let screen_out = work.join(format!("{name}.screen.txt"));
+    let _ = fs::remove_file(&screen_out);
+    let mut program = Command::new(&exe);
+    if has_screen {
+        program
+            .env("ABAPRT_SCREEN_SCRIPT", &script)
+            .env("ABAPRT_SCREEN_OUT", &screen_out);
+    }
+    let run = program
         .output()
         .map_err(|e| format!("program could not be started: {e}"))?;
 
@@ -68,6 +80,17 @@ fn run_case(dir: &Path, work: &Path) -> Result<(), String> {
         return Err(format!(
             "Output differs\n  expected: {expected:?}\n  actual: {actual:?}"
         ));
+    }
+    if has_screen {
+        let actual_screen = fs::read_to_string(&screen_out)
+            .map_err(|e| format!("screen snapshots missing: {e}"))?;
+        let expected_screen = fs::read_to_string(dir.join("expected_screen.txt"))
+            .map_err(|e| format!("expected_screen.txt missing: {e}"))?;
+        if actual_screen != expected_screen {
+            return Err(format!(
+                "Screen snapshots differ\n  expected: {expected_screen:?}\n  actual: {actual_screen:?}"
+            ));
+        }
     }
     Ok(())
 }

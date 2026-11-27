@@ -65,13 +65,12 @@ ohne SAP-System. Die Bildschirme laufen im Terminal mit `crossterm`.
 datei        = { dynpro | status } .
 
 dynpro       = "DYNPRO" nummer [ "KIND" ( "NORMAL" | "MODAL" ) ] NL
-               { groesse | titel | status_ref | element }
+               { groesse | titel | element }
                [ flow ]
                "ENDDYNPRO" NL .
 
 groesse      = "SIZE" zeilen spalten NL .            "Standard 20 80, siehe 4.4
 titel        = "TITLE" zeichenkette NL .
-status_ref   = "STATUS" name NL .
 
 element      = text | feld | taste | rahmen .
 text         = "TEXT" zeile spalte zeichenkette { "COLOR" farbe | "INTENSIFIED" } NL .
@@ -105,7 +104,6 @@ Phase 1 nutzt die Grammatik ohne `EXCLUDE` und `PASSWORD` (Phase 2). `AT EXIT-CO
 DYNPRO 0100
   SIZE 20 80
   TITLE 'Kunde anlegen'
-  STATUS STATUS_0100
 
   TEXT 2 2 'Kundennummer'
   FIELD ZKUNNR 2 20 INPUT REQUIRED
@@ -492,10 +490,21 @@ Der `sap-specialist` klärt diese Punkte, bevor sie als Akzeptanzfall festgelegt
 5. Verhalten von `LEAVE TO SCREEN 0` gegenüber `LEAVE SCREEN`.
 6. Mehrere `SET SCREEN` in einem Modul: welche Aktion gilt?
 7. Typeinschränkungen für Felder (`string`, `i`, `p`, `d`, `t`) und ihre Darstellung (Vorzeichen, Nachkommastellen).
-8. **Semantik von `AT EXIT-COMMAND`** (gesondert zu klären, ohne SAP-System nur aus Dokumentation belegbar).
-   Stand der Umsetzung in Phase 1: Das Modul läuft nur, wenn der Funktionscode vom Typ `B`, `C` oder `E` ist.
-   Andere PAI-Module laufen immer. Offen: Reihenfolge gegenüber normalen PAI-Modulen, Verhalten bei Feldprüfungen,
-   Übertragung der Felder vor dem Exit-Modul.
+8. **Semantik von `AT EXIT-COMMAND`.** Vorgabe des Auftraggebers, Quelle: vom Auftraggeber eingefügter
+   Text zu SAP-Verhalten (nicht unabhängig am SAP-System geprüft). Umgesetzt in Phase 1:
+   - Das Exit-Modul läuft nur bei Funktionscodes vom Typ `E`. Bei allen anderen Typen wird es ignoriert.
+   - Es läuft vor allen anderen PAI-Modulen und vor den Prüfungen, unabhängig von seiner Position in der Ablauflogik.
+   - Pro Dynpro ist höchstens ein Exit-Modul erlaubt (Übersetzungsfehler sonst).
+   - Vor dem Exit-Modul werden keine Felder übertragen. `SY-UCOMM` ist gesetzt. Die Programmfelder behalten ihre Werte aus dem PBO.
+   - Verlässt das Modul das Dynpro (`LEAVE SCREEN`, `LEAVE TO SCREEN`, `SET SCREEN`, `LEAVE PROGRAM`), endet das PAI.
+   - Verlässt es das Dynpro nicht, laufen Übertragung, alle Prüfungen und die übrigen PAI-Module normal weiter.
+     Das Exit-Modul wird dabei nicht noch einmal aufgerufen.
+   - Die Prüfungen (Pflichtfelder, Format, Festwerte und Prüftabellen) entfallen vor dem Exit-Modul vollständig.
+   - Offen: Der Text erwähnt ein OK-Code-Feld, das den Funktionscode aufnimmt. Dieses Feld gibt es in Phase 1 nicht.
+     Der Funktionscode steht nur in `SY-UCOMM`.
+   Die Regeln für Funktionstypen B und C ohne Exit-Modul (lockere Übertragung, Abschnitt 6.4) sind davon nicht berührt.
+9. **`STATUS` im `DYNPRO`** entfällt. Der GUI-Status wird nur mit `SET PF-STATUS` in einem PBO-Modul gesetzt.
+   Das PBO läuft vor der Anzeige, daher reicht das.
 
 ## 13. Offene Punkte
 

@@ -1,0 +1,25 @@
+Kunde anlegen                                                                   
+                                                                                
+ Kundennummer      4711                                                         
+                                                                                
+ Name                                                                           
+                                                                                
+ Ort                                                                            
+                                                                                
+                                                                                
+ [ Sichern ]                                                                    
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back  F12 Cancel  F15 Exit                                                   
+                                                                                
+                                                                                
+----
