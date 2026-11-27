@@ -1,0 +1,1 @@
+Field 'ZNAME1' is not a global variable of the program

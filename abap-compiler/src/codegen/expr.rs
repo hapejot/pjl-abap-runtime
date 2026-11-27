@@ -336,7 +336,11 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Val::Str(sliced))
             }
             Expr::Var(name) => {
-                if let Some(component) = name.strip_prefix("sy-") {
+                // sy-ucomm und sy-dynnr sind Globals (Dynpro); die übrigen SY-Felder haben feste Werte
+                if let Some(component) = name
+                    .strip_prefix("sy-")
+                    .filter(|_| !self.globals.contains_key(name))
+                {
                     if matches!(
                         component,
                         "subrc" | "index" | "tabix" | "fdpos" | "dbcnt" | "dynnr"

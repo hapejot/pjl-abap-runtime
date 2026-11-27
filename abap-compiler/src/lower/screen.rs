@@ -1,0 +1,411 @@
+//! Dynpro-Anweisungen im ABAP-Programm (Spec 5): `CALL SCREEN`, `SET SCREEN`, `LEAVE SCREEN`,
+//! `LEAVE TO SCREEN`, `LEAVE PROGRAM`, `SET PF-STATUS`, `MESSAGE 'text' TYPE t`, sowie die Typen der
+//! Variablen für die Prüfung der `.dynp`-Felder (Spec 4.7). Die Zuordnung zu den Laufzeitaufrufen steht im Codegen.
+//!
+//! Nicht unterstützt (Phase 2): `CALL SCREEN ... STARTING AT`, `SET PF-STATUS ... OF PROGRAM / EXCLUDING`,
+//! `SET SCREEN 0`, `MESSAGE` mit Nachrichtenklasse oder Ersatzwerten.
+
+use super::*;
+use crate::dynpro::{FieldType, UCOMM_LENGTH};
+
+impl Lowerer {
+    /// Übersetzt eine Dynpro-Anweisung. `None`, wenn die Anweisung keine ist; dann greift der übliche Pfad.
+    pub(super) fn lower_screen_stmt(
+        &mut self,
+        kw: &str,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Option<Result<(), CompileError>> {
+        let is = |i: usize, w: &str| toks.get(i).is_some_and(|t| t.is_word(w));
+        let result = match kw {
+            "CALL" if is(1, "SCREEN") => self.call_screen(toks, line, out),
+            "SET" if is(1, "PF-STATUS") => self.set_pf_status(toks, line, out),
+            "SET" if is(1, "SCREEN") => self.set_screen(toks, line, out),
+            "LEAVE" if toks.len() == 2 && is(1, "SCREEN") => {
+                out.push(Stmt::Screen {
+                    op: ScreenOp::Leave,
+                    line,
+                });
+                Ok(())
+            }
+            "LEAVE" if toks.len() == 2 && is(1, "PROGRAM") => {
+                out.push(Stmt::Screen {
+                    op: ScreenOp::LeaveProgram,
+                    line,
+                });
+                Ok(())
+            }
+            "LEAVE" if is(1, "TO") && is(2, "SCREEN") => self.leave_to_screen(toks, line, out),
+            "MESSAGE" if toks.len() == 4 && toks[1].kind == Kind::Literal && is(2, "TYPE") => {
+                self.message(toks, line, out)
+            }
+            _ => return None,
+        };
+        Some(result)
+    }
+
+    /// `CALL SCREEN n.`
+    fn call_screen(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if toks.get(3).is_some_and(|t| t.is_word("STARTING")) {
+            return err(
+                line,
+                "CALL SCREEN ... STARTING AT is not supported yet (phase 2)",
+            );
+        }
+        if toks.len() != 3 {
+            return err(
+                line,
+                "Unsupported form of CALL SCREEN (expected: CALL SCREEN <number>)",
+            );
+        }
+        let n = dynpro_number(&toks[2], line)?;
+        if n == 0 {
+            return err(line, "Dynpro number must be 1 to 9999, found '0'");
+        }
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Dynpro(n),
+            what: "CALL SCREEN",
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::Call(n),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `SET SCREEN n.` (n = 0 ist Phase 2)
+    fn set_screen(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if toks.len() != 3 {
+            return err(
+                line,
+                "Unsupported form of SET SCREEN (expected: SET SCREEN <number>)",
+            );
+        }
+        let n = dynpro_number_or_zero(&toks[2], line)?;
+        if n == 0 {
+            return err(line, "SET SCREEN 0 is not supported yet");
+        }
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Dynpro(n),
+            what: "SET SCREEN",
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::Set(n),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `LEAVE TO SCREEN n.` Entscheidung (Auftrag): `LEAVE TO SCREEN 0` ist `LEAVE SCREEN`.
+    fn leave_to_screen(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if toks.len() != 4 {
+            return err(
+                line,
+                "Unsupported form of LEAVE TO SCREEN (expected: LEAVE TO SCREEN <number>)",
+            );
+        }
+        let n = dynpro_number_or_zero(&toks[3], line)?;
+        if n == 0 {
+            out.push(Stmt::Screen {
+                op: ScreenOp::Leave,
+                line,
+            });
+            return Ok(());
+        }
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Dynpro(n),
+            what: "LEAVE TO SCREEN",
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::LeaveTo(n),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `SET PF-STATUS 'name'.` Der Name wird in Großbuchstaben weitergegeben; `.dynp` und Laufzeit nutzen
+    /// denselben Schlüssel (Entscheidung, Groß-/Kleinschreibung wird nicht unterschieden).
+    fn set_pf_status(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if toks.len() > 3 {
+            return err(
+                line,
+                "SET PF-STATUS with OF PROGRAM or EXCLUDING is not supported yet",
+            );
+        }
+        let name = match toks.get(2) {
+            Some(t) if t.kind == Kind::Literal => literal_content(&t.text),
+            _ => None,
+        };
+        let Some(name) = name else {
+            return err(line, "SET PF-STATUS expects a status name in single quotes");
+        };
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Status(name.to_lowercase()),
+            what: "SET PF-STATUS",
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::PfStatus(name.to_uppercase()),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `MESSAGE 'text' TYPE 'T'.` Typen S, I, W, E, A, X. Nur Großbuchstaben, Kleinbuchstaben sind ein Fehler.
+    fn message(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        let text = literal_content(&toks[1].text).unwrap_or_default();
+        let kind_tok = &toks[3];
+        let kind_text = literal_content(&kind_tok.text).unwrap_or_else(|| kind_tok.text.clone());
+        let kind = match kind_text.as_str() {
+            "S" | "I" | "W" | "E" | "A" | "X" => kind_text.chars().next().unwrap_or(' '),
+            _ => {
+                return err(
+                    line,
+                    format!(
+                        "Message type '{kind_text}' is not supported (use upper-case S, I, W, E, A or X)"
+                    ),
+                )
+            }
+        };
+        out.push(Stmt::Screen {
+            op: ScreenOp::Message { kind, text },
+            line,
+        });
+        Ok(())
+    }
+}
+
+/// Dynpro-Nummer 1 bis 9999 aus einem Literal-Token (`100` und `0100` sind gleich).
+fn dynpro_number(t: &Token, line: usize) -> Result<u32, CompileError> {
+    let n = dynpro_number_or_zero(t, line)?;
+    if n == 0 {
+        return err(line, "Dynpro number must be 1 to 9999, found '0'");
+    }
+    Ok(n)
+}
+
+/// Wie `dynpro_number`, lässt aber 0 zu (für `LEAVE TO SCREEN 0`).
+fn dynpro_number_or_zero(t: &Token, line: usize) -> Result<u32, CompileError> {
+    match t.text.parse::<u32>() {
+        Ok(n) if t.text.chars().all(|c| c.is_ascii_digit()) && n <= 9999 => Ok(n),
+        _ => err(
+            line,
+            format!("Dynpro number must be 1 to 9999, found '{}'", t.text),
+        ),
+    }
+}
+
+/// Dynpro-Typ aus den Tokens nach `TYPE` (Spec 4.7). Alles, was das Dynpro nicht abbildet, ist `Other`.
+pub(super) fn field_type_of(toks: &[Token]) -> FieldType {
+    let number = |t: &Token| t.text.parse::<usize>().ok();
+    match toks {
+        [t] if t.is_word("c") => FieldType::Char(1),
+        [t, l, n] if t.is_word("c") && l.is_word("LENGTH") => {
+            number(n).map_or(FieldType::Other, FieldType::Char)
+        }
+        [t] if t.is_word("n") => FieldType::Numc(1),
+        [t, l, n] if t.is_word("n") && l.is_word("LENGTH") => {
+            number(n).map_or(FieldType::Other, FieldType::Numc)
+        }
+        [t] if t.is_word("d") => FieldType::Date,
+        [t] if t.is_word("t") => FieldType::Time,
+        [t] if t.is_word("i") => FieldType::Int,
+        [t] if t.is_word("string") => FieldType::String,
+        [t] if t.is_word("sy-ucomm") => FieldType::Char(UCOMM_LENGTH),
+        [t] if t.is_word("sy-dynnr") => FieldType::Char(4),
+        [t, l, n, d, m] if t.is_word("p") && l.is_word("LENGTH") && d.is_word("DECIMALS") => {
+            match (number(n), number(m)) {
+                (Some(bytes), Some(decimals)) if bytes >= 1 => {
+                    FieldType::Packed { bytes, decimals }
+                }
+                _ => FieldType::Other,
+            }
+        }
+        _ => FieldType::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lower::parse_source;
+
+    fn stmts(src: &str) -> crate::lower::Ir {
+        parse_source(src).expect("program translates")
+    }
+
+    fn screen_ops(ir: &crate::lower::Ir) -> Vec<ScreenOp> {
+        ir.stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Screen { op, .. } => Some(op.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn call_screen_lowers_with_number_and_reference() {
+        let ir = stmts("CALL SCREEN 0100.\n");
+        assert_eq!(screen_ops(&ir), vec![ScreenOp::Call(100)]);
+        assert_eq!(
+            ir.screen_refs,
+            vec![ScreenRef {
+                target: ScreenTarget::Dynpro(100),
+                what: "CALL SCREEN",
+                line: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn call_screen_zero_is_rejected() {
+        let errs = parse_source("CALL SCREEN 0.\n").unwrap_err();
+        assert!(errs[0].message.contains("Dynpro number must be 1 to 9999"));
+    }
+
+    #[test]
+    fn call_screen_starting_at_is_phase_2() {
+        let errs = parse_source("CALL SCREEN 100 STARTING AT 1 1 ENDING AT 5 5.\n").unwrap_err();
+        assert!(errs[0].message.contains("STARTING AT is not supported yet"));
+    }
+
+    #[test]
+    fn leave_to_screen_zero_is_leave_screen() {
+        let ir = stmts("LEAVE TO SCREEN 0.\n");
+        assert_eq!(screen_ops(&ir), vec![ScreenOp::Leave]);
+        assert!(ir.screen_refs.is_empty());
+    }
+
+    #[test]
+    fn leave_to_screen_number_is_recorded() {
+        let ir = stmts("LEAVE TO SCREEN 200.\n");
+        assert_eq!(screen_ops(&ir), vec![ScreenOp::LeaveTo(200)]);
+        assert_eq!(ir.screen_refs[0].what, "LEAVE TO SCREEN");
+    }
+
+    #[test]
+    fn leave_screen_and_leave_program_lower_to_their_ops() {
+        let ir = stmts("LEAVE SCREEN.\nLEAVE PROGRAM.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::Leave, ScreenOp::LeaveProgram]
+        );
+    }
+
+    #[test]
+    fn set_pf_status_uses_uppercase_name_and_lowercase_reference() {
+        let ir = stmts("SET PF-STATUS 'status_0100'.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::PfStatus("STATUS_0100".into())]
+        );
+        assert_eq!(
+            ir.screen_refs[0].target,
+            ScreenTarget::Status("status_0100".into())
+        );
+    }
+
+    #[test]
+    fn set_pf_status_with_exclusion_is_phase_2() {
+        let errs = parse_source("SET PF-STATUS 'X' EXCLUDING fc.\n").unwrap_err();
+        assert!(errs[0].message.contains("not supported yet"));
+    }
+
+    #[test]
+    fn set_screen_lowers_and_rejects_zero() {
+        let ir = stmts("SET SCREEN 0200.\n");
+        assert_eq!(screen_ops(&ir), vec![ScreenOp::Set(200)]);
+        let errs = parse_source("SET SCREEN 0.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("SET SCREEN 0 is not supported yet"));
+    }
+
+    #[test]
+    fn message_with_literal_text_and_upper_case_type_lowers() {
+        let ir = stmts("MESSAGE 'Customer saved' TYPE 'S'.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::Message {
+                kind: 'S',
+                text: "Customer saved".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn message_with_lower_case_type_is_rejected() {
+        let errs = parse_source("MESSAGE 'x' TYPE 's'.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("Message type 's' is not supported"));
+    }
+
+    #[test]
+    fn message_with_unknown_type_is_rejected() {
+        let errs = parse_source("MESSAGE 'x' TYPE 'Q'.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("Message type 'Q' is not supported"));
+    }
+
+    #[test]
+    fn data_declarations_record_dynpro_field_types() {
+        let ir = stmts(
+            "DATA a TYPE n LENGTH 4.\nDATA b TYPE d.\nDATA c TYPE p LENGTH 3 DECIMALS 2.\nDATA e TYPE string.\nDATA f TYPE sy-dynnr.\n",
+        );
+        assert_eq!(ir.field_types.get("a"), Some(&FieldType::Numc(4)));
+        assert_eq!(ir.field_types.get("b"), Some(&FieldType::Date));
+        assert_eq!(
+            ir.field_types.get("c"),
+            Some(&FieldType::Packed {
+                bytes: 3,
+                decimals: 2
+            })
+        );
+        assert_eq!(ir.field_types.get("e"), Some(&FieldType::String));
+        assert_eq!(ir.field_types.get("f"), Some(&FieldType::Char(4)));
+    }
+
+    #[test]
+    fn module_blocks_are_collected_with_phase_and_lowercase_name() {
+        let ir = stmts(
+            "MODULE Status_0100 OUTPUT.\n  SET PF-STATUS 'st'.\nENDMODULE.\nMODULE user_command_0100 INPUT.\n  LEAVE SCREEN.\nENDMODULE.\n",
+        );
+        assert_eq!(ir.modules.len(), 2);
+        assert_eq!(ir.modules[0].name, "status_0100");
+        assert_eq!(ir.modules[0].phase, crate::dynpro::Phase::Pbo);
+        assert_eq!(ir.modules[1].phase, crate::dynpro::Phase::Pai);
+        assert_eq!(ir.modules[1].body.len(), 1);
+    }
+}

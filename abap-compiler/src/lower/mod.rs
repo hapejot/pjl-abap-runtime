@@ -4,6 +4,7 @@
 mod block;
 mod decl;
 mod ir;
+mod screen;
 mod stmt;
 mod tokens;
 
@@ -12,6 +13,8 @@ use tokens::*;
 use tracing::error;
 
 use std::collections::{BTreeSet, HashMap};
+
+use crate::dynpro::{FieldType, Phase};
 
 use crate::inspect::abap::{
     parse_l1, ClassDef as AbapClass, ClassKind, Item, Kind, MemberKind, Program, Statement, Token,
@@ -97,6 +100,12 @@ struct Lowerer {
     scope: Option<String>,
     /// Externe Oberklasse je Klasse; ein nicht auflösbarer LIKE-Name ist ein Attribut dieser Oberklasse
     external_parents: HashMap<String, String>,
+    /// Dynpro-Typ je deklarierter Variable (Kleinschreibung), für die `.dynp`-Prüfung
+    field_types: HashMap<String, FieldType>,
+    /// MODULE-Blöcke des Programms
+    modules: Vec<ModuleDef>,
+    /// Verweise auf Dynpros und GUI-Status aus den Anweisungen
+    screen_refs: Vec<ScreenRef>,
 }
 
 /// Signatur einer Methode aus der Klassendefinition.
@@ -110,6 +119,9 @@ struct MethodSig {
 fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>> {
     let _symbols = SymbolCatalog::from_program(prog).map_err(|e| vec![e])?;
     let mut lw = Lowerer {
+        field_types: HashMap::new(),
+        modules: Vec::new(),
+        screen_refs: Vec::new(),
         errors: Vec::new(),
         structs: Vec::new(),
         names: HashMap::new(),
@@ -176,6 +188,38 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
                     line: head.line,
                 });
             }
+            TopItem::Routine {
+                kind, head, body, ..
+            } if kind == "MODULE" => {
+                // MODULE name OUTPUT|INPUT ... ENDMODULE: vom Ablauf des Dynpros aufgerufen (Spec 4.2).
+                // DATA in einem MODULE ist programmglobal (Spec-Beleg: sap-specialist, Dialogmodule).
+                let phase = if head.tokens.last().is_some_and(|t| t.is_word("OUTPUT")) {
+                    Phase::Pbo
+                } else {
+                    Phase::Pai
+                };
+                let name = head.tokens.get(1).map(word).unwrap_or_default();
+                let mut mbody = Vec::new();
+                if let Err(e) = lw.lower_nodes(&nodes(body), &mut mbody) {
+                    lw.errors.push(e);
+                }
+                if lw
+                    .modules
+                    .iter()
+                    .any(|m| m.name == name && m.phase == phase)
+                {
+                    lw.errors.push(CompileError {
+                        line: head.line,
+                        message: format!("MODULE '{name}' is already defined for this phase"),
+                    });
+                }
+                lw.modules.push(ModuleDef {
+                    name,
+                    phase,
+                    body: mbody,
+                    line: head.line,
+                });
+            }
             TopItem::Routine { kind, head, .. } => lw.errors.push(CompileError {
                 line: head.line,
                 message: format!("Unsupported event/routine: {kind}"),
@@ -191,6 +235,8 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
     if let Err(e) = lw.check_all_implemented() {
         lw.errors.push(e);
     }
+    // MODULE-Blöcke werden vor den Ereignissen übersetzt; die Verweise wieder in Quellreihenfolge bringen
+    lw.screen_refs.sort_by_key(|r| r.line);
 
     let mut forms = Vec::new();
     for item in form_items {
@@ -229,6 +275,10 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         constants: lw.constants,
         dependencies: lw.external_types,
         dynamic_types: lw.dynamic_types,
+        modules: lw.modules,
+        field_types: lw.field_types,
+        screen_refs: lw.screen_refs,
+        screens: None,
     })
 }
 

@@ -4,6 +4,7 @@ pub mod analyze;
 pub mod ast;
 pub mod codegen;
 pub mod ddic;
+pub mod dynpro;
 pub mod inspect;
 pub mod library;
 pub mod lower;

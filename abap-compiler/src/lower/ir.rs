@@ -1,6 +1,7 @@
 //! Typisierte Zwischendarstellung (IR) zwischen Parser und Codegen.
 
 use super::*;
+use crate::dynpro::{DynproFile, FieldType, Phase};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ty {
@@ -229,9 +230,61 @@ pub enum Stmt {
         cleanup: Vec<Stmt>,
         line: usize,
     },
+    /// Dynpro-Anweisung (CALL/SET/LEAVE SCREEN, SET PF-STATUS, MESSAGE), siehe `ScreenOp`
+    Screen {
+        op: ScreenOp,
+        line: usize,
+    },
     NotSupported {
         tokens: Vec<Token>,
     },
+}
+
+/// Dynpro-Anweisung mit ihren Argumenten. Abbildung auf die Laufzeit: Spec 5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScreenOp {
+    /// CALL SCREEN n
+    Call(u32),
+    /// SET SCREEN n (n > 0)
+    Set(u32),
+    /// LEAVE SCREEN, auch LEAVE TO SCREEN 0
+    Leave,
+    /// LEAVE TO SCREEN n (n > 0)
+    LeaveTo(u32),
+    /// LEAVE PROGRAM
+    LeaveProgram,
+    /// SET PF-STATUS 'name' (Großbuchstaben; gleicher Schlüssel wie der Name im GUISTATUS-Aufruf der Laufzeit)
+    PfStatus(String),
+    /// MESSAGE 'text' TYPE t; `kind` ist der Großbuchstabe des Typs
+    Message { kind: char, text: String },
+}
+
+/// Ziel eines Dynpro-Verweises aus dem Programm; für die Prüfung gegen die `.dynp`-Datei.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScreenTarget {
+    /// Dynpro-Nummer
+    Dynpro(u32),
+    /// Name des GUI-Status (Kleinschreibung)
+    Status(String),
+}
+
+/// Verweis auf ein Dynpro oder einen GUI-Status aus einer Anweisung (`what`, z. B. "CALL SCREEN").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenRef {
+    pub target: ScreenTarget,
+    pub what: &'static str,
+    pub line: usize,
+}
+
+/// Ablaufphase eines MODULE-Blocks: OUTPUT (PBO) oder INPUT (PAI).
+/// `MODULE name OUTPUT ... ENDMODULE`: PBO; `MODULE name INPUT ... ENDMODULE`: PAI.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleDef {
+    /// Name in Kleinschreibung
+    pub name: String,
+    pub phase: Phase,
+    pub body: Vec<Stmt>,
+    pub line: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -327,4 +380,12 @@ pub struct Ir {
     pub dependencies: Vec<String>,
     /// Feste Typen, die in dynamische Feldsymbole zugewiesen werden (für Prüfungen zur Laufzeit)
     pub dynamic_types: Vec<Ty>,
+    /// MODULE-Blöcke (OUTPUT und INPUT) in Quellreihenfolge
+    pub modules: Vec<ModuleDef>,
+    /// Abbildung auf die Dynpro-Typen je Variablenname (Kleinschreibung), für `.dynp`-Prüfungen
+    pub field_types: HashMap<String, FieldType>,
+    /// Verweise auf Dynpros und GUI-Status aus den Anweisungen des Programms
+    pub screen_refs: Vec<ScreenRef>,
+    /// Inhalt der `.dynp`-Datei; `None`, wenn keine Datei gehört. Wird nach der Prüfung gesetzt.
+    pub screens: Option<DynproFile>,
 }

@@ -17,6 +17,11 @@ impl Lowerer {
         let toks = &s.tokens[..pragma_start];
         let kw = s.keyword();
 
+        // Dynpro-Anweisungen (CALL/SET/LEAVE SCREEN, SET PF-STATUS, MESSAGE mit Literal) vor dem übrigen Pfad
+        if let Some(result) = self.lower_screen_stmt(&kw, toks, line, out) {
+            return result;
+        }
+
         if let Some(expr) = expression_statement(toks, line) {
             out.push(Stmt::ExprStmt { expr, line });
             return Ok(());
@@ -131,6 +136,13 @@ impl Lowerer {
                     self.ty_of(&toks[3..], line)?
                 };
                 self.data_types.insert(name.clone(), ty);
+                // Der Dynpro-Typ (c, n, d, t, i, p) geht im IR verloren, daher wird er hier festgehalten
+                let field_type = if toks[2].is_word("TYPE") {
+                    super::screen::field_type_of(&toks[3..])
+                } else {
+                    crate::dynpro::FieldType::Other
+                };
+                self.field_types.insert(name.clone(), field_type);
                 out.push(Stmt::Data { name, ty, line });
                 Ok(())
             }

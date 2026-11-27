@@ -1,0 +1,1 @@
+Type string is not allowed for dynpro field 'ZNAME1'

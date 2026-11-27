@@ -27,6 +27,41 @@ impl<'ctx> Codegen<'ctx> {
         self.emit_routine(sig.f, &f.params, &f.body, f.line, None, None)
     }
 
+    /// MODULE-Funktion (Spec 8.2): ohne Parameter, aufgerufen von der Laufzeit. DATA im Modul ist
+    /// programmglobal und wird schon in `hoist` des Programms angelegt, daher kein lokales Hoisting hier.
+    pub(super) fn emit_module(
+        &mut self,
+        func: FunctionValue<'ctx>,
+        body_stmts: &[Stmt],
+    ) -> CResult<()> {
+        let entry = self.ctx.append_basic_block(func, "entry");
+        let body = self.ctx.append_basic_block(func, "body");
+        let exit = self.ctx.append_basic_block(func, "exit");
+
+        self.vars.clear();
+        self.loops.clear();
+        self.exception_target = None;
+        self.in_form = false;
+        self.body = Some(body);
+        self.exit_fn = Some(exit);
+        self.self_ctx = None;
+
+        self.alloca.position_at_end(entry);
+        self.builder.position_at_end(body);
+        let routine_mark = self.call_int(self.rt.dec_mark, &[])?;
+        self.emit_block(body_stmts)?;
+        self.br_if_open(exit)?;
+
+        self.builder.position_at_end(exit);
+        self.release_to(routine_mark)?;
+        llvm(self.builder.build_return(None))?;
+        llvm(self.alloca.build_unconditional_branch(body))?;
+
+        self.vars.clear();
+        self.self_ctx = None;
+        Ok(())
+    }
+
     /// Gemeinsamer Rumpf für FORMs und Methoden. Methoden erhalten den Objektzeiger als ersten Parameter.
     pub(super) fn emit_routine(
         &mut self,

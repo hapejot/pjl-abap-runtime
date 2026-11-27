@@ -94,7 +94,7 @@ fkey         = "FKEY" taste_name zeichenkette "CODE" funktionscode [ "TYPE" ( "B
 exclude      = "EXCLUDE" funktionscode NL .
 ```
 
-Phase 1 nutzt die Grammatik ohne `EXCLUDE`, `PASSWORD` und `AT EXIT-COMMAND` (siehe Abschnitt 11).
+Phase 1 nutzt die Grammatik ohne `EXCLUDE` und `PASSWORD` (Phase 2). `AT EXIT-COMMAND` ist in Phase 1 enthalten. Seine genaue Semantik ist offen (Abschnitt 12, Punkt 8).
 
 ### 4.3 Beispiel
 
@@ -241,7 +241,9 @@ Die Zuordnung zeigt, wie der Compiler jede Anweisung übersetzt. Die Aufrufe ste
 | `LEAVE TO SCREEN n.` | `abap_rt_leave_to_screen(n)` | 1 |
 | `LEAVE PROGRAM.` | `abap_rt_leave_program()` | 1 |
 | `SET PF-STATUS 'x'.` | `abap_rt_set_pf_status('x')` | 1 |
-| `MESSAGE 'x' TYPE 't'.` | `abap_rt_message(t, 'x')` | 1 |
+| `MESSAGE 'x' TYPE 'T'.` | `abap_rt_message('T', 'x')` | 1 |
+
+Der Messagetyp muss ein Großbuchstabe sein (`S`, `I`, `W`, `E`, `A`, `X`). Kleinbuchstaben sind ein Übersetzungsfehler.
 | `SET CURSOR FIELD f.` | `abap_rt_set_cursor(f)` | 2 |
 | `GET CURSOR FIELD f.` | `abap_rt_get_cursor(f)` | 2 |
 | `sy-ucomm`, `sy-dynnr` | Felder der SY-Struktur, siehe 8.2 (`abap_rt_screen_sy`) | 1 |
@@ -310,6 +312,7 @@ Die F-Taste-Zuordnung hängt am GUI-Status, nicht am Dynpro.
 | Typ | Wirkung |
 |---|---|
 | S, I, W | Meldung in Zeile 24, Ablauf geht weiter. |
+| Typ klein geschrieben (`'s'`) | Übersetzungsfehler, kein Laufzeitverhalten. |
 | E | im PAI: Dynpro bleibt, PBO läuft erneut, Meldung bleibt. Im PBO: Meldung in Zeile 24. |
 | A, X | Programmabbruch mit englischer Laufzeitmeldung. |
 
@@ -441,6 +444,18 @@ SNAPSHOT                ' Gitter in expected_screen.txt
 
 `'` beginnt einen Kommentar. Die Skriptsprache gilt nur für Tests.
 
+### 9.3a Gitterabzug (Format, Stand Phase 1)
+
+Ein `SNAPSHOT` schreibt den aktuellen Bildschirm als Text:
+
+- 24 Zeilen, jede genau 80 Zeichen breit (Leerzeichen aufgefüllt, Zeichen je Zelle, keine Breitzeichen).
+- Danach eine Trennzeile `----`. Pro `SNAPSHOT` ein Block.
+- Ziel: Datei aus `ABAPRT_SCREEN_OUT`. Ohne diese Variable gehen die Abzüge nach stderr.
+
+Offen (Entscheidung nötig): Sollen rechte Leerzeichen in den Zeilen entfernt werden, damit die Dateien
+im Editor lesbar bleiben und der Vergleich auf Zeilenebene erfolgt? Vorschlag: ja, Zeilen rechts getrimmt,
+Vergleich zeichengenau über die getrimmten Zeilen.
+
 ### 9.4 Weitere Tests
 
 - Parser: gültige und ungültige Dateien mit Position.
@@ -454,8 +469,8 @@ SNAPSHOT                ' Gitter in expected_screen.txt
 | Phase | Inhalt |
 |---|---|
 | **0** | Linktest: `abap-rt` mit `crossterm` in eine `.exe` linken und ein leeres Fenster (Alternativscreen) öffnen und schließen. |
-| **1 (MVP)** | `DYNPRO`, `SIZE`, `TITLE`, `TEXT`, `FIELD` mit `INPUT`/`OUTPUT`/`REQUIRED`/`INVISIBLE`/`COLOR`, `BUTTON`, `FRAME`. `FLOW` mit `PROCESS` und `MODULE` (ohne Feldmodule). `GUISTATUS` mit `FKEY`. `CALL SCREEN`, `SET SCREEN`, `LEAVE SCREEN`, `LEAVE TO SCREEN`, `LEAVE PROGRAM`, `SET PF-STATUS`, `MESSAGE`, `sy-ucomm`. Typen `c`, `n`, `d`, `t`, `i`, `p`. Headless-Tests und `crossterm`-Lauf. |
-| **2** | `CHAIN`/`ENDCHAIN`, `FIELD ... MODULE ... ON INPUT`, `ON REQUEST` (einfache Auswahlliste), `AT EXIT-COMMAND`, `SET CURSOR`, `GET CURSOR`, `EXCLUDE`, `Shift+F`, `PASSWORD`, `CALL SCREEN ... STARTING AT`, `SET TITLEBAR`, Strukturkomponenten als Feld. |
+| **1 (MVP)** | `DYNPRO`, `SIZE`, `TITLE`, `TEXT`, `FIELD` mit `INPUT`/`OUTPUT`/`REQUIRED`/`INVISIBLE`/`COLOR`, `BUTTON`, `FRAME`. `FLOW` mit `PROCESS` und `MODULE` (ohne Feldmodule), inkl. `AT EXIT-COMMAND` (Semantik offen, Abschnitt 12). `GUISTATUS` mit `FKEY`. `CALL SCREEN`, `SET SCREEN`, `LEAVE SCREEN`, `LEAVE TO SCREEN`, `LEAVE PROGRAM`, `SET PF-STATUS`, `MESSAGE`, `sy-ucomm`. Typen `c`, `n`, `d`, `t`, `i`, `p`. Headless-Tests und `crossterm`-Lauf. |
+| **2** | `CHAIN`/`ENDCHAIN`, `FIELD ... MODULE ... ON INPUT`, `ON REQUEST` (einfache Auswahlliste), `SET CURSOR`, `GET CURSOR`, `EXCLUDE`, `Shift+F`, `PASSWORD`, `CALL SCREEN ... STARTING AT`, `SET TITLEBAR`, Strukturkomponenten als Feld. |
 | **3** | Subscreens, Tabellenkontrollen (`LOOP AT ... WITH CONTROL`), Registerleisten, Selektionsbilder. |
 
 ## 11. Hinweise zur Umsetzung
@@ -477,6 +492,10 @@ Der `sap-specialist` klärt diese Punkte, bevor sie als Akzeptanzfall festgelegt
 5. Verhalten von `LEAVE TO SCREEN 0` gegenüber `LEAVE SCREEN`.
 6. Mehrere `SET SCREEN` in einem Modul: welche Aktion gilt?
 7. Typeinschränkungen für Felder (`string`, `i`, `p`, `d`, `t`) und ihre Darstellung (Vorzeichen, Nachkommastellen).
+8. **Semantik von `AT EXIT-COMMAND`** (gesondert zu klären, ohne SAP-System nur aus Dokumentation belegbar).
+   Stand der Umsetzung in Phase 1: Das Modul läuft nur, wenn der Funktionscode vom Typ `B`, `C` oder `E` ist.
+   Andere PAI-Module laufen immer. Offen: Reihenfolge gegenüber normalen PAI-Modulen, Verhalten bei Feldprüfungen,
+   Übertragung der Felder vor dem Exit-Modul.
 
 ## 13. Offene Punkte
 

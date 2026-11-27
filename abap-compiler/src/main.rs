@@ -8,8 +8,8 @@ use abap_compiler::{
     analyze,
     ast::CompileError,
     codegen::Codegen,
-    inspect, library,
-    lower::{lower_program_with, parse_source},
+    dynpro, inspect, library,
+    lower::{lower_program_with, parse_source, Ir},
     project,
 };
 use clap::{Parser, Subcommand};
@@ -42,6 +42,9 @@ struct Cli {
     /// Bei ZIP-Eingabe: Hauptprogramm aus dem Export (sonst das einzige Programm mit REPORT)
     #[clap(long = "program")]
     program: Option<String>,
+    /// Dynpro-Beschreibung (.dynp). Ohne Angabe wird <name>.dynp neben <name>.abap gesucht.
+    #[clap(long = "dynp")]
+    dynp: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -68,6 +71,46 @@ struct Args {
     emit_ir: Option<PathBuf>,
     runtime: Option<PathBuf>,
     program: Option<String>,
+    dynp: Option<PathBuf>,
+}
+
+/// Liest die Dynpro-Datei (`--dynp` oder `<name>.dynp` neben dem Programm), prüft sie gegen das Programm und
+/// hängt sie an die IR. Fehler und Warnungen gehen nach stderr; ein Fehler beendet den Lauf.
+fn attach_dynpro(ir: &mut Ir, input: &Path, dynp: Option<&Path>, is_zip: bool) {
+    if is_zip {
+        if dynp.is_some() {
+            fail("--dynp is not supported with ZIP input");
+        }
+        if let Some(r) = ir.screen_refs.first() {
+            fail(format!(
+                "Line {}: {} is not supported with ZIP input (abapGit DYNP objects are not read)",
+                r.line, r.what
+            ));
+        }
+        return;
+    }
+    let path = match dynp {
+        Some(p) => Some(p.to_path_buf()),
+        None => Some(input.with_extension("dynp")).filter(|p| p.exists()),
+    };
+    let file = path.map(|p| {
+        let src =
+            std::fs::read_to_string(&p).unwrap_or_else(|e| fail(format!("{}: {e}", p.display())));
+        dynpro::parse_dynp(&p.display().to_string(), &src).unwrap_or_else(|e| fail(e))
+    });
+    let abap = input.display().to_string();
+    let diags = dynpro::check(file.as_ref(), ir, &abap);
+    let mut errors = 0;
+    for d in &diags {
+        eprintln!("abapc: {d}");
+        if !d.warning {
+            errors += 1;
+        }
+    }
+    if errors > 0 {
+        fail(format!("{errors} error(s) found"));
+    }
+    ir.screens = file;
 }
 
 fn runtime_library_name() -> &'static str {
@@ -207,6 +250,7 @@ fn main() {
         emit_ir: cli.emit_ir,
         runtime: cli.runtime,
         program: cli.program,
+        dynp: cli.dynp,
     };
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -218,7 +262,7 @@ fn main() {
         args.input.display(),
         args.output.display()
     );
-    let ir = if is_zip {
+    let mut ir = if is_zip {
         // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
         let mut programs = project::load_programs(&args.input).unwrap_or_else(|e| fail(e));
         let name =
@@ -243,6 +287,8 @@ fn main() {
             Err(errors) => fail_all(errors),
         }
     };
+
+    attach_dynpro(&mut ir, &args.input, args.dynp.as_deref(), is_zip);
 
     let ctx = Context::create();
     let mut cg = Codegen::new(&ctx);

@@ -1,0 +1,4 @@
+* Syntaxfehler: FIELD ohne Spaltenangabe (Zeile 3)
+DYNPRO 0100
+  FIELD ZKUNNR 2
+ENDDYNPRO

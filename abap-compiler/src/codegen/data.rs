@@ -15,6 +15,10 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Datenzeiger und Typ eines Namens. `s-feld` ist die Komponente `feld` der Struktur `s`.
     pub(super) fn data(&self, name: &str, line: usize) -> CResult<(PointerValue<'ctx>, Ty)> {
+        // Systemfelder mit Bindestrich (sy-ucomm, sy-dynnr) sind Globals, keine Komponenten
+        if self.globals.contains_key(name) {
+            return self.data_base(name, line);
+        }
         let Some((base, field)) = name.split_once('-') else {
             return self.data_base(name, line);
         };

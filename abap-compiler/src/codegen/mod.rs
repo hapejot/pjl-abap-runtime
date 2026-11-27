@@ -16,10 +16,13 @@ mod expr;
 mod layout;
 mod packed;
 mod routines;
+mod screen;
 mod stmt;
 
 use std::collections::HashMap;
 use std::fmt::Display;
+
+use crate::dynpro::{Phase, UCOMM_LENGTH};
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -182,6 +185,24 @@ struct Rt<'ctx> {
     str_contains_only: FunctionValue<'ctx>,
     str_length: FunctionValue<'ctx>,
     str_slice: FunctionValue<'ctx>,
+    screen_sy: FunctionValue<'ctx>,
+    screen_begin: FunctionValue<'ctx>,
+    screen_text: FunctionValue<'ctx>,
+    screen_field: FunctionValue<'ctx>,
+    screen_button: FunctionValue<'ctx>,
+    screen_frame: FunctionValue<'ctx>,
+    screen_module: FunctionValue<'ctx>,
+    screen_end: FunctionValue<'ctx>,
+    status_begin: FunctionValue<'ctx>,
+    status_fkey: FunctionValue<'ctx>,
+    status_end: FunctionValue<'ctx>,
+    call_screen: FunctionValue<'ctx>,
+    set_screen: FunctionValue<'ctx>,
+    leave_screen: FunctionValue<'ctx>,
+    leave_to_screen: FunctionValue<'ctx>,
+    leave_program: FunctionValue<'ctx>,
+    set_pf_status: FunctionValue<'ctx>,
+    message: FunctionValue<'ctx>,
 }
 
 pub struct Codegen<'ctx> {
@@ -220,6 +241,8 @@ pub struct Codegen<'ctx> {
     rt: Rt<'ctx>,
     /// Gesammelte Fehler; die Erzeugung läuft nach einem Fehler weiter.
     errors: Vec<CompileError>,
+    /// MODULE-Funktionen je Phase und Name (Kleinschreibung), für `abap_rt_screen_module`
+    module_fns: HashMap<(Phase, String), FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -362,6 +385,124 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_str_slice",
                 ptrt.fn_type(&[ptrt.into(), i32t.into(), i32t.into()], false),
             ),
+            // Dynpro-Laufzeit (Spec 8.2): Prolog und Screen-Anweisungen
+            screen_sy: f(
+                "abap_rt_screen_sy",
+                void.fn_type(&[ptrt.into(), i64t.into(), ptrt.into(), i64t.into()], false),
+            ),
+            screen_begin: f(
+                "abap_rt_screen_begin",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_text: f(
+                "abap_rt_screen_text",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        i32t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_field: f(
+                "abap_rt_screen_field",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_button: f(
+                "abap_rt_screen_button",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        i32t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_frame: f(
+                "abap_rt_screen_frame",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_module: f(
+                "abap_rt_screen_module",
+                void.fn_type(&[i32t.into(), i32t.into(), ptrt.into(), i32t.into()], false),
+            ),
+            screen_end: f("abap_rt_screen_end", void.fn_type(&[i32t.into()], false)),
+            status_begin: f(
+                "abap_rt_status_begin",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            status_fkey: f(
+                "abap_rt_status_fkey",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        i32t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            status_end: f("abap_rt_status_end", void.fn_type(&[], false)),
+            call_screen: f("abap_rt_call_screen", void.fn_type(&[i32t.into()], false)),
+            set_screen: f("abap_rt_set_screen", void.fn_type(&[i32t.into()], false)),
+            leave_screen: f("abap_rt_leave_screen", void.fn_type(&[], false)),
+            leave_to_screen: f(
+                "abap_rt_leave_to_screen",
+                void.fn_type(&[i32t.into()], false),
+            ),
+            leave_program: f("abap_rt_leave_program", void.fn_type(&[], false)),
+            set_pf_status: f(
+                "abap_rt_set_pf_status",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            message: f(
+                "abap_rt_message",
+                void.fn_type(&[i32t.into(), ptrt.into(), i64t.into()], false),
+            ),
         };
 
         Codegen {
@@ -390,6 +531,7 @@ impl<'ctx> Codegen<'ctx> {
             errors: Vec::new(),
             dynamic_types: Vec::new(),
             fs_override: HashMap::new(),
+            module_fns: HashMap::new(),
         }
     }
 
@@ -487,6 +629,27 @@ impl<'ctx> Codegen<'ctx> {
             );
         }
 
+        // MODULE-Funktionen (Spec 8.2), Signatur extern "C" fn(). Deklariert vor dem Prolog, der sie referenziert.
+        for m in &ir.modules {
+            let key = (m.phase, m.name.clone());
+            if self.module_fns.contains_key(&key) {
+                return err(
+                    m.line,
+                    format!("MODULE '{}' is already defined for this phase", m.name),
+                );
+            }
+            let prefix = match m.phase {
+                Phase::Pbo => "pbo",
+                Phase::Pai => "pai",
+            };
+            let fun = self.module.add_function(
+                &format!("abap_module_{prefix}_{}", m.name),
+                void.fn_type(&[], false),
+                None,
+            );
+            self.module_fns.insert(key, fun);
+        }
+
         let fn_type = self.i32t.fn_type(&[], false);
         let main = self.module.add_function("main", fn_type, None);
         let entry = self.ctx.append_basic_block(main, "entry");
@@ -496,6 +659,23 @@ impl<'ctx> Codegen<'ctx> {
         self.exit_fn = Some(exit);
 
         self.alloca.position_at_end(entry);
+        // SY-Felder für Dynpros: Programmvariablen, die der Prolog der Laufzeit meldet (Spec 8.2)
+        for (name, ty) in [
+            ("sy-ucomm", Ty::Char(UCOMM_LENGTH)),
+            ("sy-dynnr", Ty::Char(4)),
+        ] {
+            let slot = self.global_slot(name, ty);
+            self.pending_init.push((slot, ty));
+            self.globals.insert(
+                name.to_string(),
+                Var {
+                    slot,
+                    ty,
+                    fs: false,
+                    tag: None,
+                },
+            );
+        }
         for class in &ir.classes {
             for (name, ty) in &class.static_fields {
                 let qualified = format!("{}=>{}", class.name, name);
@@ -513,9 +693,16 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
         self.hoist(&ir.stmts)?;
+        // DATA in MODULE-Blöcken ist programmglobal: wie oben im Einstieg angelegt
+        for m in &ir.modules {
+            self.hoist(&m.body)?;
+        }
         self.flush_inits()?;
 
         self.builder.position_at_end(body);
+        if let Some(file) = &ir.screens {
+            self.emit_screen_prolog(file, ir)?;
+        }
         self.emit_block(&ir.stmts)?;
         self.br_if_open(exit)?;
 
@@ -526,6 +713,11 @@ impl<'ctx> Codegen<'ctx> {
 
         for f in &ir.forms {
             let result = self.emit_form(f);
+            self.collect(result);
+        }
+        for m in &ir.modules {
+            let func = self.module_fns[&(m.phase, m.name.clone())];
+            let result = self.emit_module(func, &m.body);
             self.collect(result);
         }
         for (ci, c) in ir.classes.iter().enumerate() {

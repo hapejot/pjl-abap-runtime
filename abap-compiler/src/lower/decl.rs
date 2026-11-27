@@ -1016,6 +1016,7 @@ impl Lowerer {
                 "sy-repid" => return Ok(Ty::Char(40)),
                 "sy-uname" => return Ok(Ty::Char(12)),
                 "sy-ucomm" => return Ok(Ty::Char(70)),
+                "sy-dynnr" => return Ok(Ty::Char(4)),
                 "sy-langu" | "sy-msgty" => return Ok(Ty::Char(1)),
                 _ => {}
             }
