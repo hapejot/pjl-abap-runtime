@@ -1,0 +1,21 @@
+* Feld ZKUNNR steht in zwei FIELD-Anweisungen der Ablauflogik (einmal in einer CHAIN): Fehler (Spec 12a)
+DYNPRO 0100
+  SIZE 20 80
+  TITLE 'Kunde anlegen'
+  TEXT 2 2 'Kundennummer'
+  FIELD ZKUNNR 2 20 INPUT
+  TEXT 4 2 'Name'
+  FIELD ZNAME1 4 20 INPUT
+
+  FLOW
+    PROCESS BEFORE OUTPUT
+      MODULE STATUS_0100
+    PROCESS AFTER INPUT
+      FIELD ZKUNNR
+      CHAIN
+        FIELD ZKUNNR
+        FIELD ZNAME1
+      ENDCHAIN
+      MODULE USER_COMMAND_0100
+  ENDFLOW
+ENDDYNPRO

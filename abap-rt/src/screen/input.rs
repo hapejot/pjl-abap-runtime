@@ -55,6 +55,12 @@ pub struct Fault {
 pub struct Editor {
     cursor: Option<Pos>,
     bufs: Vec<Vec<char>>,
+    /// Eingabemarkierung je Feld (Index wie in `dynpro.fields`). Gesetzt bei jeder Änderung durch den Benutzer,
+    /// zurückgesetzt bei jedem PBO-Lauf (Abschnitt 12a).
+    marks: Vec<bool>,
+    /// Eingabebeschränkung nach E oder W aus einem Feld- oder Kettenmodul (Abschnitt 12a). `None`: alle Felder
+    /// sind eingabebereit. Sonst gilt je Feld Index, `true` für eingabebereite Felder.
+    enabled: Option<Vec<bool>>,
 }
 
 impl Default for Editor {
@@ -69,7 +75,61 @@ impl Editor {
         Editor {
             cursor: None,
             bufs: Vec::new(),
+            marks: Vec::new(),
+            enabled: None,
         }
+    }
+
+    /// Setzt alle Eingabemarkierungen zurück. Wird vor den PBO-Modulen aufgerufen.
+    pub fn clear_marks(&mut self, dynpro: &Dynpro) {
+        self.marks = vec![false; dynpro.fields.len()];
+    }
+
+    /// Hat der Benutzer das Feld seit dem letzten PBO geändert?
+    pub fn marked(&self, index: usize) -> bool {
+        self.marks.get(index).copied().unwrap_or(false)
+    }
+
+    /// Setzt die Eingabemarkierung des Feldes.
+    fn mark(&mut self, index: usize) {
+        if self.marks.len() <= index {
+            self.marks.resize(index + 1, false);
+        }
+        self.marks[index] = true;
+    }
+
+    /// Beschränkt die Eingabe auf die Felder `indices` (Abschnitt 12a, nach E oder W). Der Cursor steht auf dem
+    /// ersten dieser Felder.
+    pub fn restrict(&mut self, dynpro: &Dynpro, indices: &[usize]) {
+        let mut enabled = vec![false; dynpro.fields.len()];
+        for &index in indices {
+            if let Some(slot) = enabled.get_mut(index) {
+                *slot = true;
+            }
+        }
+        if let Some(&first) = indices.first() {
+            let field = &dynpro.fields[first];
+            self.focus(Pos {
+                row: field.row,
+                col: field.col,
+            });
+        }
+        self.enabled = Some(enabled);
+    }
+
+    /// Hebt die Eingabebeschränkung auf.
+    pub fn lift_restriction(&mut self) {
+        self.enabled = None;
+    }
+
+    /// Eingabebeschränkung für die Anzeige: `None` ohne Beschränkung.
+    pub fn restriction(&self) -> Option<&[bool]> {
+        self.enabled.as_deref()
+    }
+
+    /// Ist das Feld eingabebereit (Eingabefeld und nicht durch eine Beschränkung gesperrt)?
+    pub fn editable(&self, dynpro: &Dynpro, index: usize) -> bool {
+        editable_in(dynpro, self.restriction(), index)
     }
 
     /// Lädt die Anzeigepuffer aus den ABAP-Variablen (nach dem PBO). Der Cursor bleibt erhalten.
@@ -96,7 +156,7 @@ impl Editor {
     /// Aktueller Cursor. Ohne gesetzten Cursor: erstes Eingabefeld, sonst (1, 1).
     pub fn cursor(&self, dynpro: &Dynpro) -> Pos {
         self.cursor.unwrap_or_else(|| {
-            first_input(dynpro)
+            first_input(dynpro, self.restriction())
                 .map(|i| Pos {
                     row: dynpro.fields[i].row,
                     col: dynpro.fields[i].col,
@@ -161,11 +221,11 @@ impl Editor {
                 Outcome::Nothing
             }
             Key::Tab => {
-                pos = step(dynpro, pos, true);
+                pos = step(dynpro, pos, true, self.restriction());
                 Outcome::Nothing
             }
             Key::BackTab => {
-                pos = step(dynpro, pos, false);
+                pos = step(dynpro, pos, false, self.restriction());
                 Outcome::Nothing
             }
             Key::Enter => {
@@ -199,13 +259,14 @@ impl Editor {
         let Some(index) = field_at(dynpro, *pos) else {
             return;
         };
-        let field = &dynpro.fields[index];
-        if !field.is_input() {
+        if !self.editable(dynpro, index) {
             return;
         }
+        let field = &dynpro.fields[index];
         let offset = (pos.col - field.col) as usize;
         if value::accepts(field, &self.bufs[index], offset, ch) {
             self.bufs[index][offset] = ch;
+            self.mark(index);
             pos.col += 1;
         }
     }
@@ -221,8 +282,10 @@ impl Editor {
         };
         if let Some(index) = field_at(dynpro, left) {
             let field = &dynpro.fields[index];
-            if field.is_input() {
-                remove_at(&mut self.bufs[index], (left.col - field.col) as usize);
+            if self.editable(dynpro, index)
+                && remove_at(&mut self.bufs[index], (left.col - field.col) as usize)
+            {
+                self.mark(index);
             }
         }
         pos.col -= 1;
@@ -232,8 +295,10 @@ impl Editor {
     fn delete(&mut self, dynpro: &Dynpro, pos: Pos) {
         if let Some(index) = field_at(dynpro, pos) {
             let field = &dynpro.fields[index];
-            if field.is_input() {
-                remove_at(&mut self.bufs[index], (pos.col - field.col) as usize);
+            if self.editable(dynpro, index)
+                && remove_at(&mut self.bufs[index], (pos.col - field.col) as usize)
+            {
+                self.mark(index);
             }
         }
     }
@@ -273,8 +338,13 @@ impl Editor {
     }
 }
 
-/// Funktionscode mit Typ aus dem GUI-Status.
+/// Funktionscode mit Typ aus dem GUI-Status. Ein ausgeschlossener Code (`EXCLUDE`) wird wie eine unbelegte
+/// Taste behandelt: leerer Code, Typ keiner.
 fn transfer(status: Option<&GuiStatus>, fcode: String) -> Outcome {
+    let fcode = match status {
+        Some(s) if s.is_excluded(&fcode) => String::new(),
+        _ => fcode,
+    };
     let kind = status
         .and_then(|s| s.by_fcode(&fcode))
         .map_or(FKind::None, |k| k.kind);
@@ -282,15 +352,25 @@ fn transfer(status: Option<&GuiStatus>, fcode: String) -> Outcome {
 }
 
 /// Entfernt das Zeichen an `offset`, der Rest rückt nach links, hinten kommt ein Leerzeichen.
-fn remove_at(buf: &mut Vec<char>, offset: usize) {
+/// Liefert `false`, wenn `offset` außerhalb des Puffers liegt und nichts geändert wurde.
+fn remove_at(buf: &mut Vec<char>, offset: usize) -> bool {
     if offset < buf.len() {
         buf.remove(offset);
         buf.push(' ');
+        true
+    } else {
+        false
     }
 }
 
+/// Ist das Feld eingabebereit: Eingabefeld und, bei einer Beschränkung, in der Menge `enabled`.
+fn editable_in(dynpro: &Dynpro, enabled: Option<&[bool]>, index: usize) -> bool {
+    dynpro.fields[index].is_input()
+        && enabled.is_none_or(|e| e.get(index).copied().unwrap_or(false))
+}
+
 /// Index des sichtbaren Feldes, das die Position enthält.
-fn field_at(dynpro: &Dynpro, pos: Pos) -> Option<usize> {
+pub(crate) fn field_at(dynpro: &Dynpro, pos: Pos) -> Option<usize> {
     dynpro.fields.iter().position(|f| {
         f.is_visible()
             && f.row == pos.row
@@ -307,24 +387,24 @@ fn button_at(dynpro: &Dynpro, pos: Pos) -> Option<&Button> {
     })
 }
 
-/// Erstes Eingabefeld in Reihenfolge (Zeile, Spalte).
-fn first_input(dynpro: &Dynpro) -> Option<usize> {
-    input_order(dynpro).first().copied()
+/// Erstes eingabebereites Feld in Reihenfolge (Zeile, Spalte).
+fn first_input(dynpro: &Dynpro, enabled: Option<&[bool]>) -> Option<usize> {
+    input_order(dynpro, enabled).first().copied()
 }
 
-/// Eingabefelder, sortiert nach (Zeile, Spalte).
-fn input_order(dynpro: &Dynpro) -> Vec<usize> {
+/// Eingabebereite Felder, sortiert nach (Zeile, Spalte).
+fn input_order(dynpro: &Dynpro, enabled: Option<&[bool]>) -> Vec<usize> {
     let mut order: Vec<usize> = (0..dynpro.fields.len())
-        .filter(|&i| dynpro.fields[i].is_input())
+        .filter(|&i| editable_in(dynpro, enabled, i))
         .collect();
     order.sort_by_key(|&i| (dynpro.fields[i].row, dynpro.fields[i].col));
     order
 }
 
-/// Tab (vorwärts) und BTAB (rückwärts) zum nächsten bzw. vorherigen Eingabefeld.
+/// Tab (vorwärts) und BTAB (rückwärts) zum nächsten bzw. vorherigen eingabebereiten Feld.
 /// Liegt der Cursor in einem Feld, zählt dessen Anfang als Bezugspunkt. Ohne Eingabefeld bleibt der Cursor.
-fn step(dynpro: &Dynpro, pos: Pos, forward: bool) -> Pos {
-    let order = input_order(dynpro);
+fn step(dynpro: &Dynpro, pos: Pos, forward: bool, enabled: Option<&[bool]>) -> Pos {
+    let order = input_order(dynpro, enabled);
     if order.is_empty() {
         return pos;
     }
@@ -357,7 +437,7 @@ fn step(dynpro: &Dynpro, pos: Pos, forward: bool) -> Pos {
 mod tests {
     use super::*;
     use crate::screen::model::{
-        AbapType, FKey, Field, Module, VarPtr, INPUT, INVISIBLE, OUTPUT, REQUIRED,
+        AbapType, FKey, Field, Module, PaiEntry, VarPtr, INPUT, INVISIBLE, OUTPUT, REQUIRED,
     };
     use crate::screen::value::display_width;
 
@@ -386,6 +466,8 @@ mod tests {
         Editor {
             cursor: None,
             bufs: d.fields.iter().map(|f| vec![' '; f.width]).collect(),
+            marks: Vec::new(),
+            enabled: None,
         }
     }
 
@@ -416,6 +498,7 @@ mod tests {
                     kind: FKind::Cancel,
                 },
             ],
+            excluded: vec![],
         }
     }
 
@@ -615,6 +698,85 @@ mod tests {
     }
 
     #[test]
+    fn excluded_function_key_sends_empty_code_and_no_type() {
+        let d = dynpro(vec![]);
+        let mut e = editor_for(&d);
+        let mut st = status();
+        st.excluded.push("BACK".into());
+        assert_eq!(
+            e.handle(&d, Some(&st), Key::F(3)),
+            Outcome::Transfer {
+                fcode: String::new(),
+                kind: FKind::None
+            }
+        );
+    }
+
+    #[test]
+    fn excluded_cancel_sends_empty_code_for_escape() {
+        let d = dynpro(vec![]);
+        let mut e = editor_for(&d);
+        let mut st = status();
+        st.excluded.push("CANCEL".into());
+        assert_eq!(
+            e.handle(&d, Some(&st), Key::Esc),
+            Outcome::Transfer {
+                fcode: String::new(),
+                kind: FKind::None
+            }
+        );
+    }
+
+    #[test]
+    fn excluded_button_sends_empty_code_on_enter() {
+        let mut d = dynpro(vec![]);
+        d.buttons.push(crate::screen::model::Button {
+            row: 9,
+            col: 2,
+            text: "Save".into(),
+            fcode: "SAVE".into(),
+        });
+        let mut e = editor_for(&d);
+        let mut st = status();
+        st.excluded.push("SAVE".into());
+        e.focus(Pos { row: 9, col: 4 });
+        assert_eq!(
+            e.handle(&d, Some(&st), Key::Enter),
+            Outcome::Transfer {
+                fcode: String::new(),
+                kind: FKind::None
+            }
+        );
+    }
+
+    #[test]
+    fn shift_function_key_f13_sends_the_code_of_its_status_entry() {
+        let d = dynpro(vec![]);
+        let mut e = editor_for(&d);
+        let mut st = status();
+        st.fkeys.push(FKey {
+            key: 13,
+            text: "Next".into(),
+            fcode: "NEXT".into(),
+            kind: FKind::None,
+        });
+        assert_eq!(
+            e.handle(&d, Some(&st), Key::F(13)),
+            Outcome::Transfer {
+                fcode: "NEXT".into(),
+                kind: FKind::None
+            }
+        );
+        assert_eq!(
+            e.handle(&d, Some(&st), Key::F(14)),
+            Outcome::Transfer {
+                fcode: String::new(),
+                kind: FKind::None
+            }
+        );
+    }
+
+    #[test]
     fn check_reports_required_and_type_errors_with_field_index() {
         let mut req = field(2, 2, AbapType::Char, 3, INPUT | REQUIRED);
         req.name = "REQ".into();
@@ -684,11 +846,67 @@ mod tests {
             field(5, 5, AbapType::Char, 3, OUTPUT),
             field(6, 1, AbapType::Char, 3, INPUT),
         ]);
-        d.pai.push(Module {
+        d.pai.push(PaiEntry::Module(Module {
             func: noop,
             at_exit: false,
-        });
+        }));
         let e = editor_for(&d);
         assert_eq!(e.cursor(&d), Pos { row: 6, col: 1 });
+    }
+
+    #[test]
+    fn typing_and_deleting_set_the_mark_but_moving_does_not() {
+        let d = dynpro(vec![
+            field(2, 2, AbapType::Char, 3, INPUT),
+            field(3, 2, AbapType::Num, 3, INPUT),
+        ]);
+        let mut e = editor_for(&d);
+        e.clear_marks(&d);
+        e.focus(Pos { row: 2, col: 2 });
+        e.handle(&d, None, Key::Right);
+        e.handle(&d, None, Key::Down);
+        assert!(!e.marked(0) && !e.marked(1));
+        // Ein Zeichen, das der Typ nicht zulässt, ist keine Änderung.
+        e.focus(Pos { row: 3, col: 2 });
+        e.handle(&d, None, Key::Char('a'));
+        assert!(!e.marked(1));
+        // Überschreiben mit demselben Zeichen zählt.
+        e.focus(Pos { row: 2, col: 2 });
+        e.handle(&d, None, Key::Char(' '));
+        assert!(e.marked(0));
+        // Backspace löscht links vom Cursor: das ist das Feld mit der Markierung.
+        e.focus(Pos { row: 3, col: 3 });
+        e.handle(&d, None, Key::Backspace);
+        assert!(e.marked(1));
+        e.clear_marks(&d);
+        assert!(!e.marked(0) && !e.marked(1));
+    }
+
+    #[test]
+    fn restriction_blocks_typing_and_tab_outside_the_enabled_fields() {
+        let d = dynpro(vec![
+            field(2, 2, AbapType::Char, 3, INPUT),
+            field(4, 2, AbapType::Char, 3, INPUT),
+            field(6, 2, AbapType::Char, 3, INPUT),
+        ]);
+        let mut e = editor_for(&d);
+        e.restrict(&d, &[1]);
+        // Der Cursor steht auf dem eingabebereiten Feld.
+        assert_eq!(e.cursor(&d), Pos { row: 4, col: 2 });
+        e.handle(&d, None, Key::Char('x'));
+        assert_eq!(text(&e, 1), "x  ");
+        assert_eq!(text(&e, 0), "   ");
+        // Tab bleibt beim einzigen eingabebereiten Feld.
+        e.handle(&d, None, Key::Tab);
+        assert_eq!(e.cursor(&d), Pos { row: 4, col: 2 });
+        // Feld 0 ist gesperrt: Zeichen werden verworfen, keine Markierung.
+        e.focus(Pos { row: 2, col: 2 });
+        e.handle(&d, None, Key::Char('y'));
+        assert_eq!(text(&e, 0), "   ");
+        assert!(!e.marked(0));
+        assert!(e.marked(1));
+        e.lift_restriction();
+        e.handle(&d, None, Key::Char('z'));
+        assert_eq!(text(&e, 0), "z  ");
     }
 }

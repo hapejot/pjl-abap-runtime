@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
 use crossterm::terminal::{self as ct, EnterAlternateScreen, LeaveAlternateScreen};
+use input::Pos;
 use model::{Dynpro, GuiStatus, Message, VarPtr};
 use terminal::Terminal;
 
@@ -62,6 +63,12 @@ pub(crate) struct State {
     pub pending_status: Option<Arc<GuiStatus>>,
     pub message: Option<Message>,
     pub terminal: Option<Box<dyn Terminal>>,
+    /// Dynpro-Nummer und Cursor der letzten Anzeige oder Übertragung. `GET CURSOR` liest daraus den Feldnamen.
+    pub cursor_at: Option<(u32, Pos)>,
+    /// `SET CURSOR` für die nächste Anzeige des Dynpros (Nummer, Feldname). Wird bei der Anzeige verbraucht.
+    pub pending_cursor: Option<(u32, String)>,
+    /// `SET TITLEBAR` für das Dynpro (Nummer, Titel). Gilt bis zum Verlassen des Dynpros.
+    pub titlebar: Option<(u32, String)>,
 }
 
 impl State {
@@ -77,6 +84,9 @@ impl State {
             pending_status: None,
             message: None,
             terminal: None,
+            cursor_at: None,
+            pending_cursor: None,
+            titlebar: None,
         }
     }
 }

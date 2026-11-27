@@ -381,6 +381,10 @@ abap_rt_status_fkey(key: u32, text: *const u16, text_len: u64,
     -- key: 1..24, kind: 0 = keine, 1 = B, 2 = C, 3 = E
 abap_rt_status_exclude(fcode: *const u16, fcode_len: u64)   -- Phase 2
 abap_rt_status_end()
+abap_rt_status_exclude(fcode: *const u16, fcode_len: u64)      -- Phase 2, gilt für den zuletzt begonnenen Status
+abap_rt_set_cursor(name: *const u16, name_len: u64)             -- Phase 2, SET CURSOR FIELD f (nur Feldname)
+abap_rt_get_cursor(dst: *mut u16, dst_len: u64)                 -- Phase 2, GET CURSOR FIELD f
+abap_rt_set_titlebar(text: *const u16, text_len: u64)           -- Phase 2, SET TITLEBAR 'text' (nur Literal)
 ```
 
 `abap_rt_screen_module` übergibt einen Funktionszeiger auf die Modul-Funktion, die der Codegen erzeugt. Die
@@ -435,7 +439,7 @@ Der Runner aus `abap-compiler/tests/acceptance.rs` vergleicht die Abzüge zeiche
 ```
 FIELD ZKUNNR            ' Cursor auf das Feld (nur Test)
 TYPE '4711'             ' Zeichen am Cursor schreiben (Überschreibmodus)
-KEY TAB                 ' ENTER, TAB, BTAB, F1..F12, ESC, BACKSPACE, DELETE, UP, DOWN, LEFT, RIGHT
+KEY TAB                 ' ENTER, TAB, BTAB, F1..F12, SHIFT-F1..SHIFT-F12 (= F13..F24), ESC, BACKSPACE, DELETE, UP, DOWN, LEFT, RIGHT
 KEY ENTER
 SNAPSHOT                ' Gitter in expected_screen.txt
 ```
@@ -505,6 +509,82 @@ Der `sap-specialist` klärt diese Punkte, bevor sie als Akzeptanzfall festgelegt
    Die Regeln für Funktionstypen B und C ohne Exit-Modul (lockere Übertragung, Abschnitt 6.4) sind davon nicht berührt.
 9. **`STATUS` im `DYNPRO`** entfällt. Der GUI-Status wird nur mit `SET PF-STATUS` in einem PBO-Modul gesetzt.
    Das PBO läuft vor der Anzeige, daher reicht das.
+
+10. **Phase-2-Teilmenge (Stand): Annahmen, die noch nicht belegt sind.**
+   - `PASSWORD`: Stern nur für Zeichen ungleich Leerzeichen. Ein eingetipptes Leerzeichen bleibt leer. Der Wert im Programm ist der Klartext.
+   - `EXCLUDE`: gilt nur im gesetzten Status, Vergleich exakt. Der Compiler warnt, wenn kein FKEY denselben Code hat.
+   - `SET CURSOR FIELD f`: nur Bezeichner-Form. Feld muss sichtbar sein. Der Name muss in mindestens einem DYNPRO der `.dynp` vorkommen. Wirkt auf die nächste Anzeige des obersten Dynpros.
+   - `GET CURSOR FIELD f`: liest den Cursor der letzten Anzeige bzw. Übertragung. Ohne Feld unter dem Cursor: Leerzeichen.
+   - `SET TITLEBAR 'text'`: nur Literal ohne `WITH`. Textsymbol-Form ist „not supported yet“. Gilt bis zum Verlassen des Dynpros.
+   - Strukturkomponenten: nur `struktur-komponente` einer Struktur auf Programmebene mit Typen c, n, d, t, i, p.
+   - Verhalten von `GET CURSOR` und `PASSWORD` (Übertragung beim PAI) ist noch nicht gegen SAP belegt.
+
+## 12a. Ablauf-Zusätze: FIELD, CHAIN, ON INPUT, ON REQUEST (Phase 2)
+
+Quelle: vom Auftraggeber eingefügter Text aus allgemeinem ABAP-Wissen, nicht gegen die Dokumentation
+geprüft. Vor produktivem Einsatz gegen die Schlüsselwortdokumentation abgleichen (`FIELD ... MODULE ... ON REQUEST`).
+
+**Syntax in der PAI-Ablauflogik (`.dynp`, Block `FLOW`):**
+
+```
+PROCESS AFTER INPUT
+  FIELD ZKUNNR MODULE CHECK_KUNNR ON REQUEST
+  CHAIN
+    FIELD ZWERK
+    FIELD ZLGORT
+    MODULE CHECK_LAGER ON CHAIN-REQUEST
+  ENDCHAIN
+  MODULE USER_COMMAND_0100
+```
+
+- `FIELD f` ohne `MODULE`: nur Übertragung an dieser Stelle.
+- `FIELD f MODULE m` ohne Zusatz: Modul läuft immer.
+- `FIELD f MODULE m ON INPUT`: Modul läuft nur, wenn der Wert des Feldes nach der Übertragung ungleich dem Initialwert ist.
+- `FIELD f MODULE m ON REQUEST`: Modul läuft nur, wenn der Benutzer seit dem letzten PBO in das Feld eingegeben hat.
+- `CHAIN` ... `ENDCHAIN`: gruppiert Felder. Innerhalb nur `FIELD f` (ohne `MODULE`) und höchstens ein `MODULE m ON CHAIN-INPUT` oder `MODULE m ON CHAIN-REQUEST`. Verschachteln ist nicht erlaubt.
+- `ON CHAIN-INPUT`: Modul läuft, wenn mindestens ein Kettenfeld ungleich Initialwert ist.
+- `ON CHAIN-REQUEST`: Modul läuft, wenn mindestens ein Kettenfeld seit dem letzten PBO eine Eingabe hatte.
+- `MODULE` mit `ON CHAIN-*` außerhalb einer CHAIN ist ein Übersetzungsfehler. `ON INPUT` und `ON REQUEST` gelten nur für `FIELD`.
+- `ON *-INPUT` (Asterisk-Eingabe) ist nicht Teil von Phase 2.
+
+**Eingabemarkierung (ON REQUEST):** Jede Eingabe in ein Feld (Zeichen, Löschen, Überschreiben mit gleichem Wert) setzt
+die Markierung. Die Markierung wird bei jedem PBO zurückgesetzt. Änderungen durch das Programm im PBO zählen nicht.
+Cursorbewegung ohne Änderung zählt nicht. Vorbelegung aus SPA/GPA-Parametern zählt nicht (Annahme, Abschnitt 12).
+
+**Initialwert (ON INPUT):** wie bei `REQUIRED`: c nur Leerzeichen, n/d/t nur Nullen, i/p Null.
+
+**Übertragung im PAI:**
+- Prüfungen (Pflicht, Format, Typ) laufen wie bisher vor allen Modulen für alle Felder.
+- Felder, die in keiner `FIELD`-Anweisung (auch nicht in einer CHAIN) stehen, werden zu Beginn des PAI übertragen.
+- Felder einer `FIELD`-Anweisung werden erst bei dieser Anweisung in die ABAP-Variable übertragen. Frühere Module sehen den alten Wert.
+- Felder einer CHAIN werden bei ihrer `FIELD`-Anweisung übertragen (Annahme: die Kette ist dabei noch nicht verarbeitet).
+- Das PAI arbeitet die Anweisungen in Quelltextfolge ab. `MODULE` ohne Feldbezug läuft an seiner Stelle.
+
+**Meldung E oder W aus einem Feld- oder Kettenmodul (Annahme, Abschnitt 12):**
+- Das Dynpro wird neu angezeigt, mit PBO wie in Abschnitt 6.5. Eingabebereit sind nur das Feld des Moduls bzw. alle Felder der Kette.
+- Nach der Korrektur und Enter läuft das PAI ab dieser Anweisung weiter (das fehlgeschlagene Modul wird erneut aufgerufen,
+  Anweisungen davor laufen nicht erneut).
+- Für Module ohne Feldbezug gilt weiter Abschnitt 6.5.
+
+**Festlegungen dieses Abschnitts (Entscheidungen, siehe Bericht):**
+- Pro Dynpro gibt es eine geordnete Liste von PAI-Einträgen (Feld, Kette, Modul, Exit-Modul). Die Reihenfolge ist die Quelltextfolge.
+- Ein Feld in mehr als einer `FIELD`-Anweisung ist ein Übersetzungsfehler.
+- `ON INPUT` feuert bei jedem PAI, solange der Wert ungleich Initialwert ist, auch ohne neue Eingabe (Akzeptanzfall `m13_dynpro_on_request`).
+- Eingabemarkierung: nur tatsächlich ausgeführte Änderungen zählen. Überschreiben mit gleichem Zeichen zählt. Abgewiesene Zeichen (Typ, Feldende, gesperrtes Feld) nicht.
+- Cursor (Pfeiltasten, `SET CURSOR`) darf auf gesperrte Felder. Tippen, Löschen und Tab wirken nur auf eingabebereite Felder.
+- Übertragung ohne Prüfungserfolg behält Wiederaufnahme und Beschränkung.
+- Akzeptanzfall `m13_dynpro_on_request` zeigt den Ablauf mit Eingabeskript und Gitterabzug.
+
+**ABI für die PAI-Liste (Prolog-Aufrufe, in Quelltextfolge; `PAI-Module` bleiben bei `abap_rt_screen_module`):**
+
+```
+abap_rt_screen_pai_field(no: u32, name: *const u16, name_len: u64,
+                         func: Option<extern "C" fn()>, cond: u32 /*0 ohne, 1 ON INPUT, 2 ON REQUEST*/,
+                         chain: u32 /*0 ohne Kette, sonst Kettennummer ab 1*/)
+abap_rt_screen_pai_chain(no: u32, chain: u32, func: extern "C" fn(), cond: u32 /*3 ON CHAIN-INPUT, 4 ON CHAIN-REQUEST*/)
+```
+
+Die Eingabemarkierung führt die Laufzeit selbst. Der Compiler gibt sie nicht vor.
 
 ## 13. Offene Punkte
 

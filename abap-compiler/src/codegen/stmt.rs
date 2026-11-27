@@ -516,7 +516,7 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_store(p, n32))?;
                 Ok(())
             }
-            Stmt::Screen { op, .. } => self.emit_screen_op(op),
+            Stmt::Screen { op, line } => self.emit_screen_op(op, *line),
             Stmt::NotSupported { tokens } => {
                 let keyword = tokens
                     .first()

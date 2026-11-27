@@ -1,0 +1,15 @@
+REPORT zflow_chain_outside.
+
+DATA zkunnr TYPE c LENGTH 10.
+
+START-OF-SELECTION.
+  CALL SCREEN 0100.
+
+MODULE status_0100 OUTPUT.
+ENDMODULE.
+
+MODULE check_kunnr INPUT.
+ENDMODULE.
+
+MODULE user_command_0100 INPUT.
+ENDMODULE.

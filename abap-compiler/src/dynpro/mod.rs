@@ -6,6 +6,7 @@ mod check;
 mod parse;
 
 pub use check::check;
+pub(crate) use check::component;
 pub use parse::parse_dynp;
 
 use std::fmt;
@@ -147,7 +148,8 @@ pub struct Dynpro {
     pub cols: usize,
     pub title: String,
     pub elements: Vec<Element>,
-    pub flow: Vec<FlowEntry>,
+    /// Ablauflogik in Quelltextfolge (Spec 12a): PBO- und PAI-Module, `FIELD`- und `CHAIN`-Einträge der PAI.
+    pub flow: Vec<FlowItem>,
 }
 
 /// Element mit Position. `row` und `col` sind 1-basiert (Koordinaten im Dynpro-Bereich).
@@ -189,11 +191,16 @@ pub struct FieldAttrs {
     pub required: bool,
     pub invisible: bool,
     pub intensified: bool,
+    pub password: bool,
     pub color: Option<u8>,
 }
 
+/// Bit des Attributs `PASSWORD` in der Attributmaske der Laufzeit (Spec 8.2). Die Anzeige ist Sache der Laufzeit.
+pub const ATTR_PASSWORD: u32 = 1 << 16;
+
 impl FieldAttrs {
-    /// Bitmaske für die Laufzeit: INPUT=1, OUTPUT=2, REQUIRED=4, INVISIBLE=8, INTENSIFIED=32, Farbe in Bits 8..10.
+    /// Bitmaske für die Laufzeit: INPUT=1, OUTPUT=2, REQUIRED=4, INVISIBLE=8, INTENSIFIED=32,
+    /// Farbe in Bits 8..10, PASSWORD in Bit 16.
     pub fn bits(&self) -> u32 {
         let mut bits = 0;
         if self.input {
@@ -211,6 +218,9 @@ impl FieldAttrs {
         if self.intensified {
             bits |= 32;
         }
+        if self.password {
+            bits |= ATTR_PASSWORD;
+        }
         bits | color_bits(self.color)
     }
 }
@@ -220,14 +230,88 @@ pub fn color_bits(color: Option<u8>) -> u32 {
     color.map_or(0, |c| u32::from(c) << 8)
 }
 
-/// Ablauflogik-Eintrag: `PROCESS` mit `MODULE`.
+/// Eintrag der Ablauflogik in Quelltextfolge (Spec 12a). Die Reihenfolge der Liste ist die Reihenfolge im Quelltext.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlowItem {
+    /// `MODULE m [AT EXIT-COMMAND]` in PBO oder PAI, ohne Feldbezug
+    Module(FlowEntry),
+    /// `FIELD f [MODULE m [ON ...]]` in PAI
+    Field(FieldFlow),
+    /// `MODULE m ON CHAIN-INPUT` bzw. `ON CHAIN-REQUEST` als letzte Modulzeile einer `CHAIN`
+    ChainModule(ChainModule),
+}
+
+/// Ablauflogik-Eintrag: `PROCESS` mit `MODULE` ohne Feldbezug.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowEntry {
     pub phase: Phase,
     pub module: String,
     /// `AT EXIT-COMMAND`: Modul läuft auch bei Funktionscodes der Exit-Taste
     pub at_exit: bool,
+    /// Bedingung `ON ...`. Nur bei Feldbezug oder Kette erlaubt; die Prüfung steht in `check.rs`.
+    pub cond: Cond,
     pub line: usize,
+}
+
+/// `FIELD name [MODULE m [ON ...]]` in der PAI-Folge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldFlow {
+    /// Name, wie er in der `.dynp` steht (muss einem `FIELD`-Element des Dynpros entsprechen)
+    pub name: String,
+    pub module: Option<String>,
+    pub cond: Cond,
+    /// Kettennummer ab 1 innerhalb des Dynpros, wenn die Anweisung in einer `CHAIN` steht
+    pub chain: Option<usize>,
+    pub line: usize,
+}
+
+/// `MODULE m ON CHAIN-INPUT` bzw. `ON CHAIN-REQUEST` am Ende einer `CHAIN`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainModule {
+    pub chain: usize,
+    pub module: String,
+    pub cond: Cond,
+    pub line: usize,
+}
+
+/// Bedingung eines PAI-Eintrags (Spec 12a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cond {
+    /// Ohne Zusatz: das Modul läuft immer
+    Plain,
+    /// `ON INPUT`: Feld ungleich Initialwert
+    Input,
+    /// `ON REQUEST`: Feld seit dem letzten PBO vom Benutzer geändert
+    Request,
+    /// `ON CHAIN-INPUT`: mindestens ein Kettenfeld ungleich Initialwert
+    ChainInput,
+    /// `ON CHAIN-REQUEST`: mindestens ein Kettenfeld seit dem letzten PBO vom Benutzer geändert
+    ChainRequest,
+}
+
+impl Cond {
+    /// Kennung für `abap_rt_screen_pai_field` (0 ohne, 1 ON INPUT, 2 ON REQUEST) und
+    /// `abap_rt_screen_pai_chain` (3 ON CHAIN-INPUT, 4 ON CHAIN-REQUEST), Spec 12a.
+    pub fn abi_code(self) -> u32 {
+        match self {
+            Cond::Plain => 0,
+            Cond::Input => 1,
+            Cond::Request => 2,
+            Cond::ChainInput => 3,
+            Cond::ChainRequest => 4,
+        }
+    }
+
+    /// Schreibweise in Meldungen, z. B. `ON INPUT`. Für `Plain` leer.
+    pub fn text(self) -> &'static str {
+        match self {
+            Cond::Plain => "",
+            Cond::Input => "ON INPUT",
+            Cond::Request => "ON REQUEST",
+            Cond::ChainInput => "ON CHAIN-INPUT",
+            Cond::ChainRequest => "ON CHAIN-REQUEST",
+        }
+    }
 }
 
 /// Ablaufphase: PBO (`PROCESS BEFORE OUTPUT`) oder PAI (`PROCESS AFTER INPUT`).
@@ -243,6 +327,15 @@ pub struct GuiStatus {
     pub name: String,
     pub line: usize,
     pub keys: Vec<FKey>,
+    /// `EXCLUDE funktionscode`: Funktionscodes, die der Status ausblendet (Phase 2)
+    pub excludes: Vec<Exclude>,
+}
+
+/// Eintrag `EXCLUDE funktionscode` in einem GUI-Status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exclude {
+    pub code: String,
+    pub line: usize,
 }
 
 /// Funktionstaste `FKEY F1 'Text' CODE code [TYPE B|C|E]`.

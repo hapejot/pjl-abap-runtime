@@ -1,0 +1,25 @@
+Kunde                                                                           
+                                                                                
+ Kundennummer      4711                                                         
+                                                                                
+ Name              Muster                                                       
+                                                                                
+ Werk              1000                                                         
+ Lagerort                                                                       
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back                                                                         
+                                                                                
+                                                                                
+----

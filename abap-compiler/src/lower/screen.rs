@@ -22,6 +22,9 @@ impl Lowerer {
             "CALL" if is(1, "SCREEN") => self.call_screen(toks, line, out),
             "SET" if is(1, "PF-STATUS") => self.set_pf_status(toks, line, out),
             "SET" if is(1, "SCREEN") => self.set_screen(toks, line, out),
+            "SET" if is(1, "CURSOR") => self.set_cursor(toks, line, out),
+            "GET" if is(1, "CURSOR") => self.get_cursor(toks, line, out),
+            "SET" if is(1, "TITLEBAR") => self.set_titlebar(toks, line, out),
             "LEAVE" if toks.len() == 2 && is(1, "SCREEN") => {
                 out.push(Stmt::Screen {
                     op: ScreenOp::Leave,
@@ -175,6 +178,98 @@ impl Lowerer {
         Ok(())
     }
 
+    /// `SET CURSOR FIELD f.` Nur der Feldname (Auftrag Phase 2). Ob das Feld auf dem aktuellen Dynpro liegt,
+    /// prüft `check.rs` gegen die `.dynp`-Datei (Feld kommt in einem Dynpro der Datei vor).
+    fn set_cursor(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if !toks.get(2).is_some_and(|t| t.is_word("FIELD")) {
+            return err(
+                line,
+                "SET CURSOR with row and column is not supported yet (use SET CURSOR FIELD <name>)",
+            );
+        }
+        if toks.len() != 4 {
+            return err(
+                line,
+                "SET CURSOR FIELD with LINE or OFFSET is not supported yet (use SET CURSOR FIELD <name>)",
+            );
+        }
+        let name = match toks.get(3) {
+            Some(t) if t.kind == Kind::Word => word(t),
+            _ => return err(line, "SET CURSOR FIELD expects a field name, not a literal"),
+        };
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Field(name.clone()),
+            what: "SET CURSOR",
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::SetCursor(name.to_uppercase()),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `GET CURSOR FIELD f.` Ziel `f` ist eine Variable; ob es eine Zeichenvariable ist, prüft der Codegen.
+    fn get_cursor(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if !toks.get(2).is_some_and(|t| t.is_word("FIELD")) {
+            return err(
+                line,
+                "GET CURSOR with row, column or VALUE is not supported yet (use GET CURSOR FIELD <variable>)",
+            );
+        }
+        if toks.len() != 4 || toks[3].kind != Kind::Word {
+            return err(line, "GET CURSOR FIELD expects one variable as target");
+        }
+        out.push(Stmt::Screen {
+            op: ScreenOp::GetCursor(Target::Var(word(&toks[3]))),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `SET TITLEBAR 'text'.` Nur ein Literal ohne `WITH`. Die Form mit Textsymbol-ID (Bezeichner oder
+    /// Literal mit `WITH`) ist nicht unterstützt. Ein Literal ohne `WITH` gilt als Titeltext, auch wenn es
+    /// wie eine Textsymbol-ID aussieht (Annahme, siehe Bericht).
+    fn set_titlebar(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        if toks.len() > 3 {
+            return err(
+                line,
+                "SET TITLEBAR with WITH, OF PROGRAM or further options is not supported yet (text symbol form)",
+            );
+        }
+        match toks.get(2) {
+            Some(t) if t.kind == Kind::Literal => {
+                let Some(text) = literal_content(&t.text) else {
+                    return err(line, "SET TITLEBAR expects a title in single quotes");
+                };
+                out.push(Stmt::Screen {
+                    op: ScreenOp::SetTitlebar(text),
+                    line,
+                });
+                Ok(())
+            }
+            _ => err(
+                line,
+                "SET TITLEBAR with a text symbol ID or variable is not supported yet (use a literal in single quotes)",
+            ),
+        }
+    }
+
     /// `MESSAGE 'text' TYPE 'T'.` Typen S, I, W, E, A, X. Nur Großbuchstaben, Kleinbuchstaben sind ein Fehler.
     fn message(
         &mut self,
@@ -222,6 +317,20 @@ fn dynpro_number_or_zero(t: &Token, line: usize) -> Result<u32, CompileError> {
             format!("Dynpro number must be 1 to 9999, found '{}'", t.text),
         ),
     }
+}
+
+/// Dynpro-Typ einer Strukturkomponente aus `name TYPE typ` bzw. `name(len) TYPE typ` (Spec 4.7).
+/// `LIKE` und andere Formen sind `Other`: der Typ ist dem Dynpro dann nicht bekannt.
+pub(super) fn component_field_type(f: &Statement) -> FieldType {
+    let toks = &f.tokens;
+    let Some(p) = toks.iter().position(|t| t.is_word("TYPE")) else {
+        return FieldType::Other;
+    };
+    let end = toks[p + 1..]
+        .iter()
+        .position(|t| t.is_punct("#"))
+        .map_or(toks.len(), |e| p + 1 + e);
+    field_type_of(&toks[p + 1..end])
 }
 
 /// Dynpro-Typ aus den Tokens nach `TYPE` (Spec 4.7). Alles, was das Dynpro nicht abbildet, ist `Other`.
@@ -407,5 +516,117 @@ mod tests {
         assert_eq!(ir.modules[0].phase, crate::dynpro::Phase::Pbo);
         assert_eq!(ir.modules[1].phase, crate::dynpro::Phase::Pai);
         assert_eq!(ir.modules[1].body.len(), 1);
+    }
+
+    #[test]
+    fn set_cursor_field_lowers_to_upper_case_name_and_records_reference() {
+        let ir = stmts("SET CURSOR FIELD zkunnr.\n");
+        assert_eq!(screen_ops(&ir), vec![ScreenOp::SetCursor("ZKUNNR".into())]);
+        assert_eq!(
+            ir.screen_refs,
+            vec![ScreenRef {
+                target: ScreenTarget::Field("zkunnr".into()),
+                what: "SET CURSOR",
+                line: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn set_cursor_with_offset_or_line_is_not_supported_yet() {
+        let errs = parse_source("SET CURSOR FIELD zkunnr OFFSET 2.\n").unwrap_err();
+        assert!(errs[0].message.contains("OFFSET is not supported yet"));
+        let errs = parse_source("SET CURSOR FIELD zkunnr LINE 2.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("LINE or OFFSET is not supported yet"));
+    }
+
+    #[test]
+    fn set_cursor_row_and_column_is_not_supported_yet() {
+        let errs = parse_source("SET CURSOR 2 10.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("row and column is not supported yet"));
+    }
+
+    #[test]
+    fn set_cursor_with_literal_is_rejected() {
+        let errs = parse_source("SET CURSOR FIELD 'ZKUNNR'.\n").unwrap_err();
+        assert!(errs[0].message.contains("expects a field name"));
+    }
+
+    #[test]
+    fn get_cursor_field_takes_variable_as_target() {
+        // GET ist ein Ereignis: außerhalb eines Ereignisblocks ist `GET` als Anweisungsanfang nicht eindeutig
+        let ir = stmts("START-OF-SELECTION.\nGET CURSOR FIELD zfeld.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::GetCursor(Target::Var("zfeld".into()))]
+        );
+        assert!(ir.screen_refs.is_empty());
+    }
+
+    #[test]
+    fn get_cursor_with_literal_target_is_rejected() {
+        let errs = parse_source("START-OF-SELECTION.\nGET CURSOR FIELD 'ZFELD'.\n").unwrap_err();
+        assert!(errs[0].message.contains("expects one variable as target"));
+    }
+
+    #[test]
+    fn get_cursor_without_field_is_not_supported_yet() {
+        let errs = parse_source("START-OF-SELECTION.\nGET CURSOR LINE zline.\n").unwrap_err();
+        assert!(errs[0].message.contains("not supported yet"));
+    }
+
+    #[test]
+    fn set_titlebar_literal_lowers_to_text() {
+        let ir = stmts("SET TITLEBAR 'Kunde anlegen'.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::SetTitlebar("Kunde anlegen".into())]
+        );
+    }
+
+    #[test]
+    fn set_titlebar_text_symbol_form_with_with_is_not_supported_yet() {
+        let errs = parse_source("SET TITLEBAR 'T01' WITH zkunnr.\n").unwrap_err();
+        assert!(errs[0].message.contains("not supported yet"));
+    }
+
+    #[test]
+    fn set_titlebar_with_variable_is_not_supported_yet() {
+        let errs = parse_source("SET TITLEBAR ztitel.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("text symbol ID or variable is not supported yet"));
+    }
+
+    #[test]
+    fn struct_components_record_dynpro_types_in_declaration_order() {
+        let ir = stmts(
+            "DATA zkunnr TYPE c LENGTH 10.\nDATA: BEGIN OF zkunde,\n  name1 TYPE c LENGTH 30,\n  nr TYPE n LENGTH 4,\n  dat TYPE d,\n  ref LIKE zkunnr,\nEND OF zkunde.\n",
+        );
+        let idx = ir
+            .stmts
+            .iter()
+            .find_map(|s| match s {
+                Stmt::Data {
+                    name,
+                    ty: crate::lower::Ty::Struct(i),
+                    ..
+                } if name == "zkunde" => Some(*i),
+                _ => None,
+            })
+            .expect("global structure ZKUNDE");
+        assert_eq!(
+            ir.struct_field_types.get(&idx),
+            Some(&vec![
+                FieldType::Char(30),
+                FieldType::Numc(4),
+                FieldType::Date,
+                FieldType::Other
+            ])
+        );
     }
 }

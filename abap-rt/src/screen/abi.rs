@@ -7,10 +7,12 @@
 use std::io::{self, Write};
 use std::sync::Arc;
 
+use super::input;
 use super::model::{
-    AbapType, Button, Dynpro, FKey, FKind, Field, Frame, GuiStatus, Message, Module, Text, VarPtr,
+    AbapType, Button, Cond, Dynpro, FKey, FKind, Field, Frame, GuiStatus, Message, Module,
+    PaiEntry, Text, VarPtr,
 };
-use super::value::display_width;
+use super::value::{self, display_width};
 use super::{fatal, or_fatal, session, state, term, Nav, SyVars};
 
 /// UTF-16-Zeichen aus Zeiger und Länge. Ungültige Einzelzeichen werden ersetzt.
@@ -298,7 +300,24 @@ pub unsafe extern "C" fn abap_rt_screen_frame(
     }));
 }
 
+/// Führt `f` mit dem Dynpro im Aufbau aus. `no` muss die Nummer dieses Dynpros sein.
+fn with_building_no(
+    no: u32,
+    f: impl FnOnce(&mut Dynpro) -> Result<(), String>,
+) -> Result<(), String> {
+    with_building(|d| {
+        if d.no != no {
+            return Err(format!(
+                "PAI entry for dynpro {no:04} inside dynpro {}",
+                d.label()
+            ));
+        }
+        f(d)
+    })
+}
+
 /// Bindet ein Modul an das offene Dynpro. `phase`: 0 PBO, 1 PAI. `at_exit`: `AT EXIT-COMMAND`.
+/// PAI-Module hängen an die geordnete PAI-Liste an (Abschnitt 12a).
 #[no_mangle]
 pub extern "C" fn abap_rt_screen_module(no: u32, phase: u32, func: extern "C" fn(), at_exit: u32) {
     or_fatal(with_building(|d| {
@@ -314,11 +333,69 @@ pub extern "C" fn abap_rt_screen_module(no: u32, phase: u32, func: extern "C" fn
         };
         match phase {
             0 => d.pbo.push(module),
-            1 => d.pai.push(module),
+            1 => d.pai.push(PaiEntry::Module(module)),
             _ => return Err(format!("unknown module phase {phase}")),
         }
         Ok(())
     }));
+}
+
+/// `FIELD name [MODULE func ON INPUT | ON REQUEST]` in der PAI-Liste (Abschnitt 12a). Der Eintrag hängt an die Liste
+/// an, die Reihenfolge ist die der Aufrufe. `func` ist null ohne Modul. `cond`: 0 ohne, 1 ON INPUT, 2 ON REQUEST.
+/// `chain`: 0 ohne Kette, sonst die Kettennummer ab 1. Ob das Feld existiert, prüft `abap_rt_screen_end`.
+///
+/// # Safety
+/// `name` zeigt auf `name_len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_screen_pai_field(
+    no: u32,
+    name: *const u16,
+    name_len: u64,
+    func: Option<extern "C" fn()>,
+    cond: u32,
+    chain: u32,
+) {
+    let name = wide_text(name, name_len);
+    or_fatal(add_pai_field(no, name, func, cond, chain));
+}
+
+fn add_pai_field(
+    no: u32,
+    name: String,
+    func: Option<extern "C" fn()>,
+    cond: u32,
+    chain: u32,
+) -> Result<(), String> {
+    let cond = Cond::from_field_code(cond)
+        .ok_or_else(|| format!("FIELD {name}: unknown condition code {cond}"))?;
+    with_building_no(no, |d| {
+        d.pai.push(PaiEntry::Field {
+            name,
+            func,
+            cond,
+            chain,
+        });
+        Ok(())
+    })
+}
+
+/// `MODULE func ON CHAIN-INPUT | ON CHAIN-REQUEST` für die Kette `chain` (ab 1) in der PAI-Liste (Abschnitt 12a).
+/// `cond`: 3 ON CHAIN-INPUT, 4 ON CHAIN-REQUEST.
+#[no_mangle]
+pub extern "C" fn abap_rt_screen_pai_chain(no: u32, chain: u32, func: extern "C" fn(), cond: u32) {
+    or_fatal(add_pai_chain(no, chain, func, cond));
+}
+
+fn add_pai_chain(no: u32, chain: u32, func: extern "C" fn(), cond: u32) -> Result<(), String> {
+    if chain == 0 {
+        return Err("CHAIN modules need a chain number from 1".to_string());
+    }
+    let cond = Cond::from_chain_code(cond)
+        .ok_or_else(|| format!("CHAIN {chain}: unknown condition code {cond}"))?;
+    with_building_no(no, |d| {
+        d.pai.push(PaiEntry::Chain { chain, func, cond });
+        Ok(())
+    })
 }
 
 /// Schließt das Dynpro ab und registriert es.
@@ -335,7 +412,53 @@ fn end_dynpro(no: u32) -> Result<(), String> {
     if dynpro.no != no {
         return Err(format!("DYNPRO {:04} ended as {no:04}", dynpro.no));
     }
+    check_pai(&dynpro)?;
     st.dynpros.push(Arc::new(dynpro));
+    Ok(())
+}
+
+/// Prüft die PAI-Liste eines fertigen Dynpros: Jedes `FIELD` nennt ein Feld des Dynpros, ein Feld steht nur in
+/// einem `FIELD`-Eintrag, jede Kette hat höchstens ein Modul und mindestens ein `FIELD`.
+fn check_pai(d: &Dynpro) -> Result<(), String> {
+    let mut in_field = vec![false; d.fields.len()];
+    let mut chain_modules: Vec<u32> = Vec::new();
+    for entry in &d.pai {
+        match entry {
+            PaiEntry::Module(_) => {}
+            PaiEntry::Field { name, .. } => {
+                let index = d.field_index(name).ok_or_else(|| {
+                    format!("field {name} is not defined in dynpro {}", d.label())
+                })?;
+                if std::mem::replace(&mut in_field[index], true) {
+                    return Err(format!(
+                        "field {name} is in more than one FIELD statement in dynpro {}",
+                        d.label()
+                    ));
+                }
+            }
+            PaiEntry::Chain { chain, .. } => {
+                if chain_modules.contains(chain) {
+                    return Err(format!(
+                        "chain {chain} has more than one module in dynpro {}",
+                        d.label()
+                    ));
+                }
+                chain_modules.push(*chain);
+            }
+        }
+    }
+    for chain in chain_modules {
+        let has_field = d
+            .pai
+            .iter()
+            .any(|e| matches!(e, PaiEntry::Field { chain: c, .. } if *c == chain));
+        if !has_field {
+            return Err(format!(
+                "chain {chain} has a module but no fields in dynpro {}",
+                d.label()
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -362,6 +485,7 @@ fn begin_status(name: String) -> Result<(), String> {
     st.building_status = Some(GuiStatus {
         name,
         fkeys: Vec::new(),
+        excluded: Vec::new(),
     });
     Ok(())
 }
@@ -405,6 +529,30 @@ fn add_fkey(key: u32, text: String, fcode: String, kind: u32) -> Result<(), Stri
         fcode,
         kind,
     });
+    Ok(())
+}
+
+/// `EXCLUDE fcode`: schließt einen Funktionscode aus dem zuletzt begonnenen GUI-Status aus (Abschnitt 6.2).
+///
+/// # Safety
+/// `fcode` zeigt auf `fcode_len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_status_exclude(fcode: *const u16, fcode_len: u64) {
+    let fcode = wide_text(fcode, fcode_len);
+    or_fatal(exclude_fcode(fcode));
+}
+
+fn exclude_fcode(fcode: String) -> Result<(), String> {
+    if fcode.is_empty() {
+        return Err("EXCLUDE needs a function code".to_string());
+    }
+    let mut st = state();
+    let Some(status) = st.building_status.as_mut() else {
+        return Err("EXCLUDE outside of a GUISTATUS".to_string());
+    };
+    if !status.is_excluded(&fcode) {
+        status.excluded.push(fcode);
+    }
     Ok(())
 }
 
@@ -519,11 +667,90 @@ pub unsafe extern "C" fn abap_rt_message(kind: u32, txt: *const u16, len: u64) {
     st.message = Some(Message { kind, text });
 }
 
+/// `SET CURSOR FIELD name`: Der Cursor steht beim nächsten Anzeigen des aktuellen Dynpros auf dem Feld
+/// (Abschnitt 5). Außerhalb eines Dynpros ohne Wirkung. Ein Name ohne sichtbares Feld ist ein Laufzeitfehler.
+///
+/// # Safety
+/// `name` zeigt auf `name_len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_set_cursor(name: *const u16, name_len: u64) {
+    let name = wide_text(name, name_len);
+    or_fatal(set_cursor(name));
+}
+
+fn set_cursor(name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    let mut st = state();
+    let Some(no) = st.stack.last().copied() else {
+        return Ok(());
+    };
+    let Some(dynpro) = st.dynpros.iter().find(|d| d.no == no).cloned() else {
+        return Err(format!("Dynpro {no:04} is not defined"));
+    };
+    if name.is_empty() {
+        return Err("SET CURSOR needs a field name".to_string());
+    }
+    let visible = dynpro
+        .field_index(&name)
+        .is_some_and(|i| dynpro.fields[i].is_visible());
+    if !visible {
+        return Err(format!("Field {name} is not on dynpro {}", dynpro.label()));
+    }
+    st.pending_cursor = Some((no, name));
+    Ok(())
+}
+
+/// `GET CURSOR FIELD name`: Schreibt den Namen des Feldes unter dem Cursor in Großbuchstaben, rechts mit
+/// Leerzeichen aufgefüllt, abgeschnitten wenn länger. Kein Feld unter dem Cursor: nur Leerzeichen.
+///
+/// # Safety
+/// `dst` zeigt auf `dst_len` UTF-16-Einheiten des Programms.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_get_cursor(dst: *mut u16, dst_len: u64) {
+    if dst_len == 0 {
+        return;
+    }
+    if dst.is_null() {
+        fatal("GET CURSOR has no target variable");
+    }
+    let units: Vec<u16> = cursor_field_name().encode_utf16().collect();
+    // SAFETY: `dst` ist nicht null und zeigt auf `dst_len` Zeichen der Programmvariablen (Vertrag dieser Funktion).
+    unsafe { value::write_units(dst as *mut u8, dst_len as usize, &units) };
+}
+
+/// Name des sichtbaren Feldes unter dem Cursor der letzten Anzeige oder Übertragung, sonst leer.
+fn cursor_field_name() -> String {
+    let st = state();
+    let Some((no, pos)) = st.cursor_at else {
+        return String::new();
+    };
+    st.dynpros
+        .iter()
+        .find(|d| d.no == no)
+        .and_then(|d| input::field_at(d, pos).map(|i| d.fields[i].name.to_ascii_uppercase()))
+        .unwrap_or_default()
+}
+
+/// `SET TITLEBAR`: Ersetzt die Titelzeile des aktuellen Dynpros. Gilt bis zum Verlassen des Dynpros (Entscheidung).
+/// Außerhalb eines Dynpros ohne Wirkung.
+///
+/// # Safety
+/// `text` zeigt auf `text_len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_set_titlebar(text: *const u16, text_len: u64) {
+    let text = wide_text(text, text_len);
+    let mut st = state();
+    let top = st.stack.last().copied();
+    if let Some(no) = top {
+        st.titlebar = Some((no, text));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::screen::headless::Headless;
-    use crate::screen::model::{FKind, INPUT};
+    use crate::screen::model::{Cond, FKind, PaiEntry, INPUT, INVISIBLE};
     use crate::screen::test_support::exclusive;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -618,5 +845,266 @@ mod tests {
         abap_rt_leave_screen();
         abap_rt_set_screen(200);
         assert_eq!(state().pending_nav, None);
+    }
+
+    /// Dynpro 100 mit einem Feld `zkunnr` (Zeile 3, Spalte 5, Breite 4).
+    fn dynpro_with_field(attrs: u32) -> Dynpro {
+        let mut d = Dynpro::new(100, false, 20, 80, "Kunde".into());
+        d.fields.push(Field {
+            name: "zkunnr".into(),
+            row: 3,
+            col: 5,
+            ty: AbapType::Char,
+            length: 4,
+            decimals: 0,
+            attrs,
+            data: VarPtr(std::ptr::null_mut()),
+            width: 4,
+        });
+        d
+    }
+
+    #[test]
+    fn exclude_adds_codes_to_the_status_that_is_being_built() {
+        let _guard = exclusive();
+        assert_eq!(
+            exclude_fcode("SAVE".into()),
+            Err("EXCLUDE outside of a GUISTATUS".to_string())
+        );
+        begin_status("ZSTATUS".into()).unwrap();
+        exclude_fcode("SAVE".into()).unwrap();
+        exclude_fcode("SAVE".into()).unwrap();
+        assert_eq!(
+            exclude_fcode(String::new()),
+            Err("EXCLUDE needs a function code".to_string())
+        );
+        end_status().unwrap();
+        assert_eq!(state().statuses[0].excluded, vec!["SAVE".to_string()]);
+    }
+
+    #[test]
+    fn set_cursor_names_a_visible_field_case_insensitively() {
+        let _guard = exclusive();
+        state().dynpros.push(Arc::new(dynpro_with_field(INPUT)));
+        state().stack.push(100);
+        set_cursor("ZKUNNR".into()).unwrap();
+        assert_eq!(state().pending_cursor, Some((100, "ZKUNNR".to_string())));
+    }
+
+    #[test]
+    fn set_cursor_to_an_unknown_or_invisible_field_is_an_error() {
+        let _guard = exclusive();
+        state().dynpros.push(Arc::new(dynpro_with_field(INPUT)));
+        state().stack.push(100);
+        assert_eq!(
+            set_cursor("NOPE".into()).unwrap_err(),
+            "Field NOPE is not on dynpro 0100"
+        );
+        assert_eq!(state().pending_cursor, None);
+
+        state().dynpros.clear();
+        state()
+            .dynpros
+            .push(Arc::new(dynpro_with_field(INPUT | INVISIBLE)));
+        assert_eq!(
+            set_cursor("ZKUNNR".into()).unwrap_err(),
+            "Field ZKUNNR is not on dynpro 0100"
+        );
+    }
+
+    #[test]
+    fn set_cursor_outside_a_screen_has_no_effect() {
+        let _guard = exclusive();
+        set_cursor("ZKUNNR".into()).unwrap();
+        assert_eq!(state().pending_cursor, None);
+    }
+
+    #[test]
+    fn get_cursor_writes_the_field_name_in_capitals_padded_and_truncated() {
+        let _guard = exclusive();
+        state().dynpros.push(Arc::new(dynpro_with_field(INPUT)));
+        state().cursor_at = Some((100, input::Pos { row: 3, col: 6 }));
+
+        let mut buf = vec![0x2Au16; 8];
+        unsafe { abap_rt_get_cursor(buf.as_mut_ptr(), 8) };
+        assert_eq!(String::from_utf16_lossy(&buf), "ZKUNNR  ");
+
+        let mut short = vec![0x2Au16; 4];
+        unsafe { abap_rt_get_cursor(short.as_mut_ptr(), 4) };
+        assert_eq!(String::from_utf16_lossy(&short), "ZKUN");
+    }
+
+    #[test]
+    fn get_cursor_without_a_field_under_the_cursor_is_blank() {
+        let _guard = exclusive();
+        state().dynpros.push(Arc::new(dynpro_with_field(INPUT)));
+        state().cursor_at = Some((100, input::Pos { row: 1, col: 1 }));
+        let mut buf = vec![0x2Au16; 4];
+        unsafe { abap_rt_get_cursor(buf.as_mut_ptr(), 4) };
+        assert_eq!(String::from_utf16_lossy(&buf), "    ");
+    }
+
+    #[test]
+    fn set_titlebar_is_kept_for_the_current_dynpro_only() {
+        let _guard = exclusive();
+        let text = utf16("Neu");
+        unsafe { abap_rt_set_titlebar(text.as_ptr(), text.len() as u64) };
+        assert_eq!(state().titlebar, None);
+
+        state().stack.push(100);
+        unsafe { abap_rt_set_titlebar(text.as_ptr(), text.len() as u64) };
+        assert_eq!(state().titlebar, Some((100, "Neu".to_string())));
+    }
+
+    extern "C" fn noop() {}
+
+    fn pai_field(name: &str, chain: u32) -> PaiEntry {
+        PaiEntry::Field {
+            name: name.into(),
+            func: None,
+            cond: Cond::Always,
+            chain,
+        }
+    }
+
+    #[test]
+    fn pai_entries_stay_in_prolog_order_and_phase_one_modules_are_entries() {
+        let _guard = exclusive();
+        let mut var_a = vec![0x20u16; 4];
+        let mut var_b = vec![0x20u16; 4];
+        let name_a = utf16("ZA");
+        let name_b = utf16("ZB");
+        let title = utf16("T");
+        unsafe {
+            abap_rt_screen_begin(100, 0, 20, 80, title.as_ptr(), title.len() as u64);
+            abap_rt_screen_field(
+                2,
+                2,
+                name_a.as_ptr(),
+                2,
+                var_a.as_mut_ptr() as *mut u8,
+                0,
+                4,
+                0,
+                INPUT,
+            );
+            abap_rt_screen_field(
+                4,
+                2,
+                name_b.as_ptr(),
+                2,
+                var_b.as_mut_ptr() as *mut u8,
+                0,
+                4,
+                0,
+                INPUT,
+            );
+            abap_rt_screen_module(100, 1, noop, 0);
+            abap_rt_screen_pai_field(100, name_a.as_ptr(), 2, Some(noop), 1, 0);
+            abap_rt_screen_pai_field(100, name_b.as_ptr(), 2, None, 0, 1);
+            abap_rt_screen_pai_chain(100, 1, noop, 3);
+            abap_rt_screen_end(100);
+        }
+
+        let st = state();
+        let d = &st.dynpros[0];
+        assert_eq!(d.pai.len(), 4);
+        assert!(matches!(
+            &d.pai[0],
+            PaiEntry::Module(m) if !m.at_exit
+        ));
+        assert!(matches!(
+            &d.pai[1],
+            PaiEntry::Field { name, func: Some(_), cond: Cond::OnInput, chain: 0 } if name == "ZA"
+        ));
+        assert!(matches!(
+            &d.pai[2],
+            PaiEntry::Field { name, func: None, cond: Cond::Always, chain: 1 } if name == "ZB"
+        ));
+        assert!(matches!(
+            &d.pai[3],
+            PaiEntry::Chain {
+                chain: 1,
+                cond: Cond::ChainInput,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn pai_entries_reject_codes_that_do_not_belong_to_their_kind() {
+        let _guard = exclusive();
+        assert_eq!(
+            add_pai_field(100, "ZA".into(), None, 3, 0).unwrap_err(),
+            "FIELD ZA: unknown condition code 3"
+        );
+        assert_eq!(
+            add_pai_chain(100, 0, noop, 3).unwrap_err(),
+            "CHAIN modules need a chain number from 1"
+        );
+        assert_eq!(
+            add_pai_chain(100, 1, noop, 1).unwrap_err(),
+            "CHAIN 1: unknown condition code 1"
+        );
+        assert_eq!(
+            add_pai_field(100, "ZA".into(), None, 0, 0).unwrap_err(),
+            "screen element outside of a DYNPRO definition"
+        );
+    }
+
+    #[test]
+    fn check_pai_accepts_field_names_in_any_case() {
+        let mut d = dynpro_with_field(INPUT);
+        d.pai.push(pai_field("ZKUNNR", 0));
+        assert!(check_pai(&d).is_ok());
+    }
+
+    #[test]
+    fn check_pai_rejects_unknown_fields_and_a_field_in_two_statements() {
+        let mut d = dynpro_with_field(INPUT);
+        d.pai.push(pai_field("NOPE", 0));
+        assert_eq!(
+            check_pai(&d).unwrap_err(),
+            "field NOPE is not defined in dynpro 0100"
+        );
+
+        let mut d = dynpro_with_field(INPUT);
+        d.pai.push(pai_field("zkunnr", 0));
+        d.pai.push(pai_field("ZKUNNR", 0));
+        assert_eq!(
+            check_pai(&d).unwrap_err(),
+            "field ZKUNNR is in more than one FIELD statement in dynpro 0100"
+        );
+    }
+
+    #[test]
+    fn check_pai_rejects_chains_with_two_modules_or_without_fields() {
+        let mut d = dynpro_with_field(INPUT);
+        d.pai.push(PaiEntry::Chain {
+            chain: 1,
+            func: noop,
+            cond: Cond::ChainInput,
+        });
+        assert_eq!(
+            check_pai(&d).unwrap_err(),
+            "chain 1 has a module but no fields in dynpro 0100"
+        );
+
+        let mut d = dynpro_with_field(INPUT);
+        d.pai.push(pai_field("zkunnr", 1));
+        d.pai.push(PaiEntry::Chain {
+            chain: 1,
+            func: noop,
+            cond: Cond::ChainInput,
+        });
+        d.pai.push(PaiEntry::Chain {
+            chain: 1,
+            func: noop,
+            cond: Cond::ChainRequest,
+        });
+        assert_eq!(
+            check_pai(&d).unwrap_err(),
+            "chain 1 has more than one module in dynpro 0100"
+        );
     }
 }

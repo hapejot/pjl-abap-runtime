@@ -102,6 +102,8 @@ struct Lowerer {
     external_parents: HashMap<String, String>,
     /// Dynpro-Typ je deklarierter Variable (Kleinschreibung), für die `.dynp`-Prüfung
     field_types: HashMap<String, FieldType>,
+    /// Dynpro-Typen der Komponenten je Struktur (siehe `Ir::struct_field_types`)
+    struct_field_types: HashMap<usize, Vec<FieldType>>,
     /// MODULE-Blöcke des Programms
     modules: Vec<ModuleDef>,
     /// Verweise auf Dynpros und GUI-Status aus den Anweisungen
@@ -120,6 +122,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
     let _symbols = SymbolCatalog::from_program(prog).map_err(|e| vec![e])?;
     let mut lw = Lowerer {
         field_types: HashMap::new(),
+        struct_field_types: HashMap::new(),
         modules: Vec::new(),
         screen_refs: Vec::new(),
         errors: Vec::new(),
@@ -277,6 +280,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         dynamic_types: lw.dynamic_types,
         modules: lw.modules,
         field_types: lw.field_types,
+        struct_field_types: lw.struct_field_types,
         screen_refs: lw.screen_refs,
         screens: None,
     })
@@ -296,6 +300,8 @@ impl Lowerer {
                 if let Some((kw, name)) = struct_begin(s) {
                     let line = s.line;
                     let mut fields = Vec::new();
+                    // Dynpro-Typ je Komponente, parallel zu `fields`
+                    let mut dynpro_types = Vec::new();
                     let mut j = i + 1;
                     loop {
                         let Some(node) = seq.get(j) else {
@@ -339,9 +345,17 @@ impl Lowerer {
                                 continue;
                             }
                             Node::S(f) if f.keyword() == "INCLUDE" => {
-                                fields.extend(self.include_type_fields(f)?.unwrap_or_default());
+                                let included = self.include_type_fields(f)?.unwrap_or_default();
+                                // Typ der eingebundenen Komponenten ist dem Dynpro nicht bekannt
+                                for _ in &included {
+                                    dynpro_types.push(FieldType::Other);
+                                }
+                                fields.extend(included);
                             }
-                            Node::S(f) if f.keyword() == kw => fields.push(self.field(f)?),
+                            Node::S(f) if f.keyword() == kw => {
+                                fields.push(self.field(f)?);
+                                dynpro_types.push(screen::component_field_type(f));
+                            }
                             Node::S(f) => return err(f.line, "Structure incomplete"),
                             Node::B(h, _) => {
                                 return err(h.line, "Blocks in structures are not supported")
@@ -353,6 +367,7 @@ impl Lowerer {
                         j += 1;
                     }
                     let idx = self.define_struct(&name, fields, line)?;
+                    self.struct_field_types.insert(idx, dynpro_types);
                     if kw == "TYPES" {
                         self.names.insert(name.to_lowercase(), Ty::Struct(idx));
                     } else {

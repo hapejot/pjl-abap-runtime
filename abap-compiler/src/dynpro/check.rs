@@ -2,7 +2,7 @@
 //! Alle Verletzungen werden gesammelt; Warnungen lassen die Übersetzung nicht scheitern.
 
 use super::*;
-use crate::lower::{Ir, ScreenTarget, Stmt};
+use crate::lower::{Ir, ScreenTarget, Stmt, Ty};
 use std::collections::{HashMap, HashSet};
 
 /// Prüft eine `.dynp`-Datei gegen das übersetzte Programm `ir`. `file` fehlt, wenn keine Datei gefunden wurde;
@@ -57,6 +57,7 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
     }
 
     let ctx = Ctx {
+        ir,
         file: fname,
         globals: global_names(ir),
         field_types: &ir.field_types,
@@ -72,6 +73,22 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
             DynproItem::Status(s) => check_status(s, fname, &mut out),
         }
     }
+
+    // Alle Feldnamen aller Dynpros (kleingeschrieben) für `SET CURSOR FIELD`. Welches Dynpro zur Laufzeit
+    // aktuell ist, weiß der Compiler nicht; deshalb genügt, dass der Name in der Datei vorkommt.
+    let dynpro_fields: HashSet<String> = f
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            DynproItem::Dynpro(d) => Some(d),
+            DynproItem::Status(_) => None,
+        })
+        .flat_map(|d| d.elements.iter())
+        .filter_map(|el| match &el.kind {
+            ElementKind::Field { name, .. } => Some(name.to_lowercase()),
+            _ => None,
+        })
+        .collect();
 
     // Verweise aus dem ABAP-Programm
     let mut used = HashSet::new();
@@ -101,6 +118,19 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
                         r.line,
                         1,
                         format!("GUI status '{name}' is not defined in {fname}"),
+                    ));
+                }
+            }
+            ScreenTarget::Field(name) => {
+                if !dynpro_fields.contains(name) {
+                    out.push(DynproError::error(
+                        abap_file,
+                        r.line,
+                        1,
+                        format!(
+                            "SET CURSOR FIELD '{}' is not a FIELD of any DYNPRO in {fname}",
+                            name.to_uppercase()
+                        ),
                     ));
                 }
             }
@@ -134,6 +164,8 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
 
 /// Kontext einer Prüfung: Namen aus dem Programm und die Typen der Variablen.
 struct Ctx<'a> {
+    /// Übersetzte Programm-IR: Strukturen und Typen der Komponenten
+    ir: &'a Ir,
     file: &'a str,
     /// Globale Variablen (Kleinschreibung): `DATA` auf Programmebene und in MODULE-Blöcken
     globals: HashSet<String>,
@@ -179,7 +211,15 @@ fn check_dynpro(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
         ));
         return;
     }
-    let exit_entries: Vec<&FlowEntry> = d.flow.iter().filter(|fe| fe.at_exit).collect();
+    // AT EXIT-COMMAND zählt nur bei MODULE ohne Feldbezug; Modul der Ketten zählt nicht mit (Spec 12a).
+    let exit_entries: Vec<&FlowEntry> = d
+        .flow
+        .iter()
+        .filter_map(|item| match item {
+            FlowItem::Module(fe) if fe.at_exit => Some(fe),
+            _ => None,
+        })
+        .collect();
     if exit_entries.len() > 1 {
         out.push(DynproError::error(
             c.file,
@@ -188,23 +228,7 @@ fn check_dynpro(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
             "Only one AT EXIT-COMMAND module is allowed per DYNPRO".to_string(),
         ));
     }
-    for fe in &d.flow {
-        let kind = match fe.phase {
-            Phase::Pbo => "OUTPUT",
-            Phase::Pai => "INPUT",
-        };
-        if !c.modules.contains(&(fe.phase, fe.module.to_lowercase())) {
-            out.push(DynproError::error(
-                c.file,
-                fe.line,
-                1,
-                format!(
-                    "MODULE '{}' is not defined in the program as MODULE ... {kind} (needed by {num})",
-                    fe.module
-                ),
-            ));
-        }
-    }
+    check_flow(d, c, out);
 
     let mut spans: Vec<Span> = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
@@ -233,20 +257,29 @@ fn check_dynpro(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
                         format!("Field '{name}' is defined more than once in {num}"),
                     ));
                 }
-                if !c.globals.contains(&lower) {
-                    out.push(DynproError::error(
-                        c.file,
-                        el.line,
-                        el.kw_col,
-                        format!("Field '{name}' is not a global variable of the program"),
-                    ));
-                    continue;
-                }
-                let ty = c
-                    .field_types
-                    .get(&lower)
-                    .copied()
-                    .unwrap_or(FieldType::Other);
+                let ty = if lower.contains('-') {
+                    match component(c.ir, name) {
+                        Ok((_, _, ty)) => ty,
+                        Err(msg) => {
+                            out.push(DynproError::error(c.file, el.line, el.kw_col, msg));
+                            continue;
+                        }
+                    }
+                } else {
+                    if !c.globals.contains(&lower) {
+                        out.push(DynproError::error(
+                            c.file,
+                            el.line,
+                            el.kw_col,
+                            format!("Field '{name}' is not a global variable of the program"),
+                        ));
+                        continue;
+                    }
+                    c.field_types
+                        .get(&lower)
+                        .copied()
+                        .unwrap_or(FieldType::Other)
+                };
                 if ty == FieldType::String {
                     out.push(DynproError::error(
                         c.file,
@@ -307,6 +340,98 @@ fn check_dynpro(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
             }
         }
     }
+}
+
+/// Prüfung der Ablauflogik (Spec 4.6, 12a): Module, `FIELD`-Bezüge, Bedingungen und Doppelungen.
+/// Die Reihenfolge der Meldungen folgt der Quelltextfolge.
+fn check_flow(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
+    let num = format!("DYNPRO {:04}", d.number);
+    let element_fields: HashSet<String> = d
+        .elements
+        .iter()
+        .filter_map(|el| match &el.kind {
+            ElementKind::Field { name, .. } => Some(name.to_lowercase()),
+            _ => None,
+        })
+        .collect();
+    // Jedes Feld höchstens in einer FIELD-Anweisung der Ablauflogik (auch in einer CHAIN)
+    let mut flow_fields: HashSet<String> = HashSet::new();
+    for item in &d.flow {
+        match item {
+            FlowItem::Module(fe) => {
+                check_flow_module(c, &num, fe.phase, &fe.module, fe.line, out);
+                // ON INPUT / ON REQUEST gilt nur für FIELD, ON CHAIN-* nur für MODULE in einer CHAIN
+                if fe.cond != Cond::Plain {
+                    out.push(cond_error(c, fe.line, fe.cond));
+                }
+            }
+            FlowItem::Field(ff) => {
+                let lower = ff.name.to_lowercase();
+                if !element_fields.contains(&lower) {
+                    out.push(DynproError::error(
+                        c.file,
+                        ff.line,
+                        1,
+                        format!("FIELD '{}' in the flow is not a FIELD of {num}", ff.name),
+                    ));
+                }
+                if !flow_fields.insert(lower) {
+                    out.push(DynproError::error(
+                        c.file,
+                        ff.line,
+                        1,
+                        format!(
+                            "Field '{}' is in more than one FIELD statement of {num}",
+                            ff.name
+                        ),
+                    ));
+                }
+                if let Some(m) = &ff.module {
+                    check_flow_module(c, &num, Phase::Pai, m, ff.line, out);
+                }
+                if matches!(ff.cond, Cond::ChainInput | Cond::ChainRequest) {
+                    out.push(cond_error(c, ff.line, ff.cond));
+                }
+            }
+            FlowItem::ChainModule(cm) => {
+                check_flow_module(c, &num, Phase::Pai, &cm.module, cm.line, out);
+            }
+        }
+    }
+}
+
+/// Das MODULE muss als INPUT- bzw. OUTPUT-Modul im Programm existieren (Spec 4.6).
+fn check_flow_module(
+    c: &Ctx,
+    num: &str,
+    phase: Phase,
+    module: &str,
+    line: usize,
+    out: &mut Vec<DynproError>,
+) {
+    if !c.modules.contains(&(phase, module.to_lowercase())) {
+        let kind = match phase {
+            Phase::Pbo => "OUTPUT",
+            Phase::Pai => "INPUT",
+        };
+        out.push(DynproError::error(
+            c.file,
+            line,
+            1,
+            format!(
+                "MODULE '{module}' is not defined in the program as MODULE ... {kind} (needed by {num})"
+            ),
+        ));
+    }
+}
+
+/// Bedingung an der falschen Stelle: `ON INPUT`/`ON REQUEST` nur bei FIELD, `ON CHAIN-*` nur bei MODULE in einer CHAIN.
+fn cond_error(c: &Ctx, line: usize, cond: Cond) -> DynproError {
+    let message = match cond {
+        Cond::Input | Cond::Request => format!("{} is only allowed for FIELD", cond.text()),
+        _ => format!("{} is only allowed for MODULE in a CHAIN", cond.text()),
+    };
+    DynproError::error(c.file, line, 1, message)
 }
 
 /// Prüft Lage und Breite eines Elements im Dynpro-Bereich und merkt den belegten Bereich.
@@ -378,6 +503,73 @@ fn check_status(s: &GuiStatus, file: &str, out: &mut Vec<DynproError>) {
         }
         check_code(file, k.line, 1, &k.code, out);
     }
+    // EXCLUDE: Länge wie bei Funktionscodes. Ein Code ohne FKEY im selben Status ist nur ein Hinweis (Warnung).
+    for e in &s.excludes {
+        check_code(file, e.line, 1, &e.code, out);
+        if !s.keys.iter().any(|k| k.code == e.code) {
+            out.push(DynproError::warning(
+                file,
+                e.line,
+                1,
+                format!(
+                    "EXCLUDE '{}' matches no FKEY code in GUISTATUS {}",
+                    e.code, s.name
+                ),
+            ));
+        }
+    }
+}
+
+/// Strukturkomponente `struktur-komponente` eines Dynpro-Feldes (Spec 4.6, nur eine Ebene).
+/// Ergebnis: Index der globalen Struktur, Index der Komponente und der Dynpro-Typ aus der Deklaration.
+/// `name` steht so in der `.dynp`, wie der Autor es geschrieben hat; Fehler sind englische Meldungen.
+/// Der Typ muss dem Compiler bekannt sein (`DATA ... BEGIN OF` oder `TYPES ... BEGIN OF` auf Programmebene).
+pub(crate) fn component(ir: &Ir, name: &str) -> Result<(usize, usize, FieldType), String> {
+    let Some((base, comp)) = name.split_once('-') else {
+        return Err(format!("Field '{name}' is not a structure component"));
+    };
+    let Some(struct_idx) = global_struct(ir, base) else {
+        return Err(format!(
+            "Field '{name}' is not a component of a global structure of the program"
+        ));
+    };
+    let comp = comp.to_lowercase();
+    let Some(index) = ir.structs[struct_idx]
+        .fields
+        .iter()
+        .position(|(n, _)| *n == comp)
+    else {
+        return Err(format!(
+            "Field '{name}' is not a component of the global structure '{base}'"
+        ));
+    };
+    let ty = ir
+        .struct_field_types
+        .get(&struct_idx)
+        .and_then(|types| types.get(index))
+        .copied()
+        .unwrap_or(FieldType::Other);
+    if ty == FieldType::Other {
+        return Err(format!(
+            "Type of dynpro field '{name}' is not supported yet: the compiler does not know the type of this component"
+        ));
+    }
+    Ok((struct_idx, index, ty))
+}
+
+/// Index der globalen Struktur `base` (Kleinschreibung unwichtig), falls der Name eine Struktur bezeichnet.
+fn global_struct(ir: &Ir, base: &str) -> Option<usize> {
+    let base = base.to_lowercase();
+    let top = ir.stmts.iter();
+    let modules = ir.modules.iter().flat_map(|m| m.body.iter());
+    top.chain(modules).find_map(|s| match s {
+        Stmt::Data {
+            name,
+            ty: Ty::Struct(i),
+            ..
+        } if name.to_lowercase() == base => Some(*i),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -594,5 +786,257 @@ ENDGUISTATUS
         assert_eq!(packed.abi_length(), Some(5));
         assert_eq!(packed.width(), Some(7));
         assert_eq!(FieldType::String.abi_code(), None);
+    }
+
+    /// Programm mit der globalen Struktur ZKUNDE (Komponenten NAME1 c30 und NR n4) statt ZNAME1.
+    fn abap_with_struct() -> String {
+        ABAP.replace(
+            "DATA zname1 TYPE c LENGTH 30.",
+            "DATA: BEGIN OF zkunde,\n  name1 TYPE c LENGTH 30,\n  nr TYPE n LENGTH 4,\nEND OF zkunde.",
+        )
+    }
+
+    #[test]
+    fn struct_component_field_with_known_type_is_accepted() {
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNDE-NAME1 4 20 INPUT");
+        assert!(run(&abap_with_struct(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn struct_component_takes_length_and_type_of_component() {
+        // NR ist n4: Breite 4 ab Spalte 20 (Spalten 20 bis 23), kein Konflikt mit anderen Elementen
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNDE-NR 4 20 INPUT");
+        assert!(run(&abap_with_struct(), &dynp).is_empty());
+        let (_, _, ty) = component(&run_ir(&abap_with_struct()), "zkunde-nr").unwrap();
+        assert_eq!(ty, FieldType::Numc(4));
+    }
+
+    /// Übersetzt das ABAP-Programm und gibt die IR zurück.
+    fn run_ir(abap: &str) -> crate::lower::Ir {
+        parse_source(abap).expect("ABAP program translates")
+    }
+
+    #[test]
+    fn unknown_struct_component_is_an_error() {
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNDE-XNAME 4 20 INPUT");
+        let errs = run(&abap_with_struct(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec![
+                "Field 'ZKUNDE-XNAME' is not a component of the global structure 'ZKUNDE'"
+                    .to_string()
+            ]
+        );
+        assert_eq!(errs[0].line, 7);
+    }
+
+    #[test]
+    fn struct_component_of_plain_variable_is_an_error() {
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNNR-NAME1 4 20 INPUT");
+        let errs = run(&abap_with_struct(), &dynp);
+        assert!(messages(&errs)
+            .iter()
+            .any(|m| m
+                == "Field 'ZKUNNR-NAME1' is not a component of a global structure of the program"));
+    }
+
+    #[test]
+    fn struct_component_with_unknown_type_is_not_supported_yet() {
+        // LIKE liefert dem Dynpro keinen Typ: Übersetzungsfehler „not supported yet“
+        let abap = abap_with_struct().replace("  nr TYPE n LENGTH 4,", "  nr LIKE zkunnr,");
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNDE-NR 4 20 INPUT");
+        let errs = run(&abap, &dynp);
+        assert!(messages(&errs)
+            .iter()
+            .any(|m| m.contains("not supported yet") && m.contains("ZKUNDE-NR")));
+    }
+
+    #[test]
+    fn struct_component_string_type_is_rejected_with_type_message() {
+        let abap = abap_with_struct().replace("  nr TYPE n LENGTH 4,", "  nr TYPE string,");
+        let dynp = DYNP_OK.replace("FIELD ZNAME1 4 20 INPUT", "FIELD ZKUNDE-NR 4 20 INPUT");
+        let errs = run(&abap, &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["Type string is not allowed for dynpro field 'ZKUNDE-NR'".to_string()]
+        );
+    }
+
+    #[test]
+    fn set_cursor_field_must_name_a_field_of_a_dynpro() {
+        let abap = ABAP.replace(
+            "  LEAVE SCREEN.",
+            "  SET CURSOR FIELD zfehlt.\n  LEAVE SCREEN.",
+        );
+        let errs = run(&abap, DYNP_OK);
+        assert_eq!(
+            messages(&errs),
+            vec!["SET CURSOR FIELD 'ZFEHLT' is not a FIELD of any DYNPRO in prog.dynp".to_string()]
+        );
+        assert_eq!((errs[0].file.as_str(), errs[0].line), ("prog.abap", 12));
+    }
+
+    #[test]
+    fn set_cursor_field_naming_a_dynpro_field_is_accepted() {
+        let abap = ABAP.replace(
+            "  LEAVE SCREEN.",
+            "  SET CURSOR FIELD ZKUNNR.\n  LEAVE SCREEN.",
+        );
+        assert!(run(&abap, DYNP_OK).is_empty());
+    }
+
+    #[test]
+    fn exclude_code_without_matching_fkey_is_a_warning() {
+        let dynp = DYNP_OK.replace("ENDGUISTATUS", "  EXCLUDE PRINT\nENDGUISTATUS");
+        let errs = run(ABAP, &dynp);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].warning);
+        assert_eq!(
+            errs[0].message,
+            "EXCLUDE 'PRINT' matches no FKEY code in GUISTATUS STATUS_0100"
+        );
+    }
+
+    #[test]
+    fn exclude_code_matching_an_fkey_gives_no_diagnostic() {
+        let dynp = DYNP_OK.replace("ENDGUISTATUS", "  EXCLUDE BACK\nENDGUISTATUS");
+        assert!(run(ABAP, &dynp).is_empty());
+    }
+
+    #[test]
+    fn exclude_code_longer_than_70_characters_is_an_error() {
+        let code = "X".repeat(71);
+        let dynp = DYNP_OK.replace("ENDGUISTATUS", &format!("  EXCLUDE {code}\nENDGUISTATUS"));
+        let errs = run(ABAP, &dynp);
+        assert!(errs
+            .iter()
+            .any(|e| !e.warning && e.message.contains("longer than 70 characters")));
+    }
+
+    #[test]
+    fn function_key_f24_is_accepted() {
+        let dynp = DYNP_OK.replace(
+            "FKEY F3 'Back' CODE BACK TYPE B",
+            "FKEY F24 'Zurueck' CODE BACK",
+        );
+        assert!(run(ABAP, &dynp).is_empty());
+    }
+
+    /// Programm mit zusätzlichem INPUT-Modul CHECK_KUNNR für FIELD- und CHAIN-Module.
+    fn abap_with_check() -> String {
+        format!("{ABAP}MODULE check_kunnr INPUT.\nENDMODULE.\n")
+    }
+
+    /// `DYNP_OK` mit anderer PAI-Folge: die Zeilen unter `PROCESS AFTER INPUT` werden ersetzt.
+    fn dynp_with_pai(pai: &str) -> String {
+        DYNP_OK.replace(
+            "    PROCESS AFTER INPUT\n      MODULE USER_COMMAND_0100\n",
+            &format!("    PROCESS AFTER INPUT\n{pai}"),
+        )
+    }
+
+    #[test]
+    fn field_and_chain_flow_with_known_fields_and_modules_is_accepted() {
+        let dynp = dynp_with_pai(
+            "      FIELD ZKUNNR MODULE CHECK_KUNNR ON REQUEST\n      CHAIN\n        FIELD ZNAME1\n        MODULE CHECK_KUNNR ON CHAIN-INPUT\n      ENDCHAIN\n      MODULE USER_COMMAND_0100\n",
+        );
+        assert!(run(&abap_with_check(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn field_in_flow_that_is_not_a_field_of_the_dynpro_is_an_error() {
+        let dynp = dynp_with_pai("      FIELD ZORT\n      MODULE USER_COMMAND_0100\n");
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["FIELD 'ZORT' in the flow is not a FIELD of DYNPRO 0100".to_string()]
+        );
+        assert_eq!(errs[0].line, 13);
+    }
+
+    #[test]
+    fn field_in_two_flow_statements_including_a_chain_is_an_error() {
+        let dynp = dynp_with_pai(
+            "      FIELD ZKUNNR\n      CHAIN\n        FIELD ZKUNNR\n      ENDCHAIN\n      MODULE USER_COMMAND_0100\n",
+        );
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["Field 'ZKUNNR' is in more than one FIELD statement of DYNPRO 0100".to_string()]
+        );
+        assert_eq!(errs[0].line, 15);
+    }
+
+    #[test]
+    fn on_input_for_a_plain_module_is_an_error() {
+        let dynp = dynp_with_pai("      MODULE USER_COMMAND_0100 ON INPUT\n");
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["ON INPUT is only allowed for FIELD".to_string()]
+        );
+    }
+
+    #[test]
+    fn on_chain_input_outside_a_chain_is_an_error() {
+        let dynp = dynp_with_pai(
+            "      MODULE CHECK_KUNNR ON CHAIN-INPUT\n      MODULE USER_COMMAND_0100\n",
+        );
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["ON CHAIN-INPUT is only allowed for MODULE in a CHAIN".to_string()]
+        );
+        assert_eq!(errs[0].line, 13);
+    }
+
+    #[test]
+    fn on_chain_request_on_a_field_is_an_error() {
+        let dynp = dynp_with_pai(
+            "      FIELD ZKUNNR MODULE CHECK_KUNNR ON CHAIN-REQUEST\n      MODULE USER_COMMAND_0100\n",
+        );
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["ON CHAIN-REQUEST is only allowed for MODULE in a CHAIN".to_string()]
+        );
+    }
+
+    #[test]
+    fn module_of_a_field_must_be_an_input_module() {
+        let dynp = dynp_with_pai(
+            "      FIELD ZKUNNR MODULE STATUS_0100 ON INPUT\n      MODULE USER_COMMAND_0100\n",
+        );
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["MODULE 'STATUS_0100' is not defined in the program as MODULE ... INPUT (needed by DYNPRO 0100)".to_string()]
+        );
+    }
+
+    #[test]
+    fn module_of_a_chain_must_be_an_input_module() {
+        let dynp = dynp_with_pai(
+            "      CHAIN\n        FIELD ZKUNNR\n        MODULE STATUS_0100 ON CHAIN-INPUT\n      ENDCHAIN\n      MODULE USER_COMMAND_0100\n",
+        );
+        let errs = run(&abap_with_check(), &dynp);
+        assert!(messages(&errs).iter().any(|m| m
+            == "MODULE 'STATUS_0100' is not defined in the program as MODULE ... INPUT (needed by DYNPRO 0100)"));
+    }
+
+    #[test]
+    fn chain_module_does_not_count_as_a_second_exit_command_module() {
+        let dynp = dynp_with_pai(
+            "      CHAIN\n        FIELD ZKUNNR\n        MODULE CHECK_KUNNR ON CHAIN-INPUT\n      ENDCHAIN\n      MODULE USER_COMMAND_0100 AT EXIT-COMMAND\n",
+        );
+        assert!(run(&abap_with_check(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn chain_without_module_is_accepted() {
+        let dynp = dynp_with_pai(
+            "      CHAIN\n        FIELD ZKUNNR\n        FIELD ZNAME1\n      ENDCHAIN\n      MODULE USER_COMMAND_0100\n",
+        );
+        assert!(run(ABAP, &dynp).is_empty());
     }
 }

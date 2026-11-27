@@ -105,10 +105,26 @@ pub fn attr_style(attrs: u32) -> Style {
     }
 }
 
-/// Baut das Bild eines Dynpros. `bufs` enthält je Feld den Anzeigepuffer (Index wie in `dynpro.fields`).
+/// Baut das Bild eines Dynpros mit dem Titel aus dem Dynpro.
 pub fn render(
     dynpro: &Dynpro,
     bufs: &[Vec<char>],
+    status: Option<&GuiStatus>,
+    message: Option<&Message>,
+) -> Grid {
+    render_titled(dynpro, &dynpro.title, bufs, None, status, message)
+}
+
+/// Baut das Bild eines Dynpros mit einem Titel. `title` ersetzt den Titel des Dynpros (`SET TITLEBAR`).
+/// `bufs` enthält je Feld den Anzeigepuffer (Index wie in `dynpro.fields`).
+///
+/// `enabled`: Eingabebeschränkung nach E oder W (Abschnitt 12a). Felder außerhalb der Menge werden nur angezeigt,
+/// ohne Unterstreichung. `None`: alle Eingabefelder sind eingabebereit.
+pub fn render_titled(
+    dynpro: &Dynpro,
+    title: &str,
+    bufs: &[Vec<char>],
+    enabled: Option<&[bool]>,
     status: Option<&GuiStatus>,
     message: Option<&Message>,
 ) -> Grid {
@@ -120,7 +136,7 @@ pub fn render(
     for col in 0..COLS {
         grid.put(0, col, ' ', title_style);
     }
-    grid.text(0, 0, &dynpro.title, title_style);
+    grid.text(0, 0, title, title_style);
 
     for frame in &dynpro.frames {
         draw_frame(&mut grid, frame);
@@ -133,8 +149,10 @@ pub fn render(
             continue;
         }
         let Some(buf) = bufs.get(index) else { continue };
+        let editable =
+            field.is_input() && enabled.is_none_or(|e| e.get(index).copied().unwrap_or(false));
         let style = Style {
-            underline: field.is_input(),
+            underline: editable,
             ..attr_style(field.attrs)
         };
         let (row, col) = dynpro_cell(field.row, field.col);
@@ -147,7 +165,11 @@ pub fn render(
             grid.put(row, col + k, shown, style);
         }
     }
-    for button in &dynpro.buttons {
+    for button in dynpro
+        .buttons
+        .iter()
+        .filter(|b| !is_excluded(status, &b.fcode))
+    {
         draw_button(&mut grid, button);
     }
     draw_fkeys(&mut grid, status);
@@ -197,11 +219,20 @@ fn draw_frame(grid: &mut Grid, frame: &Frame) {
     }
 }
 
+/// Ist der Funktionscode im Status ausgeschlossen (`EXCLUDE`)? Ohne Status: nein.
+fn is_excluded(status: Option<&GuiStatus>, fcode: &str) -> bool {
+    status.is_some_and(|s| s.is_excluded(fcode))
+}
+
 /// Funktionstasten in den Zeilen 22 und 23: `F<n> <Text>`, aufsteigend nach Tastennummer, durch zwei Leerzeichen getrennt.
-/// Eine Taste bricht nicht um. Passt sie nicht mehr in die Leiste, entfällt sie.
+/// Eine Taste bricht nicht um. Passt sie nicht mehr in die Leiste, entfällt sie. Ausgeschlossene Codes erscheinen nicht.
 fn draw_fkeys(grid: &mut Grid, status: Option<&GuiStatus>) {
     let Some(status) = status else { return };
-    let mut keys: Vec<_> = status.fkeys.iter().filter(|k| !k.text.is_empty()).collect();
+    let mut keys: Vec<_> = status
+        .fkeys
+        .iter()
+        .filter(|k| !k.text.is_empty() && !status.is_excluded(&k.fcode))
+        .collect();
     keys.sort_by_key(|k| k.key);
     let mut row = FKEY_FIRST_ROW;
     let mut col = 0usize;
@@ -318,6 +349,7 @@ mod tests {
                     kind: FKind::Cancel,
                 },
             ],
+            excluded: vec![],
         };
         let message = Message {
             kind: 'E',
@@ -329,6 +361,78 @@ mod tests {
         assert_eq!(grid.line(23).trim_end(), "Enter a value");
         // Drucktaste in Zeile 9 entspricht Gitterzeile 9
         assert!(grid.line(9).contains("[ Sichern ]"));
+    }
+
+    #[test]
+    fn shift_function_key_13_is_shown_in_the_key_bar() {
+        let d = dynpro_with(vec![]);
+        let status = GuiStatus {
+            name: "S".into(),
+            fkeys: vec![FKey {
+                key: 13,
+                text: "Next".into(),
+                fcode: "NEXT".into(),
+                kind: FKind::None,
+            }],
+            excluded: vec![],
+        };
+        let grid = render(&d, &[], Some(&status), None);
+        assert!(grid.line(21).starts_with("F13 Next"));
+    }
+
+    #[test]
+    fn excluded_codes_are_not_drawn_as_button_or_key() {
+        let mut d = dynpro_with(vec![]);
+        d.buttons.push(Button {
+            row: 9,
+            col: 2,
+            text: "Sichern".into(),
+            fcode: "SAVE".into(),
+        });
+        d.buttons.push(Button {
+            row: 10,
+            col: 2,
+            text: "Drucken".into(),
+            fcode: "PRINT".into(),
+        });
+        let status = GuiStatus {
+            name: "S".into(),
+            fkeys: vec![
+                FKey {
+                    key: 3,
+                    text: "Back".into(),
+                    fcode: "BACK".into(),
+                    kind: FKind::Back,
+                },
+                FKey {
+                    key: 12,
+                    text: "Cancel".into(),
+                    fcode: "CANCEL".into(),
+                    kind: FKind::Cancel,
+                },
+            ],
+            excluded: vec!["SAVE".into(), "CANCEL".into()],
+        };
+        let grid = render(&d, &[], Some(&status), None);
+        assert!(!grid.line(9).contains("Sichern"));
+        assert!(grid.line(10).contains("[ Drucken ]"));
+        assert!(grid.line(21).starts_with("F3 Back"));
+        assert!(!grid.line(21).contains("Cancel"));
+        assert!(!grid.line(22).contains("Cancel"));
+    }
+
+    #[test]
+    fn titled_render_replaces_only_the_title_line() {
+        let mut d = dynpro_with(vec![]);
+        d.texts.push(Text {
+            row: 1,
+            col: 2,
+            text: "Name".into(),
+            attrs: 0,
+        });
+        let grid = render_titled(&d, "Neuer Titel", &[], None, None, None);
+        assert!(grid.line(0).starts_with("Neuer Titel"));
+        assert_eq!(grid.line(1).find("Name"), Some(1));
     }
 
     #[test]

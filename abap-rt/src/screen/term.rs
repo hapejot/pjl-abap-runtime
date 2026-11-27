@@ -110,6 +110,10 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Key> {
         KeyCode::Down => Key::Down,
         KeyCode::Left => Key::Left,
         KeyCode::Right => Key::Right,
+        // Shift+F1 bis Shift+F12 sind die Funktionstasten 13 bis 24 (Abschnitt 6.2).
+        KeyCode::F(n) if (1..=12).contains(&n) && modifiers.contains(KeyModifiers::SHIFT) => {
+            Key::F(n + 12)
+        }
         KeyCode::F(n) if (1..=12).contains(&n) => Key::F(n),
         _ => return None,
     })
@@ -214,4 +218,28 @@ fn write_cell(out: &mut impl Write, row: usize, col: usize, cell: Cell) -> io::R
         queue!(out, SetForegroundColor(color))?;
     }
     queue!(out, Print(cell.ch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_function_keys_map_to_keys_13_to_24() {
+        assert_eq!(
+            map_key(KeyCode::F(1), KeyModifiers::SHIFT),
+            Some(Key::F(13))
+        );
+        assert_eq!(
+            map_key(KeyCode::F(12), KeyModifiers::SHIFT),
+            Some(Key::F(24))
+        );
+    }
+
+    #[test]
+    fn plain_function_keys_stay_at_1_to_12_and_other_f_keys_are_ignored() {
+        assert_eq!(map_key(KeyCode::F(3), KeyModifiers::NONE), Some(Key::F(3)));
+        assert_eq!(map_key(KeyCode::F(13), KeyModifiers::NONE), None);
+        assert_eq!(map_key(KeyCode::F(13), KeyModifiers::SHIFT), None);
+    }
 }

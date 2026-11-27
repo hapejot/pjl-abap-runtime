@@ -71,7 +71,7 @@ pub enum LoopTarget {
 
 /// Schreibziel: ganzes Feld, Teilfeld `name+off(len)` oder Attribut `obj->attr`.
 /// Komponenten `s-feld` sind Teil des Namens.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Var(String),
     Slice {
@@ -257,6 +257,12 @@ pub enum ScreenOp {
     PfStatus(String),
     /// MESSAGE 'text' TYPE t; `kind` ist der Großbuchstabe des Typs
     Message { kind: char, text: String },
+    /// SET CURSOR FIELD f (Großbuchstaben, wie an die Laufzeit übergeben)
+    SetCursor(String),
+    /// GET CURSOR FIELD f: Ziel ist eine Zeichenvariable, die der Codegen über ihre Adresse übergibt
+    GetCursor(Target),
+    /// SET TITLEBAR 'text' (nur Literal ohne WITH)
+    SetTitlebar(String),
 }
 
 /// Ziel eines Dynpro-Verweises aus dem Programm; für die Prüfung gegen die `.dynp`-Datei.
@@ -266,6 +272,8 @@ pub enum ScreenTarget {
     Dynpro(u32),
     /// Name des GUI-Status (Kleinschreibung)
     Status(String),
+    /// Name eines Dynpro-Feldes in `SET CURSOR FIELD` (Kleinschreibung)
+    Field(String),
 }
 
 /// Verweis auf ein Dynpro oder einen GUI-Status aus einer Anweisung (`what`, z. B. "CALL SCREEN").
@@ -384,6 +392,9 @@ pub struct Ir {
     pub modules: Vec<ModuleDef>,
     /// Abbildung auf die Dynpro-Typen je Variablenname (Kleinschreibung), für `.dynp`-Prüfungen
     pub field_types: HashMap<String, FieldType>,
+    /// Dynpro-Typen der Komponenten einer Struktur (Index in `structs`), in Komponentenreihenfolge.
+    /// Fehlt eine Struktur, ist ihr Typ dem Dynpro nicht bekannt.
+    pub struct_field_types: HashMap<usize, Vec<FieldType>>,
     /// Verweise auf Dynpros und GUI-Status aus den Anweisungen des Programms
     pub screen_refs: Vec<ScreenRef>,
     /// Inhalt der `.dynp`-Datei; `None`, wenn keine Datei gehört. Wird nach der Prüfung gesetzt.

@@ -158,10 +158,65 @@ pub enum Phase {
 }
 
 /// Modul-Bindung. `at_exit` gilt für `MODULE ... AT EXIT-COMMAND` (Abschnitt 4.2, ABI).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Module {
     pub func: extern "C" fn(),
     pub at_exit: bool,
+}
+
+/// Bedingung eines Feld- oder Kettenmoduls (Abschnitt 12a). `Always` heißt: ohne Zusatz, das Modul läuft immer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cond {
+    Always,
+    /// `ON INPUT`: Wert nach der Übertragung ungleich Initialwert.
+    OnInput,
+    /// `ON REQUEST`: Eingabemarkierung des Feldes ist gesetzt.
+    OnRequest,
+    /// `ON CHAIN-INPUT`: mindestens ein Kettenfeld ungleich Initialwert.
+    ChainInput,
+    /// `ON CHAIN-REQUEST`: mindestens ein Kettenfeld mit Eingabemarkierung.
+    ChainRequest,
+}
+
+impl Cond {
+    /// Bedingung eines `FIELD`-Eintrags aus der ABI: 0 ohne, 1 ON INPUT, 2 ON REQUEST.
+    pub fn from_field_code(code: u32) -> Option<Cond> {
+        Some(match code {
+            0 => Cond::Always,
+            1 => Cond::OnInput,
+            2 => Cond::OnRequest,
+            _ => return None,
+        })
+    }
+
+    /// Bedingung eines Kettenmoduls aus der ABI: 3 ON CHAIN-INPUT, 4 ON CHAIN-REQUEST.
+    pub fn from_chain_code(code: u32) -> Option<Cond> {
+        Some(match code {
+            3 => Cond::ChainInput,
+            4 => Cond::ChainRequest,
+            _ => return None,
+        })
+    }
+}
+
+/// Eintrag der geordneten PAI-Liste eines Dynpros (Abschnitt 12a). Die Reihenfolge ist die des Prologs.
+#[derive(Clone, Debug)]
+pub enum PaiEntry {
+    /// Modul ohne Feldbezug. Ein `AT EXIT-COMMAND`-Modul (`at_exit`) läuft nur in Schritt 1 des PAI.
+    Module(Module),
+    /// `FIELD name [MODULE m [ON INPUT | ON REQUEST]]`. `chain` 0 ohne Kette, sonst die Kettennummer.
+    Field {
+        name: String,
+        func: Option<extern "C" fn()>,
+        cond: Cond,
+        chain: u32,
+    },
+    /// `MODULE m ON CHAIN-INPUT | ON CHAIN-REQUEST` innerhalb der Kette `chain` (ab 1).
+    Chain {
+        chain: u32,
+        func: extern "C" fn(),
+        cond: Cond,
+    },
 }
 
 /// Dynpro mit Nummer, Größe, Titel, Elementen und Ablauflogik.
@@ -179,7 +234,8 @@ pub struct Dynpro {
     pub buttons: Vec<Button>,
     pub frames: Vec<Frame>,
     pub pbo: Vec<Module>,
-    pub pai: Vec<Module>,
+    /// Geordnete PAI-Liste (Abschnitt 12a). Module ohne Feldbezug, Feld- und Kettenmodule in Quelltextfolge.
+    pub pai: Vec<PaiEntry>,
 }
 
 impl Dynpro {
@@ -266,6 +322,9 @@ pub struct GuiStatus {
     /// Name in Großbuchstaben.
     pub name: String,
     pub fkeys: Vec<FKey>,
+    /// Ausgeschlossene Funktionscodes (`EXCLUDE`). Sie lösen nichts aus und werden nicht angezeigt (Abschnitt 6.2).
+    /// Die Zuordnung gilt für diesen Status, nicht für das Dynpro.
+    pub excluded: Vec<String>,
 }
 
 impl GuiStatus {
@@ -276,6 +335,11 @@ impl GuiStatus {
     /// Funktionstaste mit dem Funktionscode.
     pub fn by_fcode(&self, fcode: &str) -> Option<&FKey> {
         self.fkeys.iter().find(|k| k.fcode == fcode)
+    }
+
+    /// Ist der Funktionscode in diesem Status ausgeschlossen?
+    pub fn is_excluded(&self, fcode: &str) -> bool {
+        self.excluded.iter().any(|e| e == fcode)
     }
 }
 

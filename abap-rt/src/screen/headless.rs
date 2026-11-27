@@ -150,8 +150,13 @@ fn parse_line(lexer: &mut Lexer) -> Result<Command, String> {
 }
 
 /// Taste aus dem Skript (Abschnitt 9.3), ohne Unterschied bei Groß- und Kleinschreibung.
+/// `SHIFT-F1` bis `SHIFT-F12` sind die Funktionstasten 13 bis 24 (Abschnitt 6.2).
 fn parse_key(name: &str) -> Option<Key> {
     let upper = name.to_ascii_uppercase();
+    if let Some(number) = upper.strip_prefix("SHIFT-F") {
+        let n: u8 = number.parse().ok()?;
+        return (1..=12).contains(&n).then_some(Key::F(n + 12));
+    }
     if let Some(number) = upper.strip_prefix('F') {
         let n: u8 = number.parse().ok()?;
         return (1..=12).contains(&n).then_some(Key::F(n));
@@ -288,6 +293,15 @@ mod tests {
         }
         assert_eq!(parse_key("F13"), None);
         assert_eq!(parse_key("SHIFTF1"), None);
+    }
+
+    #[test]
+    fn shift_function_keys_are_keys_13_to_24() {
+        assert_eq!(parse_key("SHIFT-F1"), Some(Key::F(13)));
+        assert_eq!(parse_key("shift-f12"), Some(Key::F(24)));
+        assert_eq!(parse_key("SHIFT-F13"), None);
+        assert_eq!(parse_key("SHIFT-F0"), None);
+        assert_eq!(parse_key("SHIFT-"), None);
     }
 
     #[test]

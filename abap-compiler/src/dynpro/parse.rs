@@ -116,6 +116,13 @@ fn found(toks: &[Tok], idx: usize) -> String {
     }
 }
 
+/// Offene `CHAIN` beim Lesen der Ablauflogik: Kettennummer, Anzahl der Felder, ob schon ein Modul steht.
+struct OpenChain {
+    number: usize,
+    fields: usize,
+    module: bool,
+}
+
 /// Die Zeilen der Datei mit Zeilennummer, leere und Kommentarzeilen entfernt.
 struct Lines<'a> {
     file: &'a str,
@@ -412,9 +419,7 @@ impl<'a> Lines<'a> {
                     i += 2;
                     continue;
                 }
-                "PASSWORD" => {
-                    return self.fail(line, toks, i, "PASSWORD is not supported yet (phase 2)")
-                }
+                "PASSWORD" => attrs.password = true,
                 _ => {
                     return self.fail(
                         line,
@@ -490,17 +495,99 @@ impl<'a> Lines<'a> {
     }
 
     /// Ablauflogik bis `ENDFLOW`. Die Zeile `FLOW` ist bereits gelesen.
-    fn flow(&mut self) -> Result<Vec<FlowEntry>, DynproError> {
-        let mut entries = Vec::new();
+    /// Die Einträge bleiben in Quelltextfolge. Eine `CHAIN` ist nicht verschachtelbar und nur in der PAI-Folge erlaubt.
+    fn flow(&mut self) -> Result<Vec<FlowItem>, DynproError> {
+        let mut items = Vec::new();
         let mut phase: Option<Phase> = None;
+        // Offene CHAIN, falls zwischen CHAIN und ENDCHAIN gelesen wird
+        let mut open: Option<OpenChain> = None;
+        // Anzahl der bisher begonnenen Ketten (Kettennummer ab 1)
+        let mut chains = 0;
         loop {
             let Some((ln, toks)) = self.take() else {
-                return Err(self.eof("ENDFLOW"));
+                let expected = if open.is_some() {
+                    "ENDCHAIN"
+                } else {
+                    "ENDFLOW"
+                };
+                return Err(self.eof(expected));
             };
-            match keyword(&toks).as_str() {
+            let kw = keyword(&toks);
+            if let Some(chain) = open.as_mut() {
+                // Innerhalb einer CHAIN sind nur FIELD, MODULE ... ON CHAIN-* und ENDCHAIN erlaubt
+                match kw.as_str() {
+                    "ENDCHAIN" => {
+                        self.expect_end(ln, &toks, 1)?;
+                        if chain.fields == 0 {
+                            return self.fail(
+                                ln,
+                                &toks,
+                                0,
+                                "Syntax error: CHAIN without FIELD before ENDCHAIN",
+                            );
+                        }
+                        open = None;
+                    }
+                    "FIELD" => {
+                        let name = self.expect_word(ln, &toks, 1, "field name")?;
+                        self.expect_end(ln, &toks, 2)?;
+                        items.push(FlowItem::Field(FieldFlow {
+                            name,
+                            module: None,
+                            cond: Cond::Plain,
+                            chain: Some(chain.number),
+                            line: ln,
+                        }));
+                        chain.fields += 1;
+                    }
+                    "MODULE" => {
+                        if chain.module {
+                            return self.fail(
+                                ln,
+                                &toks,
+                                0,
+                                "Syntax error: only one MODULE ON CHAIN-INPUT or ON CHAIN-REQUEST is allowed per CHAIN",
+                            );
+                        }
+                        let module = self.expect_word(ln, &toks, 1, "module name")?;
+                        let (cond, at_exit) = self.module_tail(ln, &toks, 2)?;
+                        if at_exit || !matches!(cond, Cond::ChainInput | Cond::ChainRequest) {
+                            return self.fail(
+                                ln,
+                                &toks,
+                                2,
+                                "Syntax error: MODULE in CHAIN needs ON CHAIN-INPUT or ON CHAIN-REQUEST",
+                            );
+                        }
+                        items.push(FlowItem::ChainModule(ChainModule {
+                            chain: chain.number,
+                            module,
+                            cond,
+                            line: ln,
+                        }));
+                        chain.module = true;
+                    }
+                    "CHAIN" => {
+                        return self.fail(ln, &toks, 0, "Syntax error: CHAIN cannot be nested");
+                    }
+                    _ => {
+                        return self.fail(
+                            ln,
+                            &toks,
+                            0,
+                            format!(
+                            "Syntax error: expected FIELD, MODULE or ENDCHAIN in CHAIN, found {}",
+                            found(&toks, 0)
+                        ),
+                        )
+                    }
+                }
+                continue;
+            }
+            match kw.as_str() {
                 "ENDFLOW" => {
                     self.expect_end(ln, &toks, 1)?;
-                    return Ok(entries);
+                    return Ok(items);
                 }
                 "PROCESS" => {
                     if toks.get(1).is_some_and(|t| t.is_kw("BEFORE"))
@@ -535,24 +622,7 @@ impl<'a> Lines<'a> {
                         );
                     };
                     let module = self.expect_word(ln, &toks, 1, "module name")?;
-                    let at_exit = if toks.len() == 2 {
-                        false
-                    } else if toks.len() == 4
-                        && toks[2].is_kw("AT")
-                        && toks[3].is_kw("EXIT-COMMAND")
-                    {
-                        true
-                    } else {
-                        return self.fail(
-                            ln,
-                            &toks,
-                            2,
-                            format!(
-                                "Syntax error: expected AT EXIT-COMMAND, found {}",
-                                found(&toks, 2)
-                            ),
-                        );
-                    };
+                    let (cond, at_exit) = self.module_tail(ln, &toks, 2)?;
                     if at_exit && ph == Phase::Pbo {
                         return self.fail(
                             ln,
@@ -561,12 +631,74 @@ impl<'a> Lines<'a> {
                             "AT EXIT-COMMAND is only allowed after PROCESS AFTER INPUT",
                         );
                     }
-                    entries.push(FlowEntry {
+                    items.push(FlowItem::Module(FlowEntry {
                         phase: ph,
                         module,
                         at_exit,
+                        cond,
                         line: ln,
+                    }));
+                }
+                "FIELD" => {
+                    if phase != Some(Phase::Pai) {
+                        return self.fail(
+                            ln,
+                            &toks,
+                            0,
+                            "Syntax error: FIELD is only allowed after PROCESS AFTER INPUT",
+                        );
+                    }
+                    let name = self.expect_word(ln, &toks, 1, "field name")?;
+                    let (module, cond) = if toks.len() == 2 {
+                        (None, Cond::Plain)
+                    } else {
+                        if !toks.get(2).is_some_and(|t| t.is_kw("MODULE")) {
+                            return self.fail(
+                                ln,
+                                &toks,
+                                2,
+                                format!("Syntax error: expected MODULE, found {}", found(&toks, 2)),
+                            );
+                        }
+                        let module = self.expect_word(ln, &toks, 3, "module name")?;
+                        let (cond, at_exit) = self.module_tail(ln, &toks, 4)?;
+                        if at_exit {
+                            return self.fail(
+                                ln,
+                                &toks,
+                                4,
+                                "Syntax error: AT EXIT-COMMAND is only allowed for MODULE, not for FIELD",
+                            );
+                        }
+                        (Some(module), cond)
+                    };
+                    items.push(FlowItem::Field(FieldFlow {
+                        name,
+                        module,
+                        cond,
+                        chain: None,
+                        line: ln,
+                    }));
+                }
+                "CHAIN" => {
+                    if phase != Some(Phase::Pai) {
+                        return self.fail(
+                            ln,
+                            &toks,
+                            0,
+                            "Syntax error: CHAIN is only allowed after PROCESS AFTER INPUT",
+                        );
+                    }
+                    self.expect_end(ln, &toks, 1)?;
+                    chains += 1;
+                    open = Some(OpenChain {
+                        number: chains,
+                        fields: 0,
+                        module: false,
                     });
+                }
+                "ENDCHAIN" => {
+                    return self.fail(ln, &toks, 0, "Syntax error: ENDCHAIN without CHAIN");
                 }
                 _ => {
                     return self.fail(
@@ -580,11 +712,70 @@ impl<'a> Lines<'a> {
         }
     }
 
+    /// Rest einer `MODULE`- oder `FIELD ... MODULE`-Zeile ab Index `from`: nichts, `AT EXIT-COMMAND` oder `ON <bedingung>`.
+    /// Gibt die Bedingung und das Exit-Kennzeichen zurück.
+    fn module_tail(
+        &self,
+        ln: usize,
+        toks: &[Tok],
+        from: usize,
+    ) -> Result<(Cond, bool), DynproError> {
+        match toks.get(from) {
+            None => Ok((Cond::Plain, false)),
+            Some(t) if t.is_kw("AT") => {
+                if toks.len() == from + 2 && toks[from + 1].is_kw("EXIT-COMMAND") {
+                    Ok((Cond::Plain, true))
+                } else {
+                    self.fail(
+                        ln,
+                        toks,
+                        from,
+                        format!(
+                            "Syntax error: expected AT EXIT-COMMAND, found {}",
+                            found(toks, from)
+                        ),
+                    )
+                }
+            }
+            Some(t) if t.is_kw("ON") => {
+                let cond = match toks.get(from + 1) {
+                    Some(c) if c.is_kw("INPUT") => Cond::Input,
+                    Some(c) if c.is_kw("REQUEST") => Cond::Request,
+                    Some(c) if c.is_kw("CHAIN-INPUT") => Cond::ChainInput,
+                    Some(c) if c.is_kw("CHAIN-REQUEST") => Cond::ChainRequest,
+                    _ => {
+                        return self.fail(
+                            ln,
+                            toks,
+                            from + 1,
+                            format!(
+                                "Syntax error: expected INPUT, REQUEST, CHAIN-INPUT or CHAIN-REQUEST after ON, found {}",
+                                found(toks, from + 1)
+                            ),
+                        )
+                    }
+                };
+                self.expect_end(ln, toks, from + 2)?;
+                Ok((cond, false))
+            }
+            Some(_) => self.fail(
+                ln,
+                toks,
+                from,
+                format!(
+                    "Syntax error: expected AT EXIT-COMMAND or ON, found {}",
+                    found(toks, from)
+                ),
+            ),
+        }
+    }
+
     /// `GUISTATUS name` ... `ENDGUISTATUS`
     fn status(&mut self, line: usize, head: &[Tok]) -> Result<GuiStatus, DynproError> {
         let name = self.expect_word(line, head, 1, "GUI status name")?;
         self.expect_end(line, head, 2)?;
         let mut keys = Vec::new();
+        let mut excludes = Vec::new();
         loop {
             let Some((ln, toks)) = self.take() else {
                 return Err(self.eof("ENDGUISTATUS"));
@@ -592,11 +783,19 @@ impl<'a> Lines<'a> {
             match keyword(&toks).as_str() {
                 "ENDGUISTATUS" => {
                     self.expect_end(ln, &toks, 1)?;
-                    return Ok(GuiStatus { name, line, keys });
+                    return Ok(GuiStatus {
+                        name,
+                        line,
+                        keys,
+                        excludes,
+                    });
                 }
                 "FKEY" => keys.push(self.fkey(ln, &toks)?),
                 "EXCLUDE" => {
-                    return self.fail(ln, &toks, 0, "EXCLUDE is not supported yet (phase 2)")
+                    // EXCLUDE funktionscode: Prüfung der Länge und des Bezugs in check.rs
+                    let code = self.expect_word(ln, &toks, 1, "function code")?;
+                    self.expect_end(ln, &toks, 2)?;
+                    excludes.push(Exclude { code, line: ln });
                 }
                 _ => {
                     return self.fail(
@@ -764,6 +963,26 @@ ENDGUISTATUS
         }
     }
 
+    /// Eintrag ohne Feldbezug (`MODULE`), sonst Absturz des Tests.
+    fn entry(item: &FlowItem) -> &FlowEntry {
+        match item {
+            FlowItem::Module(e) => e,
+            other => panic!("expected MODULE entry, found {other:?}"),
+        }
+    }
+
+    /// Ablauflogik des ersten Dynpros der Quelle `flow_src` in eine Liste.
+    fn flow_of(flow_src: &str) -> Vec<FlowItem> {
+        let src = format!("DYNPRO 0100\nFLOW\n{flow_src}ENDFLOW\nENDDYNPRO\n");
+        only_dynpro(&parse(&src).unwrap()).flow.clone()
+    }
+
+    /// Fehler der Ablauflogik für die Quelle `flow_src`.
+    fn flow_error(flow_src: &str) -> DynproError {
+        let src = format!("DYNPRO 0100\nFLOW\n{flow_src}ENDFLOW\nENDDYNPRO\n");
+        parse(&src).unwrap_err()
+    }
+
     #[test]
     fn dynpro_without_size_uses_default_20_by_80() {
         let f = parse("DYNPRO 100\nENDDYNPRO\n").unwrap();
@@ -785,10 +1004,10 @@ ENDGUISTATUS
         let d = only_dynpro(&f);
         assert_eq!(d.elements.len(), 7);
         assert_eq!(d.flow.len(), 3);
-        assert_eq!(d.flow[0].phase, Phase::Pbo);
-        assert_eq!(d.flow[2].phase, Phase::Pai);
-        assert!(d.flow[2].at_exit);
-        assert!(!d.flow[1].at_exit);
+        assert_eq!(entry(&d.flow[0]).phase, Phase::Pbo);
+        assert_eq!(entry(&d.flow[2]).phase, Phase::Pai);
+        assert!(entry(&d.flow[2]).at_exit);
+        assert!(!entry(&d.flow[1]).at_exit);
         let DynproItem::Status(s) = &f.items[1] else {
             panic!("expected GUISTATUS");
         };
@@ -864,9 +1083,55 @@ ENDGUISTATUS
     }
 
     #[test]
-    fn password_attribute_is_rejected_in_phase_1() {
-        let e = parse("DYNPRO 0100\nFIELD ZA 1 1 PASSWORD\nENDDYNPRO\n").unwrap_err();
-        assert!(e.message.contains("PASSWORD is not supported yet"));
+    fn password_attribute_is_accepted_and_sets_its_bit() {
+        let f = parse("DYNPRO 0100\nFIELD ZA 1 1 PASSWORD\nENDDYNPRO\n").unwrap();
+        let d = only_dynpro(&f);
+        let ElementKind::Field { attrs, .. } = &d.elements[0].kind else {
+            panic!("expected FIELD");
+        };
+        assert!(attrs.password);
+        assert!(attrs.input, "without INPUT or OUTPUT the field is INPUT");
+        assert_eq!(attrs.bits() & ATTR_PASSWORD, ATTR_PASSWORD);
+        assert_eq!(ATTR_PASSWORD, 0x1_0000);
+    }
+
+    #[test]
+    fn password_bit_is_independent_of_other_attributes() {
+        let f = parse("DYNPRO 0100\nFIELD ZA 1 1 OUTPUT PASSWORD REQUIRED\nENDDYNPRO\n").unwrap();
+        let ElementKind::Field { attrs, .. } = &only_dynpro(&f).elements[0].kind else {
+            panic!("expected FIELD");
+        };
+        assert_eq!(attrs.bits(), ATTR_PASSWORD | 2 | 4);
+    }
+
+    #[test]
+    fn exclude_in_guistatus_is_read_with_line() {
+        let f = parse("GUISTATUS S\nFKEY F3 'Zurueck' CODE BACK\nEXCLUDE PRINT\nENDGUISTATUS\n")
+            .unwrap();
+        let DynproItem::Status(s) = &f.items[0] else {
+            panic!("expected GUISTATUS");
+        };
+        assert_eq!(
+            s.excludes,
+            vec![Exclude {
+                code: "PRINT".into(),
+                line: 3
+            }]
+        );
+    }
+
+    #[test]
+    fn exclude_without_code_is_rejected() {
+        let e = parse("GUISTATUS S\nEXCLUDE\nENDGUISTATUS\n").unwrap_err();
+        assert_eq!(e.line, 2);
+        assert!(e.message.contains("expected function code"));
+    }
+
+    #[test]
+    fn exclude_with_extra_token_is_rejected() {
+        let e = parse("GUISTATUS S\nEXCLUDE PRINT X\nENDGUISTATUS\n").unwrap_err();
+        assert_eq!(e.line, 2);
+        assert!(e.message.contains("unexpected"));
     }
 
     #[test]
@@ -933,5 +1198,240 @@ ENDGUISTATUS
             panic!("expected FRAME");
         };
         assert_eq!((*row2, *col2, title.as_str()), (5, 30, "Kopf"));
+    }
+
+    #[test]
+    fn field_without_module_is_a_flow_item_without_module() {
+        let items = flow_of("PROCESS AFTER INPUT\n  FIELD ZKUNNR\n");
+        let [FlowItem::Field(f)] = items.as_slice() else {
+            panic!("expected one FIELD item, found {items:?}");
+        };
+        assert_eq!(f.name, "ZKUNNR");
+        assert_eq!(
+            (f.module.as_deref(), f.cond, f.chain),
+            (None, Cond::Plain, None)
+        );
+        assert_eq!(f.line, 4);
+    }
+
+    #[test]
+    fn field_with_module_and_on_input_or_request_is_read() {
+        let items = flow_of(
+            "PROCESS AFTER INPUT\n  FIELD A MODULE CHK_A ON INPUT\n  FIELD B MODULE chk_b on request\n",
+        );
+        let [FlowItem::Field(a), FlowItem::Field(b)] = items.as_slice() else {
+            panic!("expected two FIELD items, found {items:?}");
+        };
+        assert_eq!((a.module.as_deref(), a.cond), (Some("CHK_A"), Cond::Input));
+        assert_eq!(
+            (b.module.as_deref(), b.cond),
+            (Some("chk_b"), Cond::Request)
+        );
+        assert_eq!(a.chain, None);
+    }
+
+    #[test]
+    fn field_with_module_without_condition_is_plain() {
+        let items = flow_of("PROCESS AFTER INPUT\n  FIELD A MODULE CHK_A\n");
+        let FlowItem::Field(a) = &items[0] else {
+            panic!("expected FIELD item");
+        };
+        assert_eq!((a.module.as_deref(), a.cond), (Some("CHK_A"), Cond::Plain));
+    }
+
+    #[test]
+    fn chain_items_keep_source_order_and_chain_number() {
+        let items = flow_of(
+            "PROCESS AFTER INPUT\n  FIELD ZKUNNR MODULE CHECK_KUNNR ON REQUEST\n  CHAIN\n    FIELD ZWERK\n    FIELD ZLGORT\n    MODULE CHECK_LAGER ON CHAIN-REQUEST\n  ENDCHAIN\n  MODULE USER_COMMAND_0100\n",
+        );
+        assert_eq!(items.len(), 5);
+        let FlowItem::Field(kunnr) = &items[0] else {
+            panic!("expected FIELD first, found {items:?}");
+        };
+        assert_eq!(
+            (kunnr.name.as_str(), kunnr.chain, kunnr.cond),
+            ("ZKUNNR", None, Cond::Request)
+        );
+        let FlowItem::Field(werk) = &items[1] else {
+            panic!("expected chain FIELD second");
+        };
+        assert_eq!((werk.name.as_str(), werk.chain), ("ZWERK", Some(1)));
+        let FlowItem::Field(lgort) = &items[2] else {
+            panic!("expected chain FIELD third");
+        };
+        assert_eq!((lgort.name.as_str(), lgort.chain), ("ZLGORT", Some(1)));
+        let FlowItem::ChainModule(cm) = &items[3] else {
+            panic!("expected chain MODULE last");
+        };
+        assert_eq!(
+            (cm.chain, cm.module.as_str(), cm.cond, cm.line),
+            (1, "CHECK_LAGER", Cond::ChainRequest, 8)
+        );
+        assert_eq!(entry(&items[4]).module, "USER_COMMAND_0100");
+    }
+
+    #[test]
+    fn chain_with_input_module_and_numbers_restart_per_dynpro() {
+        let items = flow_of(
+            "PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    MODULE M1 ON CHAIN-INPUT\n  ENDCHAIN\n  CHAIN\n    FIELD B\n  ENDCHAIN\n",
+        );
+        let [FlowItem::Field(a), FlowItem::ChainModule(m1), FlowItem::Field(b)] = items.as_slice()
+        else {
+            panic!("unexpected items {items:?}");
+        };
+        assert_eq!((a.chain, m1.chain, m1.cond), (Some(1), 1, Cond::ChainInput));
+        assert_eq!(b.chain, Some(2));
+    }
+
+    #[test]
+    fn chain_without_module_has_no_chain_module_item() {
+        let items = flow_of("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n  ENDCHAIN\n");
+        assert_eq!(items.len(), 1);
+        assert!(matches!(&items[0], FlowItem::Field(f) if f.chain == Some(1)));
+    }
+
+    #[test]
+    fn module_on_chain_outside_chain_is_read_for_the_checker() {
+        // Die Prüfung (check.rs) weist das ab; der Parser nimmt die Zeile an.
+        let items = flow_of("PROCESS AFTER INPUT\n  MODULE M ON CHAIN-INPUT\n");
+        assert!(matches!(&items[0], FlowItem::Module(e) if e.cond == Cond::ChainInput));
+    }
+
+    #[test]
+    fn module_without_on_or_exit_keeps_old_behaviour() {
+        let items = flow_of("PROCESS AFTER INPUT\n  MODULE M\n  MODULE X AT EXIT-COMMAND\n");
+        assert_eq!(entry(&items[0]).module, "M");
+        assert!(!entry(&items[0]).at_exit);
+        assert_eq!(entry(&items[0]).cond, Cond::Plain);
+        assert!(entry(&items[1]).at_exit);
+    }
+
+    #[test]
+    fn nested_chain_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    CHAIN\n");
+        assert_eq!(e.line, 6);
+        assert_eq!(e.message, "Syntax error: CHAIN cannot be nested");
+    }
+
+    #[test]
+    fn line_other_than_field_or_module_inside_chain_is_a_syntax_error() {
+        let e =
+            flow_error("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    PROCESS BEFORE OUTPUT\n");
+        assert_eq!(e.line, 6);
+        assert!(e
+            .message
+            .contains("expected FIELD, MODULE or ENDCHAIN in CHAIN"));
+        assert!(e.message.contains("'PROCESS'"));
+    }
+
+    #[test]
+    fn field_with_module_inside_chain_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A MODULE M ON INPUT\n");
+        assert_eq!(e.line, 5);
+        assert!(e.message.contains("unexpected 'MODULE'"));
+    }
+
+    #[test]
+    fn plain_module_inside_chain_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    MODULE M\n");
+        assert_eq!(e.line, 6);
+        assert!(e
+            .message
+            .contains("MODULE in CHAIN needs ON CHAIN-INPUT or ON CHAIN-REQUEST"));
+    }
+
+    #[test]
+    fn module_on_input_inside_chain_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    MODULE M ON INPUT\n");
+        assert!(e.message.contains("MODULE in CHAIN needs ON CHAIN-INPUT"));
+    }
+
+    #[test]
+    fn two_chain_modules_in_one_chain_are_a_syntax_error() {
+        let e = flow_error(
+            "PROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n    MODULE M1 ON CHAIN-INPUT\n    MODULE M2 ON CHAIN-REQUEST\n",
+        );
+        assert_eq!(e.line, 7);
+        assert!(e.message.contains("only one MODULE"));
+    }
+
+    #[test]
+    fn chain_without_field_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  CHAIN\n  ENDCHAIN\n");
+        assert_eq!(e.line, 5);
+        assert!(e.message.contains("CHAIN without FIELD"));
+    }
+
+    #[test]
+    fn endflow_inside_open_chain_is_a_syntax_error() {
+        let src =
+            "DYNPRO 0100\nFLOW\nPROCESS AFTER INPUT\n  CHAIN\n    FIELD A\nENDFLOW\nENDDYNPRO\n";
+        let e = parse(src).unwrap_err();
+        assert_eq!(e.line, 6);
+        assert!(e
+            .message
+            .contains("expected FIELD, MODULE or ENDCHAIN in CHAIN"));
+    }
+
+    #[test]
+    fn endchain_without_chain_is_a_syntax_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  ENDCHAIN\n");
+        assert_eq!(e.line, 4);
+        assert_eq!(e.message, "Syntax error: ENDCHAIN without CHAIN");
+    }
+
+    #[test]
+    fn chain_before_process_after_input_is_an_error() {
+        let e = flow_error("PROCESS BEFORE OUTPUT\n  CHAIN\n");
+        assert!(e
+            .message
+            .contains("CHAIN is only allowed after PROCESS AFTER INPUT"));
+    }
+
+    #[test]
+    fn field_in_flow_before_output_is_an_error() {
+        let e = flow_error("PROCESS BEFORE OUTPUT\n  FIELD A\n");
+        assert_eq!(e.line, 4);
+        assert!(e
+            .message
+            .contains("FIELD is only allowed after PROCESS AFTER INPUT"));
+    }
+
+    #[test]
+    fn field_in_flow_without_process_is_an_error() {
+        let e = flow_error("  FIELD A\n");
+        assert!(e
+            .message
+            .contains("FIELD is only allowed after PROCESS AFTER INPUT"));
+    }
+
+    #[test]
+    fn on_without_module_after_field_is_an_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  FIELD A ON INPUT\n");
+        assert_eq!(e.line, 4);
+        assert!(e.message.contains("expected MODULE, found 'ON'"));
+    }
+
+    #[test]
+    fn unknown_on_condition_is_an_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  FIELD A MODULE M ON CHANGE\n");
+        assert!(e
+            .message
+            .contains("expected INPUT, REQUEST, CHAIN-INPUT or CHAIN-REQUEST after ON"));
+    }
+
+    #[test]
+    fn exit_command_on_field_is_an_error() {
+        let e = flow_error("PROCESS AFTER INPUT\n  FIELD A MODULE M AT EXIT-COMMAND\n");
+        assert!(e
+            .message
+            .contains("AT EXIT-COMMAND is only allowed for MODULE"));
+    }
+
+    #[test]
+    fn unterminated_chain_is_reported_at_end_of_file() {
+        let e =
+            parse("DYNPRO 0100\nFLOW\nPROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n").unwrap_err();
+        assert!(e.message.contains("expected ENDCHAIN"));
     }
 }

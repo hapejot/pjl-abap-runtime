@@ -11,7 +11,7 @@ pub enum Key {
     Enter,
     Tab,
     BackTab,
-    /// Funktionstaste F1 bis F12.
+    /// Funktionstaste 1 bis 24. Die Nummern 13 bis 24 sind Shift+F1 bis Shift+F12 (Abschnitt 6.2).
     F(u8),
     Esc,
     Backspace,

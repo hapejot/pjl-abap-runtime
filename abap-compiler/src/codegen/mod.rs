@@ -192,10 +192,18 @@ struct Rt<'ctx> {
     screen_button: FunctionValue<'ctx>,
     screen_frame: FunctionValue<'ctx>,
     screen_module: FunctionValue<'ctx>,
+    /// PAI-Feldeintrag (Spec 12a): `abap_rt_screen_pai_field(no, name, len, func, cond, chain)`
+    screen_pai_field: FunctionValue<'ctx>,
+    /// Kettenmodul (Spec 12a): `abap_rt_screen_pai_chain(no, chain, func, cond)`
+    screen_pai_chain: FunctionValue<'ctx>,
     screen_end: FunctionValue<'ctx>,
     status_begin: FunctionValue<'ctx>,
     status_fkey: FunctionValue<'ctx>,
     status_end: FunctionValue<'ctx>,
+    status_exclude: FunctionValue<'ctx>,
+    set_cursor: FunctionValue<'ctx>,
+    get_cursor: FunctionValue<'ctx>,
+    set_titlebar: FunctionValue<'ctx>,
     call_screen: FunctionValue<'ctx>,
     set_screen: FunctionValue<'ctx>,
     leave_screen: FunctionValue<'ctx>,
@@ -467,6 +475,24 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_screen_module",
                 void.fn_type(&[i32t.into(), i32t.into(), ptrt.into(), i32t.into()], false),
             ),
+            screen_pai_field: f(
+                "abap_rt_screen_pai_field",
+                void.fn_type(
+                    &[
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i32t.into(),
+                        i32t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            screen_pai_chain: f(
+                "abap_rt_screen_pai_chain",
+                void.fn_type(&[i32t.into(), i32t.into(), ptrt.into(), i32t.into()], false),
+            ),
             screen_end: f("abap_rt_screen_end", void.fn_type(&[i32t.into()], false)),
             status_begin: f(
                 "abap_rt_status_begin",
@@ -487,6 +513,22 @@ impl<'ctx> Codegen<'ctx> {
                 ),
             ),
             status_end: f("abap_rt_status_end", void.fn_type(&[], false)),
+            status_exclude: f(
+                "abap_rt_status_exclude",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            set_cursor: f(
+                "abap_rt_set_cursor",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            get_cursor: f(
+                "abap_rt_get_cursor",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            set_titlebar: f(
+                "abap_rt_set_titlebar",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
             call_screen: f("abap_rt_call_screen", void.fn_type(&[i32t.into()], false)),
             set_screen: f("abap_rt_set_screen", void.fn_type(&[i32t.into()], false)),
             leave_screen: f("abap_rt_leave_screen", void.fn_type(&[], false)),

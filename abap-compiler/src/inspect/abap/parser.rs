@@ -189,7 +189,9 @@ fn is_end(s: &Statement) -> bool {
 fn is_event(s: &Statement) -> bool {
     match s.keyword().as_str() {
         "START-OF-SELECTION" | "END-OF-SELECTION" | "INITIALIZATION" | "LOAD-OF-PROGRAM"
-        | "TOP-OF-PAGE" | "END-OF-PAGE" | "GET" => true,
+        | "TOP-OF-PAGE" | "END-OF-PAGE" => true,
+        // GET CURSOR ist eine Anweisung (Dynpro), GET <knoten> der Ereignisblock
+        "GET" => !name_at(s, 1).eq_ignore_ascii_case("CURSOR"),
         "AT" => matches!(
             name_at(s, 1).to_uppercase().as_str(),
             "SELECTION-SCREEN" | "LINE-SELECTION" | "USER-COMMAND"
