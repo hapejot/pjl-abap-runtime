@@ -8,6 +8,7 @@
 
 pub mod decimal;
 pub mod packed;
+pub mod screen;
 
 use std::io::{self, Write};
 use std::sync::atomic::AtomicU64;

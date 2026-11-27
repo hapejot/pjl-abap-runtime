@@ -150,6 +150,7 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
             "userenv.lib",
             "ws2_32.lib",
             "dbghelp.lib",
+            "user32.lib",
             "/DEFAULTLIB:msvcrt",
         ])
         .output()

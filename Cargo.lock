@@ -21,6 +21,9 @@ dependencies = [
 [[package]]
 name = "abap-rt"
 version = "0.1.0"
+dependencies = [
+ "crossterm",
+]
 
 [[package]]
 name = "adler2"
