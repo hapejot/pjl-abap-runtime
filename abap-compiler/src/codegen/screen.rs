@@ -4,7 +4,7 @@
 use super::*;
 use crate::dynpro::{
     color_bits, Cond, Dynpro, DynproFile, DynproItem, ElementKind, FieldFlow, FieldType, FlowItem,
-    GuiStatus, Phase,
+    GuiStatus, Phase, ValueRequest,
 };
 use crate::lower::{Ir, ScreenOp};
 
@@ -225,7 +225,45 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
         }
+        // Wertehilfe (Spec 12b) in Quelltextfolge, nach allen PAI-Einträgen
+        for vr in &d.value_requests {
+            self.emit_value_request(d, no, vr)?;
+        }
         self.call_void(self.rt.screen_end, &[no.into()])
+    }
+
+    /// `FIELD name MODULE m` im Block `PROCESS ON VALUE-REQUEST` (Spec 12b): `abap_rt_screen_pov_field`. Der Name ist
+    /// die Schreibweise des `FIELD`-Elements. `m` ist ein INPUT-Modul, dessen Funktionszeiger übergeben wird.
+    fn emit_value_request(
+        &mut self,
+        d: &Dynpro,
+        no: IntValue<'ctx>,
+        vr: &ValueRequest,
+    ) -> CResult<()> {
+        let Some(name) = d.elements.iter().find_map(|el| match &el.kind {
+            ElementKind::Field { name, .. } if name.to_lowercase() == vr.name.to_lowercase() => {
+                Some(name.as_str())
+            }
+            _ => None,
+        }) else {
+            return err(
+                vr.line,
+                format!(
+                    "FIELD '{}' in PROCESS ON VALUE-REQUEST is not a FIELD of DYNPRO {:04}",
+                    vr.name, d.number
+                ),
+            );
+        };
+        let func = self.optional_module_ptr(Some(&vr.module), vr.line)?;
+        self.call_void(
+            self.rt.screen_pov_field,
+            &[
+                no.into(),
+                self.lit(name).into(),
+                self.utf16_len(name).into(),
+                func.into(),
+            ],
+        )
     }
 
     /// Funktionszeiger eines PAI-Moduls, oder ein Null-Zeiger, wenn kein Modul angegeben ist (Spec 12a).
@@ -332,6 +370,16 @@ impl<'ctx> Codegen<'ctx> {
                 &[self.lit(text).into(), self.utf16_len(text).into()],
             ),
             ScreenOp::Call(n) => self.call_void(self.rt.call_screen, &[self.u32c(*n).into()]),
+            ScreenOp::CallModal { no, x, y, x2, y2 } => self.call_void(
+                self.rt.call_screen_modal,
+                &[
+                    self.u32c(*no).into(),
+                    self.u32c(*x).into(),
+                    self.u32c(*y).into(),
+                    self.u32c(*x2).into(),
+                    self.u32c(*y2).into(),
+                ],
+            ),
             ScreenOp::Set(n) => self.call_void(self.rt.set_screen, &[self.u32c(*n).into()]),
             ScreenOp::Leave => self.call_void(self.rt.leave_screen, &[]),
             ScreenOp::LeaveTo(n) => {
@@ -750,5 +798,105 @@ ENDGUISTATUS
         let mut cg = Codegen::new(&ctx);
         let e = cg.emit_program(&ir).unwrap_err();
         assert!(format!("{e:?}").contains("'ZFEHLT' in the flow is not a FIELD of DYNPRO 0100"));
+    }
+
+    #[test]
+    fn modal_call_passes_number_and_corners_as_i32_arguments() {
+        let abap = ABAP.replace(
+            "  CALL SCREEN 0100.\n",
+            "  CALL SCREEN 0100.\n  CALL SCREEN 0200 STARTING AT 10 5 ENDING AT 60 15.\n",
+        );
+        let dynp =
+            format!("{DYNP}DYNPRO 0200 KIND MODAL\n  SIZE 9 49\n  TEXT 2 2 'Name'\nENDDYNPRO\n");
+        let ir = screen_program(&abap, &dynp);
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx);
+        cg.emit_program(&ir).expect("codegen succeeds");
+        let ll = cg.module.print_to_string().to_string();
+        assert!(ll.contains("declare void @abap_rt_call_screen_modal(i32, i32, i32, i32, i32)"));
+        assert!(ll.contains(
+            "call void @abap_rt_call_screen_modal(i32 200, i32 10, i32 5, i32 60, i32 15)"
+        ));
+    }
+
+    #[test]
+    fn modal_call_without_ending_at_passes_zero_corner() {
+        let abap = ABAP.replace(
+            "  CALL SCREEN 0100.\n",
+            "  CALL SCREEN 0100.\n  CALL SCREEN 0200 STARTING AT 3 2.\n",
+        );
+        let dynp = format!("{DYNP}DYNPRO 0200 KIND MODAL\nENDDYNPRO\n");
+        let ir = screen_program(&abap, &dynp);
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx);
+        cg.emit_program(&ir).expect("codegen succeeds");
+        let ll = cg.module.print_to_string().to_string();
+        assert!(ll
+            .contains("call void @abap_rt_call_screen_modal(i32 200, i32 3, i32 2, i32 0, i32 0)"));
+    }
+
+    /// `DYNP` mit einem Block `PROCESS ON VALUE-REQUEST` (Zeilen `pov`), der in der Datei vor der PAI-Folge steht.
+    fn dynp_with_pov_before_pai(pov: &str) -> String {
+        DYNP.replace(
+            "    PROCESS AFTER INPUT\n",
+            &format!("    PROCESS ON VALUE-REQUEST\n{pov}    PROCESS AFTER INPUT\n"),
+        )
+    }
+
+    #[test]
+    fn value_request_passes_field_name_length_and_module_pointer() {
+        let dynp = dynp_with_pov_before_pai("      FIELD ZNAME1 MODULE USER_COMMAND_0100\n");
+        let ll = ll_of(&screen_program(ABAP, &dynp));
+        // no = 100, Name ZNAME1 (6 Zeichen), Funktionszeiger des INPUT-Moduls
+        call_line(
+            &ll,
+            "abap_rt_screen_pov_field",
+            "ptr @abap_module_pai_user_command_0100)",
+        );
+        assert!(
+            ll.contains("call void @abap_rt_screen_pov_field(i32 100, ptr @"),
+            "{ll}"
+        );
+        assert!(
+            ll.contains("i64 6, ptr @abap_module_pai_user_command_0100)"),
+            "{ll}"
+        );
+    }
+
+    #[test]
+    fn value_request_calls_come_after_pai_entries_and_before_screen_end() {
+        let dynp = dynp_with_pov_before_pai("      FIELD ZNAME1 MODULE USER_COMMAND_0100\n");
+        let ll = ll_of(&screen_program(ABAP, &dynp));
+        let flow: Vec<String> = screen_call_names(&ll)
+            .into_iter()
+            .filter(|n| {
+                matches!(
+                    n.as_str(),
+                    "abap_rt_screen_module" | "abap_rt_screen_pov_field" | "abap_rt_screen_end"
+                )
+            })
+            .collect();
+        // PBO-Modul, PAI-Modul (AT EXIT-COMMAND), dann die Wertehilfe, dann das Ende
+        assert_eq!(
+            flow,
+            vec![
+                "abap_rt_screen_module",
+                "abap_rt_screen_module",
+                "abap_rt_screen_pov_field",
+                "abap_rt_screen_end",
+            ]
+        );
+    }
+
+    #[test]
+    fn value_request_for_a_field_that_is_not_an_element_is_a_codegen_error() {
+        let dynp = dynp_with_pov_before_pai("      FIELD ZFEHLT MODULE USER_COMMAND_0100\n");
+        let mut ir = parse_source(ABAP).expect("program translates");
+        ir.screens = Some(parse_dynp("prog.dynp", &dynp).expect("dynpro parses"));
+        let ctx = Context::create();
+        let mut cg = Codegen::new(&ctx);
+        let e = cg.emit_program(&ir).unwrap_err();
+        assert!(format!("{e:?}")
+            .contains("'ZFEHLT' in PROCESS ON VALUE-REQUEST is not a FIELD of DYNPRO 0100"));
     }
 }

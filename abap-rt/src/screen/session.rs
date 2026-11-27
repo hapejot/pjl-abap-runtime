@@ -6,12 +6,13 @@
 
 use std::sync::Arc;
 
-use super::grid::{cursor_cell, render_titled};
+use super::grid::{cursor_cell, render_titled, Grid};
 use super::input::{self, Editor, Fault, Outcome, Pos};
 use super::model::{Cond, Dynpro, FKind, GuiStatus, Message, Module, PaiEntry};
-use super::terminal::Event;
+use super::terminal::{Event, Key};
 use super::value::{self, Value};
-use super::{open_terminal, state, Nav, State};
+use super::window::{render_window, Content, Window};
+use super::{open_terminal, state, Nav, Shown, State};
 
 /// Wie die Schleife eines Dynpros endet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,12 +37,38 @@ struct Run {
     /// Wiederaufnahme nach E oder W aus einem Feld- oder Kettenmodul: Index des Eintrags in der PAI-Liste, ab dem
     /// die nächste Übertragung weiterläuft (Abschnitt 12a). Die Eingabebeschränkung steht im `editor`.
     resume: Option<usize>,
+    /// Modalfenster (Spec 12c). `None` beim Vollbild.
+    overlay: Option<Overlay>,
+}
+
+/// Modalfenster einer Schleife: Lage der Innenfläche und das Bild darunter. Das Bild erscheint beim Verlassen wieder.
+struct Overlay {
+    window: Window,
+    under: Shown,
 }
 
 /// `CALL SCREEN n`: Führt das Dynpro aus, bis es verlassen wird.
 pub fn call_screen(no: u32) -> Result<(), String> {
+    run_screen(find_dynpro(no)?, None)
+}
+
+/// `CALL SCREEN n STARTING AT x y [ENDING AT x2 y2]` (Spec 12c). `x2 = y2 = 0`: ohne ENDING AT, die Größe kommt
+/// aus SIZE des Dynpros. Lage und Größe müssen ins Terminal passen; sonst ein Laufzeitfehler.
+pub fn call_screen_modal(no: u32, x: u32, y: u32, x2: u32, y2: u32) -> Result<(), String> {
     let dynpro = find_dynpro(no)?;
-    let (outermost, saved_nav, saved_status) = {
+    if !dynpro.modal {
+        return Err(format!(
+            "CALL SCREEN {no:04} STARTING AT needs a dynpro with KIND MODAL, but dynpro {no:04} is NORMAL"
+        ));
+    }
+    let window = Window::resolve(x, y, x2, y2, dynpro.rows, dynpro.cols)?;
+    window.check_fit(&dynpro)?;
+    run_screen(dynpro, Some(window))
+}
+
+/// Führt das Dynpro als Schleife aus, im Vollbild oder im Modalfenster `window`.
+fn run_screen(dynpro: Arc<Dynpro>, window: Option<Window>) -> Result<(), String> {
+    let (outermost, saved_nav, saved_status, under) = {
         let mut guard = state();
         let st = &mut *guard;
         if st.sy.is_none() {
@@ -56,8 +83,21 @@ pub fn call_screen(no: u32) -> Result<(), String> {
                 terminal.begin()?;
             }
         }
-        st.stack.push(no);
-        (outermost, st.pending_nav.take(), st.pending_status.take())
+        // Das Fenster liegt über dem Bild, das zuletzt gezeigt wurde. Ohne Vorgänger (erstes Dynpro) ist es leer.
+        let under = match (&st.shown, outermost) {
+            (Some(shown), false) => shown.clone(),
+            _ => Shown {
+                grid: Grid::new(),
+                cursor: (0, 0),
+            },
+        };
+        st.stack.push(dynpro.no);
+        (
+            outermost,
+            st.pending_nav.take(),
+            st.pending_status.take(),
+            under,
+        )
     };
 
     let mut run = Run {
@@ -66,10 +106,11 @@ pub fn call_screen(no: u32) -> Result<(), String> {
         editor: Editor::new(),
         need_pbo: true,
         resume: None,
+        overlay: window.map(|window| Overlay { window, under }),
     };
     let result = run_loop(&mut run);
 
-    {
+    let redraw = {
         let mut guard = state();
         let st = &mut *guard;
         st.stack.pop();
@@ -78,27 +119,47 @@ pub fn call_screen(no: u32) -> Result<(), String> {
         // Aktionen des aufrufenden Dynpros bleiben erhalten; die Schleife hat ihre eigenen verbraucht.
         st.pending_nav = saved_nav;
         st.pending_status = saved_status;
+        // Verlassen eines Modalfensters: die Fläche wird frei und das Bild darunter neu gezeichnet (Spec 12c).
+        let redraw = match run.overlay.take() {
+            Some(overlay) => show(st, overlay.under),
+            None => Ok(()),
+        };
         if outermost {
             if let Some(terminal) = st.terminal.as_mut() {
                 terminal.end();
             }
+            st.shown = None;
         }
-    }
+        redraw
+    };
 
-    match result? {
+    let exit = result?;
+    redraw?;
+    match exit {
         Exit::Leave => Ok(()),
-        Exit::LeaveTo(no) => {
+        Exit::LeaveTo(target) => {
             // LEAVE TO SCREEN n: Das aufrufende Dynpro zeigt n als nächstes (Annahme, siehe Bericht).
             let mut guard = state();
             if guard.stack.is_empty() {
                 return Err(format!(
-                    "LEAVE TO SCREEN {no:04} without a calling screen is not supported"
+                    "LEAVE TO SCREEN {target:04} without a calling screen is not supported"
                 ));
             }
-            guard.pending_nav = Some(Nav::SetScreen(no));
+            guard.pending_nav = Some(Nav::SetScreen(target));
             Ok(())
         }
     }
+}
+
+/// Zeichnet ein gespeichertes Bild neu und merkt es als zuletzt gezeigt.
+fn show(st: &mut State, shown: Shown) -> Result<(), String> {
+    let terminal = st
+        .terminal
+        .as_mut()
+        .ok_or_else(|| "no terminal open for dynpro".to_string())?;
+    terminal.draw(&shown.grid, shown.cursor)?;
+    st.shown = Some(shown);
+    Ok(())
 }
 
 fn find_dynpro(no: u32) -> Result<Arc<Dynpro>, String> {
@@ -143,6 +204,12 @@ fn run_loop(run: &mut Run) -> Result<Exit, String> {
                 ))
             }
             Event::Field(name) => run.editor.goto(&run.dynpro, &name)?,
+            // F4 ist die Wertehilfe und nicht Teil der FKEY-Belegung (Spec 12b)
+            Event::Key(Key::F(4)) => {
+                if let Some(exit) = value_request(run)? {
+                    return Ok(exit);
+                }
+            }
             Event::Key(key) => match run.editor.handle(&run.dynpro, run.status.as_deref(), key) {
                 Outcome::Nothing => {}
                 Outcome::Interrupt => return Err("interrupted by user".to_string()),
@@ -154,6 +221,48 @@ fn run_loop(run: &mut Run) -> Result<Exit, String> {
             },
         }
     }
+}
+
+/// Taste F4, Wertehilfe (Spec 12b, Option B). Hat das Feld unter dem Cursor ein POV-Modul, läuft nur dieses Modul:
+/// keine Übertragung, keine Prüfung, kein PAI, kein PBO danach. Danach wird nur dieses Feld aus seiner ABAP-Variablen
+/// neu geladen. Der Cursor bleibt, die Meldungszeile bleibt. `sy-ucomm` ist leer (kein Funktionscode).
+/// Ohne POV-Modul am Feld hat die Taste keine Wirkung. Liefert `Some`, wenn die Schleife endet.
+fn value_request(run: &mut Run) -> Result<Option<Exit>, String> {
+    let pos = run.editor.cursor(&run.dynpro);
+    let Some(index) = input::field_at(&run.dynpro, pos) else {
+        return Ok(None);
+    };
+    let func = run
+        .dynpro
+        .pov
+        .iter()
+        .find(|e| e.name.eq_ignore_ascii_case(&run.dynpro.fields[index].name))
+        .map(|e| e.func);
+    let Some(func) = func else {
+        return Ok(None);
+    };
+    set_dynnr(run.dynpro.no)?;
+    set_ucomm("")?;
+    let phase = run_value_request(func);
+    if let Some(status) = phase.status {
+        run.status = Some(status);
+    }
+    // LEAVE und SET SCREEN wirken wie in PBO und PAI; dann gibt es kein Feld mehr zum Neuladen.
+    if let Some(nav) = phase.nav {
+        return apply_nav(run, nav);
+    }
+    run.editor
+        .reload_field(&run.dynpro, index)
+        .map_err(String::from)?;
+    run.editor.focus(pos);
+    Ok(None)
+}
+
+/// Führt das Wertehilfe-Modul allein aus. Navigation und GUI-Status werden wie nach einem PBO-Modul ausgewertet.
+fn run_value_request(func: extern "C" fn()) -> Phase {
+    state().pending_nav = None;
+    func();
+    take_actions()
 }
 
 /// Übertragung zum PAI (Abschnitt 6.4). Liefert `Some`, wenn die Schleife endet.
@@ -471,6 +580,10 @@ fn report_fault(run: &mut Run, fault: Fault) {
 
 fn switch_to(run: &mut Run, no: u32) -> Result<(), String> {
     let next = find_dynpro(no)?;
+    // Im Modalfenster bleibt die Lage des Fensters; das neue Dynpro muss in die Innenfläche passen.
+    if let Some(overlay) = &run.overlay {
+        overlay.window.check_fit(&next)?;
+    }
     {
         let mut st = state();
         forget_screen_actions(&mut st, run.dynpro.no);
@@ -547,17 +660,40 @@ fn draw(run: &Run) -> Result<(), String> {
         Some((no, text)) if *no == run.dynpro.no => text.as_str(),
         _ => run.dynpro.title.as_str(),
     };
-    let grid = render_titled(
-        &run.dynpro,
-        title,
-        run.editor.bufs(),
-        run.editor.restriction(),
-        run.status.as_deref(),
-        st.message.as_ref(),
-    );
     let pos = run.editor.cursor(&run.dynpro);
+    let (grid, cursor) = match &run.overlay {
+        Some(overlay) => (
+            render_window(
+                &overlay.under.grid,
+                &overlay.window,
+                &run.dynpro,
+                &Content {
+                    title,
+                    bufs: run.editor.bufs(),
+                    enabled: run.editor.restriction(),
+                    status: run.status.as_deref(),
+                    message: st.message.as_ref(),
+                },
+            ),
+            overlay.window.cursor(pos.row, pos.col),
+        ),
+        None => (
+            render_titled(
+                &run.dynpro,
+                title,
+                run.editor.bufs(),
+                run.editor.restriction(),
+                run.status.as_deref(),
+                st.message.as_ref(),
+            ),
+            cursor_cell(pos.row, pos.col),
+        ),
+    };
     st.cursor_at = Some((run.dynpro.no, pos));
-    let cursor = cursor_cell(pos.row, pos.col);
+    st.shown = Some(Shown {
+        grid: grid.clone(),
+        cursor,
+    });
     let terminal = st
         .terminal
         .as_mut()
@@ -606,8 +742,8 @@ mod tests {
     };
     use crate::screen::headless::Headless;
     use crate::screen::model::{
-        AbapType, Cond, FKey, FKind, Field, GuiStatus, Message, Module, PaiEntry, VarPtr, INPUT,
-        OUTPUT, PASSWORD, REQUIRED,
+        AbapType, Cond, FKey, FKind, Field, GuiStatus, Message, Module, PaiEntry, PovEntry, VarPtr,
+        INPUT, OUTPUT, PASSWORD, REQUIRED,
     };
     use crate::screen::test_support::exclusive;
     use crate::screen::value::display_width;
@@ -1027,6 +1163,148 @@ mod tests {
         assert!(screens[0][2].starts_with(" THIRD"));
         // PAI von 100, 200 und 300 je einmal.
         assert_eq!(PAI_CALLS.load(Ordering::SeqCst), 3);
+    }
+
+    static MAIN_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static MODAL_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// PAI des Hauptdynpros: beim ersten Durchlauf das Modalfenster 200 öffnen, beim zweiten verlassen.
+    extern "C" fn pai_open_200_then_leave() {
+        if MAIN_CALLS.fetch_add(1, Ordering::SeqCst) == 0 {
+            crate::screen::abi::abap_rt_call_screen_modal(200, 10, 5, 60, 15);
+        } else {
+            abap_rt_leave_screen();
+        }
+    }
+
+    /// PAI des Modalfensters 200: beim ersten Durchlauf das Modalfenster 300 öffnen, beim zweiten verlassen.
+    extern "C" fn pai_open_300_then_leave() {
+        if MODAL_CALLS.fetch_add(1, Ordering::SeqCst) == 0 {
+            crate::screen::abi::abap_rt_call_screen_modal(300, 20, 8, 30, 12);
+        } else {
+            abap_rt_leave_screen();
+        }
+    }
+
+    fn modal_dynpro(no: u32, rows: u32, cols: u32, pai: Vec<Module>) -> Dynpro {
+        let mut d = dynpro(no, vec![], vec![], pai);
+        d.modal = true;
+        d.rows = rows;
+        d.cols = cols;
+        // Ohne Titel, damit die obere Rahmenzeile in den Erwartungen nur aus Rahmenzeichen besteht
+        d.title = String::new();
+        d
+    }
+
+    #[test]
+    fn leaving_a_modal_window_redraws_the_caller() {
+        let h = Harness::new("KEY ENTER\nSNAPSHOT\nKEY ENTER\nSNAPSHOT\nKEY ENTER\n");
+        MAIN_CALLS.store(0, Ordering::SeqCst);
+        let mut main = dynpro(
+            100,
+            vec![],
+            vec![],
+            vec![module(pai_open_200_then_leave, false)],
+        );
+        main.texts.push(text_at("BASE", 2, 2));
+        h.install(main);
+        let mut window = modal_dynpro(200, 9, 49, vec![module(pai_leave, false)]);
+        window.texts.push(text_at("WIN", 1, 1));
+        h.install(window);
+
+        call(100).unwrap();
+
+        assert!(state().stack.is_empty());
+        let screens = h.screens();
+        assert_eq!(screens.len(), 2);
+        // Fenster offen: Rahmen in Zeile 5 (Spalten 10 bis 60), Innenzeile 6 mit dem Text des Fensters
+        let frame_top = format!("{}+{}+{}", " ".repeat(9), "-".repeat(49), " ".repeat(20));
+        assert_eq!(screens[0][4], frame_top);
+        assert_eq!(screens[0][5].chars().nth(9), Some('|'));
+        assert!(screens[0][5].chars().skip(10).take(3).eq("WIN".chars()));
+        assert!(screens[0][2].starts_with(" BASE"));
+        // Verlassen: das Hauptdynpro ist wieder vollständig zu sehen, ohne Rest des Fensters
+        assert!(screens[1][2].starts_with(" BASE"));
+        assert_eq!(screens[1][4], " ".repeat(80));
+        assert_eq!(screens[1][5], " ".repeat(80));
+    }
+
+    #[test]
+    fn nested_modal_window_is_drawn_over_the_first_window() {
+        let h = Harness::new(
+            "KEY ENTER\nSNAPSHOT\nKEY ENTER\nSNAPSHOT\nKEY ENTER\nSNAPSHOT\nKEY ENTER\nSNAPSHOT\nKEY ENTER\n",
+        );
+        MAIN_CALLS.store(0, Ordering::SeqCst);
+        MODAL_CALLS.store(0, Ordering::SeqCst);
+        let mut main = dynpro(
+            100,
+            vec![],
+            vec![],
+            vec![module(pai_open_200_then_leave, false)],
+        );
+        main.texts.push(text_at("BASE", 2, 2));
+        h.install(main);
+        h.install(modal_dynpro(
+            200,
+            9,
+            49,
+            vec![module(pai_open_300_then_leave, false)],
+        ));
+        h.install(modal_dynpro(300, 3, 9, vec![module(pai_leave, false)]));
+
+        call(100).unwrap();
+
+        assert!(state().stack.is_empty());
+        let screens = h.screens();
+        assert_eq!(screens.len(), 4);
+        // 200 über dem Hauptdynpro
+        assert_eq!(screens[0][4].chars().nth(9), Some('+'));
+        // 300 (Zeilen 8 bis 12, Spalten 20 bis 30) liegt über dem Rahmen von 200 in Zeile 8
+        assert_eq!(screens[1][7].chars().nth(9), Some('|'));
+        assert_eq!(screens[1][7].chars().nth(19), Some('+'));
+        assert_eq!(screens[1][7].chars().nth(29), Some('+'));
+        // 300 verlassen: 200 ist wieder oben, seine Innenfläche in Zeile 8 ist leer
+        assert_eq!(screens[2][7].chars().nth(19), Some(' '));
+        assert_eq!(screens[2][4].chars().nth(9), Some('+'));
+        // Beide Fenster verlassen: nur das Hauptdynpro
+        assert!(screens[3][2].starts_with(" BASE"));
+        assert_eq!(screens[3][4], " ".repeat(80));
+    }
+
+    #[test]
+    fn modal_call_with_bad_position_or_non_modal_dynpro_is_a_runtime_error() {
+        let _h = Harness::new("");
+        install_modal_dynpros();
+        assert!(call_screen_modal(200, 0, 5, 0, 0).is_err());
+        assert!(call_screen_modal(200, 10, 5, 81, 15).is_err());
+        // 75 + 49 + 1 Spalten passen nicht ins Terminal
+        assert!(call_screen_modal(200, 75, 5, 0, 0).is_err());
+        let err = call_screen_modal(201, 10, 5, 60, 15).unwrap_err();
+        assert!(err.contains("needs a dynpro with KIND MODAL"), "{err}");
+        assert!(call_screen_modal(999, 10, 5, 60, 15).is_err());
+    }
+
+    #[test]
+    fn element_that_does_not_fit_the_interior_is_a_runtime_error() {
+        let h = Harness::new("");
+        let mut window = modal_dynpro(200, 9, 49, vec![]);
+        window.texts.push(text_at("abcdef", 1, 1));
+        h.install(window);
+        // Innenfläche 9 × 1: der Text ist sechs Zeichen breit
+        let err = call_screen_modal(200, 10, 5, 12, 15).unwrap_err();
+        assert!(
+            err.contains("outside the window interior of 9 x 1"),
+            "{err}"
+        );
+    }
+
+    fn install_modal_dynpros() {
+        state()
+            .dynpros
+            .push(Arc::new(modal_dynpro(200, 9, 49, vec![])));
+        state()
+            .dynpros
+            .push(Arc::new(dynpro(201, vec![], vec![], vec![])));
     }
 
     #[test]
@@ -1810,5 +2088,140 @@ mod tests {
         assert_eq!(&mem[..], &chars_mem("q", 4)[..]);
         assert_eq!(FIRED.load(Ordering::SeqCst), 1);
         drop(h);
+    }
+
+    static POV_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// Adresse der Variablen ZLGORT für das Wertehilfe-Modul.
+    static LGORT_TARGET: AtomicUsize = AtomicUsize::new(0);
+
+    /// Wertehilfe-Modul von ZLGORT: setzt `A001` in die ABAP-Variable, wie es das Programm täte.
+    extern "C" fn pov_set_a001() {
+        POV_CALLS.fetch_add(1, Ordering::SeqCst);
+        let units = utf16("A001");
+        let target = LGORT_TARGET.load(Ordering::SeqCst) as *mut u8;
+        unsafe { value::write_units(target, 4, &units) };
+    }
+
+    /// Wertehilfe-Modul, das LEAVE setzt.
+    extern "C" fn pov_leave() {
+        POV_CALLS.fetch_add(1, Ordering::SeqCst);
+        abap_rt_leave_screen();
+    }
+
+    #[test]
+    fn f4_on_a_field_with_pov_runs_only_the_pov_module() {
+        let h = Harness::new("FIELD ZKUNNR\nTYPE 'xy'\nFIELD ZLGORT\nKEY F4\nSNAPSHOT\nKEY F3\n");
+        install_status();
+        POV_CALLS.store(0, Ordering::SeqCst);
+        let mut kunnr_mem = chars_mem("", 10);
+        let mut lgort_mem = chars_mem("", 4);
+        LGORT_TARGET.store(lgort_mem.as_mut_ptr() as usize, Ordering::SeqCst);
+        let kunnr = char_field("ZKUNNR", 2, 20, 10, INPUT, &mut kunnr_mem);
+        let lgort = char_field("ZLGORT", 4, 20, 4, INPUT, &mut lgort_mem);
+        let mut d = dynpro(
+            100,
+            vec![kunnr, lgort],
+            vec![module(pbo_count, false)],
+            vec![module(pai_leave, false)],
+        );
+        d.pov.push(PovEntry {
+            name: "ZLGORT".into(),
+            func: pov_set_a001,
+        });
+        h.install(d);
+
+        call(100).unwrap();
+
+        // Ein PAI vor dem Schnappschuss hätte das Dynpro verlassen: der Schnappschuss kommt also aus der Schleife.
+        assert_eq!(POV_CALLS.load(Ordering::SeqCst), 1);
+        // PBO nur am Start, PAI nur bei F3
+        assert_eq!(PBO_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(PAI_CALLS.load(Ordering::SeqCst), 1);
+        let screens = h.screens();
+        assert_eq!(screens.len(), 1);
+        // ZKUNNR behält den getippten Text, das F4-Feld zeigt den Wert aus dem Programm
+        assert_eq!(&screens[0][2][19..29], "xy        ");
+        assert_eq!(&screens[0][4][19..23], "A001");
+        assert_eq!(screens[0][23].trim_end(), "");
+        assert_eq!(h.message(), None);
+    }
+
+    #[test]
+    fn f4_on_a_field_without_pov_has_no_effect() {
+        let h = Harness::new("FIELD ZKUNNR\nTYPE 'xy'\nKEY F4\nSNAPSHOT\nKEY F3\n");
+        install_status();
+        let mut mem = chars_mem("", 10);
+        let field = char_field("ZKUNNR", 2, 20, 10, INPUT, &mut mem);
+        h.install(dynpro(
+            100,
+            vec![field],
+            vec![module(pbo_count, false)],
+            vec![module(pai_leave, false)],
+        ));
+
+        call(100).unwrap();
+
+        // F4 ist ohne Wirkung: kein PAI vor dem Schnappschuss, der Text bleibt im Feld
+        let screens = h.screens();
+        assert_eq!(screens.len(), 1);
+        assert_eq!(&screens[0][2][19..29], "xy        ");
+        assert_eq!(PAI_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(PBO_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn pov_field_name_matches_case_insensitively() {
+        let h = Harness::new("FIELD ZLGORT\nKEY F4\nKEY F3\n");
+        install_status();
+        POV_CALLS.store(0, Ordering::SeqCst);
+        let mut lgort_mem = chars_mem("", 4);
+        LGORT_TARGET.store(lgort_mem.as_mut_ptr() as usize, Ordering::SeqCst);
+        let lgort = char_field("ZLGORT", 4, 20, 4, INPUT, &mut lgort_mem);
+        let mut d = dynpro(
+            100,
+            vec![lgort],
+            vec![module(pbo_count, false)],
+            vec![module(pai_leave, false)],
+        );
+        d.pov.push(PovEntry {
+            name: "zlgort".into(),
+            func: pov_set_a001,
+        });
+        h.install(d);
+
+        call(100).unwrap();
+
+        assert_eq!(POV_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(&lgort_mem[..], &chars_mem("A001", 4)[..]);
+        drop(h);
+    }
+
+    #[test]
+    fn leave_in_pov_ends_the_dynpro_without_pai_or_pbo() {
+        // Nach dem Skript-Ende fehlt jede weitere Taste: die Schleife muss schon bei F4 verlassen sein.
+        let h = Harness::new("FIELD ZLGORT\nKEY F4\n");
+        POV_CALLS.store(0, Ordering::SeqCst);
+        let mut lgort_mem = chars_mem("", 4);
+        let lgort = char_field("ZLGORT", 4, 20, 4, INPUT, &mut lgort_mem);
+        let mut d = dynpro(
+            100,
+            vec![lgort],
+            vec![module(pbo_count, false)],
+            vec![module(pai_leave, false)],
+        );
+        d.pov.push(PovEntry {
+            name: "ZLGORT".into(),
+            func: pov_leave,
+        });
+        h.install(d);
+        PBO_CALLS.store(0, Ordering::SeqCst);
+        PAI_CALLS.store(0, Ordering::SeqCst);
+
+        call(100).unwrap();
+
+        assert_eq!(POV_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(PAI_CALLS.load(Ordering::SeqCst), 0);
+        assert_eq!(PBO_CALLS.load(Ordering::SeqCst), 1);
+        assert!(state().stack.is_empty());
     }
 }

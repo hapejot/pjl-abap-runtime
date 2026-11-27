@@ -245,6 +245,15 @@ pub enum Stmt {
 pub enum ScreenOp {
     /// CALL SCREEN n
     Call(u32),
+    /// CALL SCREEN n STARTING AT x y [ENDING AT x2 y2] (Spec 12c). Spalte x, Zeile y der linken oberen
+    /// Rahmenecke; `x2`, `y2` die rechte untere Ecke. Ohne ENDING AT sind `x2` und `y2` 0 (Größe aus SIZE).
+    CallModal {
+        no: u32,
+        x: u32,
+        y: u32,
+        x2: u32,
+        y2: u32,
+    },
     /// SET SCREEN n (n > 0)
     Set(u32),
     /// LEAVE SCREEN, auch LEAVE TO SCREEN 0
@@ -275,6 +284,9 @@ pub enum ScreenTarget {
     /// Name eines Dynpro-Feldes in `SET CURSOR FIELD` (Kleinschreibung)
     Field(String),
 }
+
+/// Bezeichnung von `CALL SCREEN ... STARTING AT` in `ScreenRef::what` und Meldungen (Modalfenster, Spec 12c).
+pub const MODAL_CALL: &str = "CALL SCREEN ... STARTING AT";
 
 /// Verweis auf ein Dynpro oder einen GUI-Status aus einer Anweisung (`what`, z. B. "CALL SCREEN").
 #[derive(Debug, Clone, PartialEq, Eq)]

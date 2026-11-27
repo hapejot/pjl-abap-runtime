@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::input;
 use super::model::{
     AbapType, Button, Cond, Dynpro, FKey, FKind, Field, Frame, GuiStatus, Message, Module,
-    PaiEntry, Text, VarPtr,
+    PaiEntry, PovEntry, Text, VarPtr,
 };
 use super::value::{self, display_width};
 use super::{fatal, or_fatal, session, state, term, Nav, SyVars};
@@ -398,6 +398,35 @@ fn add_pai_chain(no: u32, chain: u32, func: extern "C" fn(), cond: u32) -> Resul
     })
 }
 
+/// `FIELD name MODULE func` im Block `PROCESS ON VALUE-REQUEST` (Spec 12b). Der Eintrag hängt an die Wertehilfe-Liste
+/// des Dynpros `no` an, getrennt von der PAI-Liste. `func` ist null: Fehler, denn ohne Modul gibt es keine Wertehilfe.
+/// Ob das Feld existiert und ob es nur einen Eintrag hat, prüft `abap_rt_screen_end`.
+///
+/// # Safety
+/// `name` zeigt auf `name_len` UTF-16-Einheiten.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_screen_pov_field(
+    no: u32,
+    name: *const u16,
+    name_len: u64,
+    func: Option<extern "C" fn()>,
+) {
+    let name = wide_text(name, name_len);
+    or_fatal(add_pov_field(no, name, func));
+}
+
+fn add_pov_field(no: u32, name: String, func: Option<extern "C" fn()>) -> Result<(), String> {
+    let Some(func) = func else {
+        return Err(format!(
+            "PROCESS ON VALUE-REQUEST for field {name} has no module"
+        ));
+    };
+    with_building_no(no, |d| {
+        d.pov.push(PovEntry { name, func });
+        Ok(())
+    })
+}
+
 /// Schließt das Dynpro ab und registriert es.
 #[no_mangle]
 pub extern "C" fn abap_rt_screen_end(no: u32) {
@@ -413,7 +442,31 @@ fn end_dynpro(no: u32) -> Result<(), String> {
         return Err(format!("DYNPRO {:04} ended as {no:04}", dynpro.no));
     }
     check_pai(&dynpro)?;
+    check_pov(&dynpro)?;
     st.dynpros.push(Arc::new(dynpro));
+    Ok(())
+}
+
+/// Prüft die Wertehilfe-Liste eines fertigen Dynpros (Spec 12b): Jeder Eintrag nennt ein Feld des Dynpros, und ein
+/// Feld steht höchstens einmal in der Liste.
+fn check_pov(d: &Dynpro) -> Result<(), String> {
+    let mut seen = vec![false; d.fields.len()];
+    for entry in &d.pov {
+        let index = d.field_index(&entry.name).ok_or_else(|| {
+            format!(
+                "PROCESS ON VALUE-REQUEST field {} is not defined in dynpro {}",
+                entry.name,
+                d.label()
+            )
+        })?;
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(format!(
+                "field {} is in more than one PROCESS ON VALUE-REQUEST line in dynpro {}",
+                entry.name,
+                d.label()
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -577,6 +630,14 @@ fn end_status() -> Result<(), String> {
 #[no_mangle]
 pub extern "C" fn abap_rt_call_screen(no: u32) {
     or_fatal(session::call_screen(no));
+}
+
+/// `CALL SCREEN n STARTING AT x y ENDING AT x2 y2` (Spec 8.2, 12c). `x` Spalte, `y` Zeile der linken oberen
+/// Rahmenecke, 1-basiert. `x2` und `y2` gleich 0: kein ENDING AT, die Größe kommt aus SIZE. Lage oder Größe außerhalb
+/// des Terminals (80 × 24) ist ein Laufzeitfehler.
+#[no_mangle]
+pub extern "C" fn abap_rt_call_screen_modal(no: u32, x: u32, y: u32, x2: u32, y2: u32) {
+    or_fatal(session::call_screen_modal(no, x, y, x2, y2));
 }
 
 /// Setzt eine Navigationsaktion im laufenden Dynpro. Außerhalb eines Dynpros ohne Wirkung.
@@ -1106,5 +1167,83 @@ mod tests {
             check_pai(&d).unwrap_err(),
             "chain 1 has more than one module in dynpro 0100"
         );
+    }
+
+    #[test]
+    fn pov_entries_need_a_module_and_a_dynpro_under_construction() {
+        let _guard = exclusive();
+        assert_eq!(
+            add_pov_field(100, "ZA".into(), None).unwrap_err(),
+            "PROCESS ON VALUE-REQUEST for field ZA has no module"
+        );
+        assert_eq!(
+            add_pov_field(100, "ZA".into(), Some(noop)).unwrap_err(),
+            "screen element outside of a DYNPRO definition"
+        );
+    }
+
+    #[test]
+    fn check_pov_accepts_field_names_in_any_case() {
+        let mut d = dynpro_with_field(INPUT);
+        d.pov.push(PovEntry {
+            name: "zkunnr".into(),
+            func: noop,
+        });
+        assert!(check_pov(&d).is_ok());
+    }
+
+    #[test]
+    fn check_pov_rejects_unknown_fields_and_a_field_in_two_lines() {
+        let mut d = dynpro_with_field(INPUT);
+        d.pov.push(PovEntry {
+            name: "NOPE".into(),
+            func: noop,
+        });
+        assert_eq!(
+            check_pov(&d).unwrap_err(),
+            "PROCESS ON VALUE-REQUEST field NOPE is not defined in dynpro 0100"
+        );
+
+        let mut d = dynpro_with_field(INPUT);
+        d.pov.push(PovEntry {
+            name: "zkunnr".into(),
+            func: noop,
+        });
+        d.pov.push(PovEntry {
+            name: "ZKUNNR".into(),
+            func: noop,
+        });
+        assert_eq!(
+            check_pov(&d).unwrap_err(),
+            "field ZKUNNR is in more than one PROCESS ON VALUE-REQUEST line in dynpro 0100"
+        );
+    }
+
+    #[test]
+    fn pov_entries_are_kept_apart_from_the_pai_list() {
+        let _guard = exclusive();
+        let mut var = vec![0x20u16; 4];
+        let name = utf16("ZA");
+        let title = utf16("T");
+        unsafe {
+            abap_rt_screen_begin(100, 0, 20, 80, title.as_ptr(), title.len() as u64);
+            abap_rt_screen_field(
+                2,
+                2,
+                name.as_ptr(),
+                2,
+                var.as_mut_ptr() as *mut u8,
+                0,
+                4,
+                0,
+                INPUT,
+            );
+            abap_rt_screen_pov_field(100, name.as_ptr(), 2, Some(noop));
+            abap_rt_screen_end(100);
+        }
+        let st = state();
+        let d = &st.dynpros[0];
+        assert_eq!(d.pov.len(), 1);
+        assert!(d.pai.is_empty());
     }
 }

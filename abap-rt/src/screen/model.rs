@@ -219,6 +219,14 @@ pub enum PaiEntry {
     },
 }
 
+/// Wertehilfe-Eintrag (`PROCESS ON VALUE-REQUEST`, Spec 12b): das Modul, das F4 auf dem Feld auslöst.
+/// Der Feldname ist die Schreibweise des `FIELD`-Elements und wird case-insensitiv verglichen.
+#[derive(Clone, Debug)]
+pub struct PovEntry {
+    pub name: String,
+    pub func: extern "C" fn(),
+}
+
 /// Dynpro mit Nummer, Größe, Titel, Elementen und Ablauflogik.
 pub struct Dynpro {
     pub no: u32,
@@ -236,6 +244,8 @@ pub struct Dynpro {
     pub pbo: Vec<Module>,
     /// Geordnete PAI-Liste (Abschnitt 12a). Module ohne Feldbezug, Feld- und Kettenmodule in Quelltextfolge.
     pub pai: Vec<PaiEntry>,
+    /// Wertehilfe-Einträge (Spec 12b), getrennt von der PAI-Liste. Höchstens ein Eintrag je Feld.
+    pub pov: Vec<PovEntry>,
 }
 
 impl Dynpro {
@@ -252,6 +262,7 @@ impl Dynpro {
             frames: Vec::new(),
             pbo: Vec::new(),
             pai: Vec::new(),
+            pov: Vec::new(),
         }
     }
 

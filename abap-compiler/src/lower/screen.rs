@@ -2,8 +2,8 @@
 //! `LEAVE TO SCREEN`, `LEAVE PROGRAM`, `SET PF-STATUS`, `MESSAGE 'text' TYPE t`, sowie die Typen der
 //! Variablen für die Prüfung der `.dynp`-Felder (Spec 4.7). Die Zuordnung zu den Laufzeitaufrufen steht im Codegen.
 //!
-//! Nicht unterstützt (Phase 2): `CALL SCREEN ... STARTING AT`, `SET PF-STATUS ... OF PROGRAM / EXCLUDING`,
-//! `SET SCREEN 0`, `MESSAGE` mit Nachrichtenklasse oder Ersatzwerten.
+//! Nicht unterstützt (Phase 2): `CALL SCREEN ... STARTING AT` mit Variablen als Koordinaten, `SET PF-STATUS ... OF
+//! PROGRAM / EXCLUDING`, `SET SCREEN 0`, `MESSAGE` mit Nachrichtenklasse oder Ersatzwerten.
 
 use super::*;
 use crate::dynpro::{FieldType, UCOMM_LENGTH};
@@ -48,7 +48,7 @@ impl Lowerer {
         Some(result)
     }
 
-    /// `CALL SCREEN n.`
+    /// `CALL SCREEN n.` und `CALL SCREEN n STARTING AT x y [ENDING AT x2 y2].`
     fn call_screen(
         &mut self,
         toks: &[Token],
@@ -56,10 +56,7 @@ impl Lowerer {
         out: &mut Vec<Stmt>,
     ) -> Result<(), CompileError> {
         if toks.get(3).is_some_and(|t| t.is_word("STARTING")) {
-            return err(
-                line,
-                "CALL SCREEN ... STARTING AT is not supported yet (phase 2)",
-            );
+            return self.call_screen_modal(toks, line, out);
         }
         if toks.len() != 3 {
             return err(
@@ -78,6 +75,62 @@ impl Lowerer {
         });
         out.push(Stmt::Screen {
             op: ScreenOp::Call(n),
+            line,
+        });
+        Ok(())
+    }
+
+    /// `CALL SCREEN n STARTING AT x y [ENDING AT x2 y2].` Koordinaten nur als ganze Zahlen (Literale, Spec 12c).
+    /// Bereiche: x, y, x2, y2 liegen im Terminal (80 × 24), x2 ≥ x und y2 ≥ y. Dass das Dynpro `KIND MODAL` ist,
+    /// prüft `dynpro/check.rs` gegen die `.dynp`-Datei.
+    fn call_screen_modal(
+        &mut self,
+        toks: &[Token],
+        line: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), CompileError> {
+        let is = |i: usize, w: &str| toks.get(i).is_some_and(|t| t.is_word(w));
+        let shape_ok = is(4, "AT")
+            && match toks.len() {
+                7 => true,
+                11 => is(7, "ENDING") && is(8, "AT"),
+                _ => false,
+            };
+        if !shape_ok {
+            return err(
+                line,
+                "Unsupported form of CALL SCREEN ... STARTING AT (expected: CALL SCREEN <number> STARTING AT <x> <y> [ENDING AT <x2> <y2>])",
+            );
+        }
+        let n = dynpro_number(&toks[2], line)?;
+        let x = window_value(&toks[5], "STARTING AT column", 80, line)?;
+        let y = window_value(&toks[6], "STARTING AT line", 24, line)?;
+        let (x2, y2) = if toks.len() == 11 {
+            let x2 = window_value(&toks[9], "ENDING AT column", 80, line)?;
+            let y2 = window_value(&toks[10], "ENDING AT line", 24, line)?;
+            if x2 < x || y2 < y {
+                return err(
+                    line,
+                    format!("ENDING AT {x2} {y2} is before STARTING AT {x} {y}"),
+                );
+            }
+            (x2, y2)
+        } else {
+            (0, 0)
+        };
+        self.screen_refs.push(ScreenRef {
+            target: ScreenTarget::Dynpro(n),
+            what: MODAL_CALL,
+            line,
+        });
+        out.push(Stmt::Screen {
+            op: ScreenOp::CallModal {
+                no: n,
+                x,
+                y,
+                x2,
+                y2,
+            },
             line,
         });
         Ok(())
@@ -308,6 +361,26 @@ fn dynpro_number(t: &Token, line: usize) -> Result<u32, CompileError> {
     Ok(n)
 }
 
+/// Koordinate eines Modalfensters: ganze Zahl von 1 bis `max`. Eine Variable ist nicht unterstützt (Spec 12c).
+fn window_value(t: &Token, what: &str, max: u32, line: usize) -> Result<u32, CompileError> {
+    let Ok(value) = t.text.parse::<i64>() else {
+        return err(
+            line,
+            format!(
+                "{what} with a variable is not supported yet (use an integer literal from 1 to {max})"
+            ),
+        );
+    };
+    if (1..=i64::from(max)).contains(&value) {
+        Ok(value as u32)
+    } else {
+        err(
+            line,
+            format!("{what} must be 1 to {max}, found '{}'", t.text),
+        )
+    }
+}
+
 /// Wie `dynpro_number`, lässt aber 0 zu (für `LEAVE TO SCREEN 0`).
 fn dynpro_number_or_zero(t: &Token, line: usize) -> Result<u32, CompileError> {
     match t.text.parse::<u32>() {
@@ -403,9 +476,82 @@ mod tests {
     }
 
     #[test]
-    fn call_screen_starting_at_is_phase_2() {
-        let errs = parse_source("CALL SCREEN 100 STARTING AT 1 1 ENDING AT 5 5.\n").unwrap_err();
-        assert!(errs[0].message.contains("STARTING AT is not supported yet"));
+    fn call_screen_starting_at_lowers_to_modal_call_with_corners() {
+        let ir = stmts("CALL SCREEN 0200 STARTING AT 10 5 ENDING AT 60 15.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::CallModal {
+                no: 200,
+                x: 10,
+                y: 5,
+                x2: 60,
+                y2: 15
+            }]
+        );
+        assert_eq!(
+            ir.screen_refs,
+            vec![ScreenRef {
+                target: ScreenTarget::Dynpro(200),
+                what: "CALL SCREEN ... STARTING AT",
+                line: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn call_screen_starting_at_without_ending_at_passes_zero_corner() {
+        let ir = stmts("CALL SCREEN 200 STARTING AT 3 2.\n");
+        assert_eq!(
+            screen_ops(&ir),
+            vec![ScreenOp::CallModal {
+                no: 200,
+                x: 3,
+                y: 2,
+                x2: 0,
+                y2: 0
+            }]
+        );
+    }
+
+    #[test]
+    fn call_screen_starting_at_with_variable_position_is_not_supported_yet() {
+        let errs = parse_source("CALL SCREEN 200 STARTING AT zx 5.\n").unwrap_err();
+        assert!(errs[0].message.contains("not supported yet"));
+        let errs =
+            parse_source("CALL SCREEN 200 STARTING AT 10 zy ENDING AT 60 15.\n").unwrap_err();
+        assert!(errs[0].message.contains("not supported yet"));
+    }
+
+    #[test]
+    fn call_screen_starting_at_outside_the_terminal_is_rejected() {
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 0 5.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("STARTING AT column must be 1 to 80, found '0'"));
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 25.\n").unwrap_err();
+        assert!(errs[0].message.contains("STARTING AT line must be 1 to 24"));
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 5 ENDING AT 81 15.\n").unwrap_err();
+        assert!(errs[0].message.contains("ENDING AT column must be 1 to 80"));
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 5 ENDING AT 60 25.\n").unwrap_err();
+        assert!(errs[0].message.contains("ENDING AT line must be 1 to 24"));
+    }
+
+    #[test]
+    fn call_screen_ending_at_before_starting_at_is_rejected() {
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 5 ENDING AT 9 15.\n").unwrap_err();
+        assert!(errs[0]
+            .message
+            .contains("ENDING AT 9 15 is before STARTING AT 10 5"));
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 5 ENDING AT 60 4.\n").unwrap_err();
+        assert!(errs[0].message.contains("is before STARTING AT"));
+    }
+
+    #[test]
+    fn call_screen_starting_at_wrong_shape_is_rejected() {
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10 5 ENDING 60 15.\n").unwrap_err();
+        assert!(errs[0].message.contains("Unsupported form of CALL SCREEN"));
+        let errs = parse_source("CALL SCREEN 200 STARTING AT 10.\n").unwrap_err();
+        assert!(errs[0].message.contains("Unsupported form of CALL SCREEN"));
     }
 
     #[test]

@@ -1,5 +1,0 @@
-Breite 10 für ganze Zahlen (rechtsbündig, Minuszeichen hinten) ist aus SAP abgeleitet.
-Quelle (Angabe des Nutzers): Ausgabe eines WRITE mit TYPE i.
-Offen: die Quelle ist nur allgemein benannt. Ein konkretes Beispiel (System, Programm oder Doku-Link) fehlt noch.
-Der Wert ist in allen Fällen mit ganzen Zahlen einheitlich umgesetzt (abap_rt_write_int, alle expected.txt).
-Siehe doc/sprache.md, Abschnitt 7, Punkt 2.

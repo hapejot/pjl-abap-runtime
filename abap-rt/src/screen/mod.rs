@@ -9,6 +9,7 @@
 //! - `session`: Schleife je Dynpro (6.1), Aktionen aus Modulen (6.5).
 //! - `terminal`: Trait für das Terminal. `term` (crossterm) und `headless` (Skript, Tests).
 //! - `abi`: die C-ABI-Funktionen.
+//! - `window`: Modalfenster (`CALL SCREEN ... STARTING AT`, Spec 12c): Lage, Prüfung, Zeichnen über dem Bild darunter.
 //!
 //! Der gesamte Zustand liegt in `STATE`. Er wird nie gesperrt, während ein Modul läuft.
 
@@ -21,6 +22,7 @@ pub mod session;
 pub mod term;
 pub mod terminal;
 pub mod value;
+pub mod window;
 
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -29,9 +31,18 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
 use crossterm::terminal::{self as ct, EnterAlternateScreen, LeaveAlternateScreen};
+use grid::Grid;
 use input::Pos;
 use model::{Dynpro, GuiStatus, Message, VarPtr};
 use terminal::Terminal;
+
+/// Zuletzt auf das Terminal gezeichnetes Bild samt Cursor (Gitter). Ein modales Fenster zeichnet darüber
+/// (Spec 12c), und beim Verlassen wird dieses Bild wiederhergestellt.
+#[derive(Clone)]
+pub(crate) struct Shown {
+    pub grid: Grid,
+    pub cursor: (usize, usize),
+}
 
 /// Navigationsaktion aus einem Modul (`SET SCREEN`, `LEAVE SCREEN`, `LEAVE TO SCREEN`). Die letzte gilt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +80,8 @@ pub(crate) struct State {
     pub pending_cursor: Option<(u32, String)>,
     /// `SET TITLEBAR` für das Dynpro (Nummer, Titel). Gilt bis zum Verlassen des Dynpros.
     pub titlebar: Option<(u32, String)>,
+    /// Zuletzt gezeichnetes Bild. Ein modales Fenster übernimmt es als Hintergrund, wenn es geöffnet wird.
+    pub shown: Option<Shown>,
 }
 
 impl State {
@@ -87,6 +100,7 @@ impl State {
             cursor_at: None,
             pending_cursor: None,
             titlebar: None,
+            shown: None,
         }
     }
 }

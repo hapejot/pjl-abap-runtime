@@ -1,0 +1,50 @@
+Kunde anlegen                                                                   
+                                                                                
+ Name                                                                           
+                                                                                
+         +Name erfassen------------------------------------+                    
+         |                                                 |                    
+         | Name                                            |                    
+         |                                                 |                    
+         | Enter a name, then press F3                     |                    
+         |                                                 |                    
+ Fenster |                                                 |                    
+         |                                                 |                    
+         |                                                 |                    
+         |                                                 |                    
+         +-------------------------------------------------+                    
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back  F5 Window  F12 Cancel  F15 Exit                                        
+                                                                                
+                                                                                
+----
+Kunde anlegen                                                                   
+                                                                                
+ Name              Kunde 4711                                                   
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Fenster mit F5                                                                 
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back  F5 Window  F12 Cancel  F15 Exit                                        
+                                                                                
+                                                                                
+----

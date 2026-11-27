@@ -1,0 +1,8 @@
+REPORT zmodal_demo.
+
+DATA: zx TYPE i,
+      zname1 TYPE c LENGTH 30.
+
+START-OF-SELECTION.
+  zx = 10.
+  CALL SCREEN 0200 STARTING AT zx 5 ENDING AT 60 15.

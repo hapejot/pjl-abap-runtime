@@ -135,7 +135,11 @@ pub fn format(value: &Value, width: usize) -> Vec<char> {
             chars.resize(width, ' ');
             chars
         }
-        Value::Int(v) => right_aligned(&v.to_string(), width),
+        // Ganze Zahlen: 10 Ziffern rechtsbündig, danach eine Stelle für das Minuszeichen (hinten, optional).
+        Value::Int(v) => {
+            let sign = if *v < 0 { '-' } else { ' ' };
+            right_aligned(&format!("{:>10}{sign}", v.unsigned_abs()), width)
+        }
         Value::Packed(d) => right_aligned(&d.format(), width),
     }
 }
@@ -418,7 +422,9 @@ mod tests {
         assert_eq!(parse(&f, &chars("-42        ")), Ok(Value::Int(-42)));
         assert_eq!(parse(&f, &chars("42-       ")), Ok(Value::Int(-42)));
         assert_eq!(parse(&f, &chars("          ")), Ok(Value::Int(0)));
-        assert_eq!(format(&Value::Int(-42), 11), chars("        -42"));
+        // Anzeige: 10 Ziffern rechtsbündig, Minuszeichen hinten in Stelle 11 (wie WRITE, Abschnitt 4.7)
+        assert_eq!(format(&Value::Int(-42), 11), chars("        42-"));
+        assert_eq!(format(&Value::Int(7), 11), chars("         7 "));
         assert_eq!(format(&Value::Int(7), 11).len(), INT_WIDTH);
     }
 

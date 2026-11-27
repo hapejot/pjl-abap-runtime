@@ -299,6 +299,7 @@ impl<'a> Lines<'a> {
             title: String::new(),
             elements: Vec::new(),
             flow: Vec::new(),
+            value_requests: Vec::new(),
         };
         let mut seen_flow = false;
         loop {
@@ -338,7 +339,9 @@ impl<'a> Lines<'a> {
                     }
                     seen_flow = true;
                     self.expect_end(ln, &toks, 1)?;
-                    d.flow = self.flow()?;
+                    let (flow, value_requests) = self.flow()?;
+                    d.flow = flow;
+                    d.value_requests = value_requests;
                 }
                 _ => {
                     return self.fail(
@@ -496,8 +499,12 @@ impl<'a> Lines<'a> {
 
     /// Ablauflogik bis `ENDFLOW`. Die Zeile `FLOW` ist bereits gelesen.
     /// Die Einträge bleiben in Quelltextfolge. Eine `CHAIN` ist nicht verschachtelbar und nur in der PAI-Folge erlaubt.
-    fn flow(&mut self) -> Result<Vec<FlowItem>, DynproError> {
+    /// Zeilen des Blocks `PROCESS ON VALUE-REQUEST` (Spec 12b) kommen in die zweite Liste.
+    fn flow(&mut self) -> Result<(Vec<FlowItem>, Vec<ValueRequest>), DynproError> {
         let mut items = Vec::new();
+        let mut value_requests: Vec<ValueRequest> = Vec::new();
+        // Im Block `PROCESS ON VALUE-REQUEST` gilt nur `FIELD name MODULE m`
+        let mut in_value_request = false;
         let mut phase: Option<Phase> = None;
         // Offene CHAIN, falls zwischen CHAIN und ENDCHAIN gelesen wird
         let mut open: Option<OpenChain> = None;
@@ -584,10 +591,53 @@ impl<'a> Lines<'a> {
                 }
                 continue;
             }
+            if in_value_request && !matches!(kw.as_str(), "ENDFLOW" | "PROCESS") {
+                if kw != "FIELD" {
+                    return self.fail(
+                        ln,
+                        &toks,
+                        0,
+                        format!(
+                            "Syntax error: expected FIELD in PROCESS ON VALUE-REQUEST, found {}",
+                            found(&toks, 0)
+                        ),
+                    );
+                }
+                let name = self.expect_word(ln, &toks, 1, "field name")?;
+                if !toks.get(2).is_some_and(|t| t.is_kw("MODULE")) {
+                    return self.fail(
+                        ln,
+                        &toks,
+                        2,
+                        format!("Syntax error: expected MODULE, found {}", found(&toks, 2)),
+                    );
+                }
+                let module = self.expect_word(ln, &toks, 3, "module name")?;
+                self.expect_end(ln, &toks, 4)?;
+                if value_requests
+                    .iter()
+                    .any(|v| v.name.eq_ignore_ascii_case(&name))
+                {
+                    return self.fail(
+                        ln,
+                        &toks,
+                        1,
+                        format!(
+                            "Syntax error: field '{name}' is in more than one FIELD line of PROCESS ON VALUE-REQUEST"
+                        ),
+                    );
+                }
+                value_requests.push(ValueRequest {
+                    name,
+                    module,
+                    line: ln,
+                });
+                continue;
+            }
             match kw.as_str() {
                 "ENDFLOW" => {
                     self.expect_end(ln, &toks, 1)?;
-                    return Ok(items);
+                    return Ok((items, value_requests));
                 }
                 "PROCESS" => {
                     if toks.get(1).is_some_and(|t| t.is_kw("BEFORE"))
@@ -595,18 +645,26 @@ impl<'a> Lines<'a> {
                     {
                         self.expect_end(ln, &toks, 3)?;
                         phase = Some(Phase::Pbo);
+                        in_value_request = false;
                     } else if toks.get(1).is_some_and(|t| t.is_kw("AFTER"))
                         && toks.get(2).is_some_and(|t| t.is_kw("INPUT"))
                     {
                         self.expect_end(ln, &toks, 3)?;
                         phase = Some(Phase::Pai);
+                        in_value_request = false;
+                    } else if toks.get(1).is_some_and(|t| t.is_kw("ON"))
+                        && toks.get(2).is_some_and(|t| t.is_kw("VALUE-REQUEST"))
+                    {
+                        self.expect_end(ln, &toks, 3)?;
+                        phase = None;
+                        in_value_request = true;
                     } else {
                         return self.fail(
                             ln,
                             &toks,
                             1,
                             format!(
-                                "Syntax error: expected BEFORE OUTPUT or AFTER INPUT, found {}",
+                                "Syntax error: expected BEFORE OUTPUT, AFTER INPUT or ON VALUE-REQUEST, found {}",
                                 found(&toks, 1)
                             ),
                         );
@@ -1433,5 +1491,70 @@ ENDGUISTATUS
         let e =
             parse("DYNPRO 0100\nFLOW\nPROCESS AFTER INPUT\n  CHAIN\n    FIELD A\n").unwrap_err();
         assert!(e.message.contains("expected ENDCHAIN"));
+    }
+
+    /// Wertehilfe-Zeilen des ersten Dynpros der Quelle `flow_src`.
+    fn value_requests_of(flow_src: &str) -> Vec<ValueRequest> {
+        let src = format!("DYNPRO 0100\nFLOW\n{flow_src}ENDFLOW\nENDDYNPRO\n");
+        only_dynpro(&parse(&src).unwrap()).value_requests.clone()
+    }
+
+    #[test]
+    fn value_request_block_is_read_apart_from_the_flow() {
+        let src = "PROCESS AFTER INPUT\n  MODULE M\nPROCESS ON VALUE-REQUEST\n  FIELD ZLGORT MODULE F4_LGORT\n";
+        assert_eq!(flow_of(src).len(), 1);
+        assert_eq!(
+            value_requests_of(src),
+            vec![ValueRequest {
+                name: "ZLGORT".into(),
+                module: "F4_LGORT".into(),
+                line: 6,
+            }]
+        );
+    }
+
+    #[test]
+    fn value_request_block_ends_at_the_next_process_line() {
+        let src = "PROCESS ON VALUE-REQUEST\n  FIELD A MODULE M\nPROCESS AFTER INPUT\n  FIELD B\n";
+        let items = flow_of(src);
+        assert!(matches!(&items[0], FlowItem::Field(f) if f.name == "B"));
+        assert_eq!(value_requests_of(src).len(), 1);
+    }
+
+    #[test]
+    fn value_request_line_other_than_field_is_a_syntax_error() {
+        let e = flow_error("PROCESS ON VALUE-REQUEST\n  MODULE M\n");
+        assert_eq!(e.line, 4);
+        assert!(e
+            .message
+            .contains("expected FIELD in PROCESS ON VALUE-REQUEST, found 'MODULE'"));
+    }
+
+    #[test]
+    fn chain_inside_value_request_block_is_a_syntax_error() {
+        let e = flow_error("PROCESS ON VALUE-REQUEST\n  CHAIN\n");
+        assert!(e
+            .message
+            .contains("expected FIELD in PROCESS ON VALUE-REQUEST, found 'CHAIN'"));
+    }
+
+    #[test]
+    fn value_request_with_on_condition_is_a_syntax_error() {
+        let e = flow_error("PROCESS ON VALUE-REQUEST\n  FIELD A MODULE M ON INPUT\n");
+        assert_eq!(e.line, 4);
+        assert!(e.message.contains("unexpected 'ON'"));
+    }
+
+    #[test]
+    fn value_request_without_module_is_a_syntax_error() {
+        let e = flow_error("PROCESS ON VALUE-REQUEST\n  FIELD A\n");
+        assert!(e.message.contains("expected MODULE, found end of line"));
+    }
+
+    #[test]
+    fn field_twice_in_value_request_block_is_a_syntax_error() {
+        let e = flow_error("PROCESS ON VALUE-REQUEST\n  FIELD A MODULE M1\n  FIELD a MODULE M2\n");
+        assert_eq!(e.line, 5);
+        assert!(e.message.contains("more than one FIELD line"));
     }
 }

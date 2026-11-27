@@ -208,7 +208,7 @@ Die Länge kommt immer aus dem ABAP-Datentyp, nicht aus der `.dynp`.
 | `n` (`NUMC`, DDIC) | rechts, mit Ziffern | nur Ziffern |
 | `d` (`DATS`, DDIC) | `JJJJMMTT`, Länge 8 | Ziffern, Prüfung als Datum beim PAI |
 | `t` (`TIMS`, DDIC) | `HHMMSS`, Länge 6 | Ziffern, Prüfung als Uhrzeit beim PAI |
-| `i` | rechtsbündig, Vorzeichen | Ziffern und führendes `-` |
+| `i` | Feldbreite 11: 10 Ziffern rechtsbündig, danach Stelle 11 für `-` (nur bei negativen Werten, sonst Leerzeichen) | Ziffern mit optionalem `-` vorne oder hinten |
 | `p` / `DEC` | rechtsbündig, Nachkommastellen | Ziffern, `.` als Dezimaltrenner |
 | `string` | **nicht erlaubt** | `Type string is not allowed for dynpro field 'X'` |
 
@@ -586,10 +586,48 @@ abap_rt_screen_pai_chain(no: u32, chain: u32, func: extern "C" fn(), cond: u32 /
 
 Die Eingabemarkierung führt die Laufzeit selbst. Der Compiler gibt sie nicht vor.
 
+## 12b. Wertehilfe F4: PROCESS ON VALUE-REQUEST (Phase 2)
+
+Quelle: vom Auftraggeber eingefügter Text aus allgemeinem ABAP-Wissen, nicht gegen die Dokumentation geprüft.
+
+- Syntax im Block `FLOW`: `PROCESS ON VALUE-REQUEST` mit Zeilen `FIELD <name> MODULE <m>`. Die Module sind INPUT-Module.
+- F4 auf einem Feld mit POV-Modul läuft nur dieses Modul. Kein PAI, keine automatischen Prüfungen, kein PBO danach.
+- Ein POV-Modul hat Vorrang vor Suchhilfen (es gibt in der Laufzeit keine Suchhilfen).
+- Feldtransport: Nichts wird automatisch ins Programm übertragen, auch das F4-Feld nicht. Nicht bestätigte Eingaben sind im Programm nicht sichtbar.
+- Felder lesen: `CALL FUNCTION 'DYNP_VALUES_READ'` (Felder aus dem aktuellen Dynpro).
+- Ergebnis zurück: `CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'` (Auswahlliste, Ergebnis in das F4-Feld), oder das Feld direkt im Modul setzen. Weitere Felder mit `CALL FUNCTION 'DYNP_VALUES_UPDATE'` aktualisieren.
+- **Entscheidung (Umfang):** In der Laufzeit werden nur diese drei Funktionsbausteine nachgebildet. Alle anderen `CALL FUNCTION` bleiben unbekannt wie bisher (Laufzeitfehler).
+- **Entscheidung (Auswahlliste):** Einfache Liste im Vollbild des Dynpro-Bereichs, Pfeiltasten und Enter wählen, Esc bricht ab. Bei Abbruch bleibt das Feld unverändert.
+- Der Rückgabewert von `F4IF_INT_TABLE_VALUE_REQUEST` wird nur in das F4-Feld geschrieben, wenn `VALUE_ORG = 'S'` übergeben wird (Annahme nach Text, zu prüfen).
+- Offen: Ob das F4-Feld nach dem POV-Modul ohne Enter zurücktransportiert wird (Text: „sollten Sie testen“).
+
+**Umsetzungsstand (Option B, Entscheidung des Auftraggebers):** Nur der POV-Teil. Die Funktionsbausteine `DYNP_VALUES_READ`, `DYNP_VALUES_UPDATE` und `F4IF_INT_TABLE_VALUE_REQUEST` sind nicht umgesetzt. Das Modul setzt das Feld selbst.
+- Taste F4 auf einem Feld mit POV-Modul: Das Modul läuft. Danach kein PAI, keine Prüfungen, kein PBO-Lauf.
+- Die Anzeige wird nur für das F4-Feld aus der ABAP-Variable neu gezeichnet. Andere Felder behalten, was der Benutzer getippt hat.
+- F4 auf einem Feld ohne POV-Modul: keine Wirkung (keine Suchhilfe in der Laufzeit).
+- Ein POV-Modul ist ein INPUT-Modul.
+- Die Eingabemarkierung wird durch POV nicht verändert.
+
+## 12c. Modalfenster: CALL SCREEN ... STARTING AT (Phase 2)
+
+- Das Fenster liegt über dem darunterliegenden Dynpro, mit einem Rahmen aus `+`, `-`, `|` (Abschnitt 8.3, Phase 1).
+- Position: `STARTING AT x y` ist Spalte x, Zeile y im Terminal. `ENDING AT x2 y2` setzt die rechte untere Ecke. Ohne `ENDING AT` ergibt sich die Größe aus dem Dynpro (`SIZE`).
+- Der Inhalt des Fensters ist der Dynpro-Bereich, zusätzlich eine Titelzeile im Rahmen aus `TITLE`.
+- Das Fenster überdeckt die Zellen; das darunterliegende Dynpro wird nicht neu gezeichnet und bleibt sichtbar außerhalb des Fensters.
+- Beim Verlassen des Fensters wird der Bereich des Fensters mit dem darunterliegenden Dynpro neu gezeichnet.
+- Funktionstastenleiste und Meldungszeile gehören zum Hauptbildschirm und bleiben unverändert, außer wenn das Fenster sie überdeckt (dann gewinnt das Fenster).
+- **Umsetzung (Entscheidungen):**
+  - Der GUI-Status des Fensters bestimmt die Funktionscodes, solange das Fenster oben liegt. Seine Tastenleiste wird nicht gezeichnet (Annahme, vom Auftraggeber zu bestätigen).
+  - Der Titel beginnt eine Zelle nach der Ecke und wird auf die Innenbreite gekürzt. Das `FRAME`-Element setzt den Titel mit Leerzeichen, also zwei Zellen nach der Ecke. Die beiden sind noch nicht angeglichen.
+  - Beim Verlassen wird das Bild vor dem Öffnen wiederhergestellt. Das Hauptdynpro zeichnet sich im nächsten PBO mit den aktuellen Werten (Annahme).
+  - `SET SCREEN` im Fenster wechselt nur den Inhalt. Die Lage bleibt. Das neue Dynpro muss in die Innenfläche passen, seine Art (KIND) wird nicht geprüft (Annahme, vom Auftraggeber zu bestätigen).
+  - Innenfläche ohne `ENDING AT`: `SIZE`. Mit `ENDING AT`: (y2−y−1) × (x2−x−1).
+  - Ein normales `CALL SCREEN` auf ein `KIND MODAL`-Dynpro zeigt es im Vollbild (nicht spezifiziert).
+
 ## 13. Offene Punkte
 
-1. **Modalfenster** (`CALL SCREEN ... STARTING AT`): In Phase 1 nicht enthalten. Vor Phase 2 festlegen, ob der
-   Rahmen sichtbar ist und wie Überlappungen gezeichnet werden.
+1. **Modalfenster** (`CALL SCREEN ... STARTING AT`): **Entschieden:** Das Fenster hat einen sichtbaren Rahmen.
+   Es überlappt das darunterliegende Dynpro, das Dynpro bleibt sichtbar und wird nicht gelöscht. Siehe Abschnitt 12c.
 2. **Tastenbelegung der Tabulatortasten:** Tab und Shift+Tab sind in Terminals teils mit anderen Funktionen belegt.
    Zu testen auf Windows Terminal und der klassischen Konsole.
 3. **Startpunkt:** Phase 0 (Linktest) vor allem anderen.

@@ -150,6 +150,17 @@ pub struct Dynpro {
     pub elements: Vec<Element>,
     /// Ablauflogik in Quelltextfolge (Spec 12a): PBO- und PAI-Module, `FIELD`- und `CHAIN`-Einträge der PAI.
     pub flow: Vec<FlowItem>,
+    /// Wertehilfe-Zeilen aus `PROCESS ON VALUE-REQUEST` in Quelltextfolge (Spec 12b). Getrennt von `flow`.
+    pub value_requests: Vec<ValueRequest>,
+}
+
+/// `FIELD name MODULE m` im Block `PROCESS ON VALUE-REQUEST` (Spec 12b). `m` ist ein INPUT-Modul.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueRequest {
+    /// Name, wie er in der `.dynp` steht (muss einem `FIELD`-Element des Dynpros entsprechen)
+    pub name: String,
+    pub module: String,
+    pub line: usize,
 }
 
 /// Element mit Position. `row` und `col` sind 1-basiert (Koordinaten im Dynpro-Bereich).

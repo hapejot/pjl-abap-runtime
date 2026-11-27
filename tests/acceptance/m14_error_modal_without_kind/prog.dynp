@@ -1,0 +1,13 @@
+* Dynpro 0200 ist NORMAL (ohne KIND MODAL): CALL SCREEN ... STARTING AT ist ein Übersetzungsfehler
+DYNPRO 0100
+  SIZE 20 80
+  TITLE 'Hauptbild'
+  TEXT 2 2 'Name'
+  FIELD ZNAME1 2 20 INPUT
+ENDDYNPRO
+
+DYNPRO 0200
+  SIZE 9 49
+  TITLE 'Fenster'
+  TEXT 2 2 'Name'
+ENDDYNPRO

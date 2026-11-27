@@ -2,7 +2,7 @@
 //! Alle Verletzungen werden gesammelt; Warnungen lassen die Übersetzung nicht scheitern.
 
 use super::*;
-use crate::lower::{Ir, ScreenTarget, Stmt, Ty};
+use crate::lower::{Ir, ScreenTarget, Stmt, Ty, MODAL_CALL};
 use std::collections::{HashMap, HashSet};
 
 /// Prüft eine `.dynp`-Datei gegen das übersetzte Programm `ir`. `file` fehlt, wenn keine Datei gefunden wurde;
@@ -90,15 +90,35 @@ pub fn check(file: Option<&DynproFile>, ir: &Ir, abap_file: &str) -> Vec<DynproE
         })
         .collect();
 
+    // Dynpros mit `KIND MODAL` (für `CALL SCREEN ... STARTING AT`, Spec 12c)
+    let modal_dynpros: HashSet<u32> = f
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            DynproItem::Dynpro(d) if d.modal => Some(d.number),
+            _ => None,
+        })
+        .collect();
+
     // Verweise aus dem ABAP-Programm
     let mut used = HashSet::new();
     let mut calls = false;
     for r in &ir.screen_refs {
         match &r.target {
             ScreenTarget::Dynpro(n) => {
-                calls |= r.what == "CALL SCREEN";
+                calls |= r.what.starts_with("CALL SCREEN");
                 if dynpros.contains_key(n) {
                     used.insert(*n);
+                    if r.what == MODAL_CALL && !modal_dynpros.contains(n) {
+                        out.push(DynproError::error(
+                            abap_file,
+                            r.line,
+                            1,
+                            format!(
+                                "{MODAL_CALL} needs a modal dynpro: DYNPRO {n:04} in {fname} is not KIND MODAL"
+                            ),
+                        ));
+                    }
                 } else {
                     out.push(DynproError::error(
                         abap_file,
@@ -397,6 +417,21 @@ fn check_flow(d: &Dynpro, c: &Ctx, out: &mut Vec<DynproError>) {
                 check_flow_module(c, &num, Phase::Pai, &cm.module, cm.line, out);
             }
         }
+    }
+    // Wertehilfe (Spec 12b): das Feld ist ein FIELD des Dynpros, das Modul ein INPUT-Modul
+    for vr in &d.value_requests {
+        if !element_fields.contains(&vr.name.to_lowercase()) {
+            out.push(DynproError::error(
+                c.file,
+                vr.line,
+                1,
+                format!(
+                    "FIELD '{}' in PROCESS ON VALUE-REQUEST is not a FIELD of {num}",
+                    vr.name
+                ),
+            ));
+        }
+        check_flow_module(c, &num, Phase::Pai, &vr.module, vr.line, out);
     }
 }
 
@@ -731,6 +766,48 @@ ENDGUISTATUS
         assert!(errs[0].message.contains("DYNPRO 0200 is never called"));
     }
 
+    /// Programm mit einem Modalfenster-Aufruf zusätzlich zum Hauptdynpro 0100.
+    fn abap_with_modal_call() -> String {
+        ABAP.replace(
+            "  CALL SCREEN 0100.\n",
+            "  CALL SCREEN 0100.\n  CALL SCREEN 0200 STARTING AT 10 5 ENDING AT 60 15.\n",
+        )
+    }
+
+    #[test]
+    fn modal_call_to_a_kind_modal_dynpro_is_accepted() {
+        let dynp = format!(
+            "{DYNP_OK}DYNPRO 0200 KIND MODAL\n  SIZE 9 49\n  TEXT 2 2 'Name'\n  FIELD ZNAME1 2 10 INPUT\nENDDYNPRO\n"
+        );
+        assert!(run(&abap_with_modal_call(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn modal_call_to_a_normal_dynpro_is_an_error() {
+        let dynp = format!("{DYNP_OK}DYNPRO 0200\nENDDYNPRO\n");
+        let errs = run(&abap_with_modal_call(), &dynp);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(!errs[0].warning);
+        assert_eq!(errs[0].line, 8);
+        assert!(errs[0]
+            .message
+            .contains("CALL SCREEN ... STARTING AT needs a modal dynpro: DYNPRO 0200 in prog.dynp is not KIND MODAL"));
+    }
+
+    #[test]
+    fn modal_call_counts_as_a_call_screen_for_the_program() {
+        // Ohne normalen `CALL SCREEN` ist nur das Modalfenster da: keine Warnung „no CALL SCREEN“.
+        let abap = ABAP.replace(
+            "  CALL SCREEN 0100.\n",
+            "  CALL SCREEN 0200 STARTING AT 10 5 ENDING AT 60 15.\n",
+        );
+        let dynp = format!("{DYNP_OK}DYNPRO 0200 KIND MODAL\nENDDYNPRO\n");
+        let errs = run(&abap, &dynp);
+        assert!(messages(&errs)
+            .iter()
+            .all(|m| !m.contains("no CALL SCREEN")));
+    }
+
     #[test]
     fn set_pf_status_without_guistatus_is_an_error() {
         let dynp = DYNP_OK.replace("GUISTATUS STATUS_0100", "GUISTATUS ANDERER");
@@ -1038,5 +1115,51 @@ ENDGUISTATUS
             "      CHAIN\n        FIELD ZKUNNR\n        FIELD ZNAME1\n      ENDCHAIN\n      MODULE USER_COMMAND_0100\n",
         );
         assert!(run(ABAP, &dynp).is_empty());
+    }
+
+    /// `DYNP_OK` mit einem Block `PROCESS ON VALUE-REQUEST` mit den Zeilen `pov` vor `ENDFLOW`.
+    fn dynp_with_pov(pov: &str) -> String {
+        DYNP_OK.replace(
+            "  ENDFLOW\n",
+            &format!("  PROCESS ON VALUE-REQUEST\n{pov}  ENDFLOW\n"),
+        )
+    }
+
+    #[test]
+    fn value_request_for_a_field_with_an_input_module_is_accepted() {
+        let dynp = dynp_with_pov("    FIELD ZKUNNR MODULE CHECK_KUNNR\n");
+        assert!(run(&abap_with_check(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn value_request_field_may_also_appear_in_a_pai_field_statement() {
+        let dynp = dynp_with_pai("      FIELD ZKUNNR\n      MODULE USER_COMMAND_0100\n").replace(
+            "  ENDFLOW\n",
+            "  PROCESS ON VALUE-REQUEST\n    FIELD ZKUNNR MODULE CHECK_KUNNR\n  ENDFLOW\n",
+        );
+        assert!(run(&abap_with_check(), &dynp).is_empty());
+    }
+
+    #[test]
+    fn value_request_field_that_is_not_a_dynpro_field_is_an_error() {
+        let dynp = dynp_with_pov("    FIELD ZFEHLT MODULE CHECK_KUNNR\n");
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec![
+                "FIELD 'ZFEHLT' in PROCESS ON VALUE-REQUEST is not a FIELD of DYNPRO 0100"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn value_request_module_must_be_an_input_module() {
+        let dynp = dynp_with_pov("    FIELD ZKUNNR MODULE STATUS_0100\n");
+        let errs = run(&abap_with_check(), &dynp);
+        assert_eq!(
+            messages(&errs),
+            vec!["MODULE 'STATUS_0100' is not defined in the program as MODULE ... INPUT (needed by DYNPRO 0100)".to_string()]
+        );
     }
 }

@@ -19,6 +19,16 @@ pub fn fault_text(field: &Field, error: InputError) -> String {
     }
 }
 
+/// Anzeigepuffer eines Feldes aus der ABAP-Variablen: ein unsichtbares Feld zeigt nur Leerzeichen.
+fn field_buf(field: &Field) -> Result<Vec<char>, &'static str> {
+    if !field.is_visible() {
+        return Ok(vec![' '; field.width]);
+    }
+    // SAFETY: Vertrag des Prologs: `field.data` zeigt auf `mem_len` Bytes der Programmvariablen.
+    let value = unsafe { value::read(field)? };
+    Ok(value::format(&value, field.width))
+}
+
 /// Position im Dynpro-Bereich, 1-basiert.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pos {
@@ -136,15 +146,19 @@ impl Editor {
     pub fn reload(&mut self, dynpro: &Dynpro) -> Result<(), &'static str> {
         let mut bufs = Vec::with_capacity(dynpro.fields.len());
         for field in &dynpro.fields {
-            if !field.is_visible() {
-                bufs.push(vec![' '; field.width]);
-                continue;
-            }
-            // SAFETY: Vertrag des Prologs: `field.data` zeigt auf `mem_len` Bytes der Programmvariablen.
-            let value = unsafe { value::read(field)? };
-            bufs.push(value::format(&value, field.width));
+            bufs.push(field_buf(field)?);
         }
         self.bufs = bufs;
+        Ok(())
+    }
+
+    /// Lädt nur den Anzeigepuffer des Feldes `index` aus seiner ABAP-Variablen neu (nach der Wertehilfe, Spec 12b).
+    /// Die übrigen Puffer, der Cursor und die Eingabemarkierungen bleiben unverändert.
+    pub fn reload_field(&mut self, dynpro: &Dynpro, index: usize) -> Result<(), &'static str> {
+        let buf = field_buf(&dynpro.fields[index])?;
+        if let Some(slot) = self.bufs.get_mut(index) {
+            *slot = buf;
+        }
         Ok(())
     }
 

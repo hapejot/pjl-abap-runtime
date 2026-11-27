@@ -1,0 +1,50 @@
+Kunde und Lagerort                                                              
+                                                                                
+ Kunde                                                                          
+                                                                                
+ Lagerort          A001                                                         
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back                                                                         
+                                                                                
+                                                                                
+----
+Kunde und Lagerort                                                              
+                                                                                
+ Kunde                                                                          
+                                                                                
+ Lagerort          A001                                                         
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Back                                                                         
+                                                                                
+                                                                                
+----

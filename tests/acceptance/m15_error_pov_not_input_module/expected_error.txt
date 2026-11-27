@@ -1,0 +1,1 @@
+MODULE 'STATUS_0100' is not defined in the program as MODULE ... INPUT (needed by DYNPRO 0100)

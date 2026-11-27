@@ -17,7 +17,7 @@ const FKEY_FIRST_ROW: usize = 21;
 /// Letzte Zeile der Funktionstastenleiste (0-basiert, also Zeile 23).
 const FKEY_LAST_ROW: usize = 22;
 /// Meldungszeile (0-basiert, also Zeile 24).
-const MESSAGE_ROW: usize = 23;
+pub(crate) const MESSAGE_ROW: usize = 23;
 
 /// Darstellung einer Zelle. Die Farben folgen Abschnitt 8.3, `color` 0 heißt ohne Farbe.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,7 +66,7 @@ impl Grid {
     }
 
     /// Schreibt ein Zeichen. Positionen außerhalb des Gitters werden ignoriert.
-    fn put(&mut self, row: usize, col: usize, ch: char, style: Style) {
+    pub(crate) fn put(&mut self, row: usize, col: usize, ch: char, style: Style) {
         if row < ROWS && col < COLS {
             self.cells[row * COLS + col] = Cell { ch, style };
         }
@@ -138,11 +138,34 @@ pub fn render_titled(
     }
     grid.text(0, 0, title, title_style);
 
+    paint_content(&mut grid, dynpro, dynpro_cell, bufs, enabled, status);
+    draw_fkeys(&mut grid, status);
+    if let Some(message) = message {
+        let style = Style {
+            bold: matches!(message.kind, 'E' | 'A' | 'X'),
+            ..Style::default()
+        };
+        grid.text(MESSAGE_ROW, 0, &message.text, style);
+    }
+    grid
+}
+
+/// Zeichnet die Elemente des Dynpros: Rahmen, Texte, Felder und Tasten. `place` bildet die Dynpro-Position
+/// (1-basiert) auf die Gitterzelle ab. Im Vollbild ist das `dynpro_cell`, im Modalfenster die Innenfläche
+/// (`window.rs`). `bufs`: Anzeigepuffer je Feld. `enabled`: Eingabebeschränkung (siehe `render_titled`).
+pub(crate) fn paint_content(
+    grid: &mut Grid,
+    dynpro: &Dynpro,
+    place: impl Fn(u32, u32) -> (usize, usize) + Copy,
+    bufs: &[Vec<char>],
+    enabled: Option<&[bool]>,
+    status: Option<&GuiStatus>,
+) {
     for frame in &dynpro.frames {
-        draw_frame(&mut grid, frame);
+        draw_frame(grid, frame, place);
     }
     for text in &dynpro.texts {
-        draw_text(&mut grid, text);
+        draw_text(grid, text, place);
     }
     for (index, field) in dynpro.fields.iter().enumerate() {
         if !field.is_visible() {
@@ -155,7 +178,7 @@ pub fn render_titled(
             underline: editable,
             ..attr_style(field.attrs)
         };
-        let (row, col) = dynpro_cell(field.row, field.col);
+        let (row, col) = place(field.row, field.col);
         for (k, &ch) in buf.iter().enumerate().take(field.width) {
             let shown = if field.is_password() && ch != ' ' {
                 '*'
@@ -170,33 +193,24 @@ pub fn render_titled(
         .iter()
         .filter(|b| !is_excluded(status, &b.fcode))
     {
-        draw_button(&mut grid, button);
+        draw_button(grid, button, place);
     }
-    draw_fkeys(&mut grid, status);
-    if let Some(message) = message {
-        let style = Style {
-            bold: matches!(message.kind, 'E' | 'A' | 'X'),
-            ..Style::default()
-        };
-        grid.text(MESSAGE_ROW, 0, &message.text, style);
-    }
-    grid
 }
 
-fn draw_text(grid: &mut Grid, text: &Text) {
-    let (row, col) = dynpro_cell(text.row, text.col);
+fn draw_text(grid: &mut Grid, text: &Text, place: impl Fn(u32, u32) -> (usize, usize)) {
+    let (row, col) = place(text.row, text.col);
     grid.text(row, col, &text.text, attr_style(text.attrs));
 }
 
-fn draw_button(grid: &mut Grid, button: &Button) {
-    let (row, col) = dynpro_cell(button.row, button.col);
+fn draw_button(grid: &mut Grid, button: &Button, place: impl Fn(u32, u32) -> (usize, usize)) {
+    let (row, col) = place(button.row, button.col);
     grid.text(row, col, &button.label(), Style::default());
 }
 
 /// Rahmen mit ASCII-Zeichen. Der Titel steht in der oberen Leiste, zwischen den Ecken.
-fn draw_frame(grid: &mut Grid, frame: &Frame) {
-    let (r1, c1) = dynpro_cell(frame.row1, frame.col1);
-    let (r2, c2) = dynpro_cell(frame.row2, frame.col2);
+fn draw_frame(grid: &mut Grid, frame: &Frame, place: impl Fn(u32, u32) -> (usize, usize)) {
+    let (r1, c1) = place(frame.row1, frame.col1);
+    let (r2, c2) = place(frame.row2, frame.col2);
     let style = Style::default();
     for col in c1..=c2 {
         grid.put(r1, col, '-', style);

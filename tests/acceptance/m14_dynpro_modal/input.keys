@@ -1,0 +1,8 @@
+' Hauptbild: Modalfenster öffnen (F5). Der Cursor steht im Fenster auf dem Feld ZNAME1.
+KEY F5
+SNAPSHOT
+TYPE 'Kunde 4711'
+KEY F3
+' Fenster verlassen: der Wert steht im Hauptbild
+SNAPSHOT
+KEY F3
