@@ -1,1 +1,1 @@
-Methode 'nope' unbekannt
+Method 'nope' unknown

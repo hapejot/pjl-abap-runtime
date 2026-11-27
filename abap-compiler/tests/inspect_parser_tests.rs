@@ -108,7 +108,9 @@ fn form_routine_is_parsed() {
     let prog = program("FORM run USING p TYPE i.\n  WRITE p.\nENDFORM.");
     assert!(prog.errors.is_empty());
     match &prog.items[0] {
-        TopItem::Routine { kind, name, body, .. } => {
+        TopItem::Routine {
+            kind, name, body, ..
+        } => {
             assert_eq!(kind, "FORM");
             assert_eq!(name, "run");
             assert_eq!(body.len(), 1);
@@ -145,7 +147,9 @@ fn class_definition_members_and_visibility() {
     let src = "CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    METHODS run IMPORTING iv_x TYPE i RETURNING VALUE(rv) TYPE string.\n  PRIVATE SECTION.\n    DATA mv TYPE i.\nENDCLASS.";
     let prog = program(src);
     assert!(prog.errors.is_empty(), "{:?}", prog.errors);
-    let TopItem::Class(c) = &prog.items[0] else { panic!("expected class") };
+    let TopItem::Class(c) = &prog.items[0] else {
+        panic!("expected class")
+    };
     assert_eq!(c.kind, ClassKind::Definition);
     assert_eq!(c.name, "lcl");
     assert_eq!(c.members.len(), 2);
@@ -169,8 +173,11 @@ fn class_definition_members_and_visibility() {
 
 #[test]
 fn class_static_method_is_flagged() {
-    let prog = program("CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    CLASS-METHODS make.\nENDCLASS.");
-    let TopItem::Class(c) = &prog.items[0] else { panic!("expected class") };
+    let prog =
+        program("CLASS lcl DEFINITION.\n  PUBLIC SECTION.\n    CLASS-METHODS make.\nENDCLASS.");
+    let TopItem::Class(c) = &prog.items[0] else {
+        panic!("expected class")
+    };
     match &c.members[0].kind {
         MemberKind::Method(sig) => assert!(sig.is_class),
         other => panic!("expected method, got {other:?}"),
@@ -208,7 +215,9 @@ fn class_implementation_collects_methods() {
     let src = "CLASS lcl IMPLEMENTATION.\n  METHOD a.\n    x = 1.\n  ENDMETHOD.\n  METHOD b.\n    IF x = 1.\n    ENDIF.\n  ENDMETHOD.\nENDCLASS.";
     let prog = program(src);
     assert!(prog.errors.is_empty(), "{:?}", prog.errors);
-    let TopItem::Class(c) = &prog.items[0] else { panic!("expected class") };
+    let TopItem::Class(c) = &prog.items[0] else {
+        panic!("expected class")
+    };
     assert_eq!(c.kind, ClassKind::Implementation);
     assert_eq!(c.methods.len(), 2);
     assert_eq!(c.methods[0].name, "a");

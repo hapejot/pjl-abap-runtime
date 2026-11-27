@@ -15,26 +15,42 @@ impl<'ctx> Codegen<'ctx> {
         Ok(c.try_as_basic_value().basic())
     }
 
-    pub(super) fn call(&self, f: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>]) -> CResult<Option<BasicValueEnum<'ctx>>> {
+    pub(super) fn call(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> CResult<Option<BasicValueEnum<'ctx>>> {
         self.call_on(&self.builder, f, args)
     }
 
-    pub(super) fn call_void(&self, f: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>]) -> CResult<()> {
+    pub(super) fn call_void(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> CResult<()> {
         self.call(f, args)?;
         Ok(())
     }
 
-    pub(super) fn call_int(&self, f: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>]) -> CResult<IntValue<'ctx>> {
+    pub(super) fn call_int(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> CResult<IntValue<'ctx>> {
         match self.call(f, args)? {
             Some(v) => Ok(v.into_int_value()),
-            None => err(0, "Runtime-Funktion ohne Rückgabewert"),
+            None => err(0, "Runtime function without return value"),
         }
     }
 
-    pub(super) fn call_ptr(&self, f: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>]) -> CResult<PointerValue<'ctx>> {
+    pub(super) fn call_ptr(
+        &self,
+        f: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+    ) -> CResult<PointerValue<'ctx>> {
         match self.call(f, args)? {
             Some(v) => Ok(v.into_pointer_value()),
-            None => err(0, "Runtime-Funktion ohne Rückgabewert"),
+            None => err(0, "Runtime function without return value"),
         }
     }
 
@@ -45,7 +61,10 @@ impl<'ctx> Codegen<'ctx> {
     /// Zeiger auf ein konstantes UTF-16-Literal im Datensegment (eine Einheit je Zeichen).
     pub(super) fn lit(&self, s: &str) -> PointerValue<'ctx> {
         let i16t = self.ctx.i16_type();
-        let vals: Vec<IntValue<'ctx>> = s.encode_utf16().map(|u| i16t.const_int(u as u64, false)).collect();
+        let vals: Vec<IntValue<'ctx>> = s
+            .encode_utf16()
+            .map(|u| i16t.const_int(u as u64, false))
+            .collect();
         let arr = i16t.const_array(&vals);
         let g = self.module.add_global(arr.get_type(), None, "lit");
         g.set_initializer(&arr);
@@ -87,7 +106,10 @@ impl<'ctx> Codegen<'ctx> {
         let f = self
             .body
             .and_then(|b| b.get_parent())
-            .ok_or_else(|| CompileError { line: 0, message: "kein Funktionskontext".into() })?;
+            .ok_or_else(|| CompileError {
+                line: 0,
+                message: "no function context".into(),
+            })?;
         Ok(self.ctx.append_basic_block(f, name))
     }
 

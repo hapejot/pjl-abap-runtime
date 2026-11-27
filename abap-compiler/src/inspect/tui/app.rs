@@ -184,7 +184,11 @@ impl App {
 
     fn jump(&mut self, to_end: bool) {
         if self.focus_src {
-            self.src_off = if to_end { self.lines.len().saturating_sub(1) } else { 0 };
+            self.src_off = if to_end {
+                self.lines.len().saturating_sub(1)
+            } else {
+                0
+            };
         } else if !self.rows.is_empty() {
             let target = if to_end { self.rows.len() - 1 } else { 0 };
             let delta = target as isize - self.sel as isize;

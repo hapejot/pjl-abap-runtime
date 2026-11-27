@@ -39,7 +39,10 @@ const DECL_KEYWORDS: &[&str] = &[
 ];
 
 fn name_at(s: &Statement, idx: usize) -> String {
-    s.tokens.get(idx).map(|t| t.text.clone()).unwrap_or_default()
+    s.tokens
+        .get(idx)
+        .map(|t| t.text.clone())
+        .unwrap_or_default()
 }
 
 /// Erzeugt aus einem Statement eine Deklaration. `depth` zählt BEGIN OF / END OF,
@@ -59,7 +62,12 @@ fn decl_of(s: &Statement, depth: &mut usize) -> Option<Declaration> {
     }
     let top = *depth == 0;
     let is_begin = t1 == "BEGIN";
-    let name = if is_begin { name_at(s, 3) } else { name_at(s, 1) }.to_lowercase();
+    let name = if is_begin {
+        name_at(s, 3)
+    } else {
+        name_at(s, 1)
+    }
+    .to_lowercase();
     if is_begin {
         *depth += 1;
     }
@@ -94,8 +102,13 @@ fn class_decl(c: &ClassDef, impls: &ImplMap) -> Option<Declaration> {
         .iter()
         .filter_map(|m| decl_of(&m.statement, &mut depth))
         .collect();
-    for child in children.iter_mut().filter(|d| d.kind == "METHODS" || d.kind == "CLASS-METHODS") {
-        child.impl_line = impls.get(&(class.clone(), child.name.to_lowercase())).copied();
+    for child in children
+        .iter_mut()
+        .filter(|d| d.kind == "METHODS" || d.kind == "CLASS-METHODS")
+    {
+        child.impl_line = impls
+            .get(&(class.clone(), child.name.to_lowercase()))
+            .copied();
     }
     Some(Declaration {
         kind: kind.to_string(),
@@ -128,7 +141,9 @@ pub fn declarations(prog: &Program) -> Vec<Declaration> {
             TopItem::Statement(s) => out.extend(decl_of(s, &mut depth)),
             TopItem::Block { .. } => {}
             TopItem::Class(c) => out.extend(class_decl(c, &impls)),
-            TopItem::Routine { kind, name, head, .. } => {
+            TopItem::Routine {
+                kind, name, head, ..
+            } => {
                 let kind = if matches!(kind.as_str(), "FORM" | "FUNCTION" | "MODULE") {
                     kind.clone()
                 } else {

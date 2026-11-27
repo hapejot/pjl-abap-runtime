@@ -1,1 +1,1 @@
-Komponente 'x' unbekannt
+Component 'x' unknown

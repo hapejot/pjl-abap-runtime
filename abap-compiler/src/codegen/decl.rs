@@ -19,7 +19,11 @@ impl<'ctx> Codegen<'ctx> {
             match s {
                 Stmt::Data { name, ty, line } => self.declare(name, *ty, *line)?,
                 Stmt::FieldSymbol { name, ty, line } => self.declare_fs(name, *ty, *line)?,
-                Stmt::If { branches, otherwise, .. } => {
+                Stmt::If {
+                    branches,
+                    otherwise,
+                    ..
+                } => {
                     for (_, b) in branches {
                         self.hoist(b)?;
                     }
@@ -31,7 +35,9 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     self.hoist(other)?;
                 }
-                Stmt::Do { body, .. } | Stmt::While { body, .. } | Stmt::Loop { body, .. } => self.hoist(body)?,
+                Stmt::Do { body, .. } | Stmt::While { body, .. } | Stmt::Loop { body, .. } => {
+                    self.hoist(body)?
+                }
                 _ => {}
             }
         }
@@ -40,7 +46,7 @@ impl<'ctx> Codegen<'ctx> {
 
     pub(super) fn check_new(&self, name: &str, line: usize) -> CResult<()> {
         if self.vars.contains_key(name) || self.globals.contains_key(name) {
-            return err(line, format!("Feld '{name}' ist bereits deklariert"));
+            return err(line, format!("Field '{name}' is already declared"));
         }
         Ok(())
     }
@@ -50,11 +56,27 @@ impl<'ctx> Codegen<'ctx> {
         self.check_new(name, line)?;
         if self.in_form {
             let slot = self.alloca_slot(name, ty)?;
-            self.vars.insert(name.to_string(), Var { slot, ty, fs: false, tag: None });
+            self.vars.insert(
+                name.to_string(),
+                Var {
+                    slot,
+                    ty,
+                    fs: false,
+                    tag: None,
+                },
+            );
         } else {
             let slot = self.global_slot(name, ty);
             self.pending_init.push((slot, ty));
-            self.globals.insert(name.to_string(), Var { slot, ty, fs: false, tag: None });
+            self.globals.insert(
+                name.to_string(),
+                Var {
+                    slot,
+                    ty,
+                    fs: false,
+                    tag: None,
+                },
+            );
         }
         Ok(())
     }
@@ -73,7 +95,9 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Int => self.i32t.const_zero().into(),
             Ty::Char(n) => self.const_chars("", n).into(),
             Ty::Packed { bytes, .. } => self.packed_zero(bytes).into(),
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) | Ty::Dynamic => self.ptrt.const_null().into(),
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) | Ty::Dynamic => {
+                self.ptrt.const_null().into()
+            }
             Ty::Struct(i) => self.layouts[i].st.const_zero().into(),
         };
         let g = self.module.add_global(lt, None, &format!("abap_g_{name}"));
@@ -88,14 +112,33 @@ impl<'ctx> Codegen<'ctx> {
             llvm(self.alloca.build_store(slot, self.ptrt.const_null()))?;
             let tag = llvm(self.alloca.build_alloca(self.ptrt, &format!("{name}.tag")))?;
             llvm(self.alloca.build_store(tag, self.ptrt.const_null()))?;
-            self.vars.insert(name.to_string(), Var { slot, ty, fs: true, tag: Some(tag) });
+            self.vars.insert(
+                name.to_string(),
+                Var {
+                    slot,
+                    ty,
+                    fs: true,
+                    tag: Some(tag),
+                },
+            );
         } else {
-            let g = self.module.add_global(self.ptrt, None, &format!("abap_g_{name}"));
+            let g = self
+                .module
+                .add_global(self.ptrt, None, &format!("abap_g_{name}"));
             g.set_initializer(&self.ptrt.const_null());
-            let tag_global = self.module.add_global(self.ptrt, None, &format!("abap_g_{name}.tag"));
+            let tag_global = self
+                .module
+                .add_global(self.ptrt, None, &format!("abap_g_{name}.tag"));
             tag_global.set_initializer(&self.ptrt.const_null());
-            self.globals
-                .insert(name.to_string(), Var { slot: g.as_pointer_value(), ty, fs: true, tag: Some(tag_global.as_pointer_value()) });
+            self.globals.insert(
+                name.to_string(),
+                Var {
+                    slot: g.as_pointer_value(),
+                    ty,
+                    fs: true,
+                    tag: Some(tag_global.as_pointer_value()),
+                },
+            );
         }
         Ok(())
     }

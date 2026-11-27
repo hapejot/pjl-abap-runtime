@@ -152,9 +152,9 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
                 start.extend(nodes(body));
             }
             TopItem::Routine { kind, .. } if kind == "FORM" => form_items.push(item),
-            TopItem::Routine { kind, head, body, .. }
-                if kind == "AT" && head.tokens.iter().any(|t| t.is_word("SELECTION-SCREEN")) =>
-            {
+            TopItem::Routine {
+                kind, head, body, ..
+            } if kind == "AT" && head.tokens.iter().any(|t| t.is_word("SELECTION-SCREEN")) => {
                 // Ereignisse der Selektionsmaske laufen nur mit einer Maske (SAP GUI). Im Ziel gibt es keine
                 // Maske, daher werden sie nie ausgeführt. Der Code wird trotzdem übersetzt, damit Fehler
                 // sichtbar bleiben; Variablen aus dem Block gelten nicht außerhalb.
@@ -178,7 +178,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
             }
             TopItem::Routine { kind, head, .. } => lw.errors.push(CompileError {
                 line: head.line,
-                message: format!("Nicht unterstütztes Ereignis/Routine: {kind}"),
+                message: format!("Unsupported event/routine: {kind}"),
             }),
             TopItem::Class(c) => top.push(Node::C(c)),
         }
@@ -249,7 +249,7 @@ impl Lowerer {
                     let mut j = i + 1;
                     loop {
                         let Some(node) = seq.get(j) else {
-                            return err(line, format!("END OF {name} fehlt"));
+                            return err(line, format!("END OF {name} missing"));
                         };
                         match node {
                             Node::S(f)
@@ -292,15 +292,12 @@ impl Lowerer {
                                 fields.extend(self.include_type_fields(f)?.unwrap_or_default());
                             }
                             Node::S(f) if f.keyword() == kw => fields.push(self.field(f)?),
-                            Node::S(f) => return err(f.line, "Struktur unvollständig"),
+                            Node::S(f) => return err(f.line, "Structure incomplete"),
                             Node::B(h, _) => {
-                                return err(h.line, "Blöcke in Strukturen werden nicht unterstützt")
+                                return err(h.line, "Blocks in structures are not supported")
                             }
                             Node::C(c) => {
-                                return err(
-                                    c.head.line,
-                                    "Klassen in Strukturen werden nicht unterstützt",
-                                )
+                                return err(c.head.line, "Classes in structures are not supported")
                             }
                         }
                         j += 1;
@@ -362,7 +359,10 @@ impl Lowerer {
             match t {
                 DdicType::Char(n) => Ty::Char(*n),
                 DdicType::Int => Ty::Int,
-                DdicType::Packed { bytes, scale } => Ty::Packed { bytes: *bytes, scale: *scale },
+                DdicType::Packed { bytes, scale } => Ty::Packed {
+                    bytes: *bytes,
+                    scale: *scale,
+                },
                 DdicType::Str => Ty::Str,
             }
         }
@@ -370,7 +370,8 @@ impl Lowerer {
             self.names.insert(name.clone(), ty(t));
         }
         for (name, fields) in &ddic.structs {
-            let fields: Vec<(String, Ty)> = fields.iter().map(|(f, t)| (f.clone(), ty(t))).collect();
+            let fields: Vec<(String, Ty)> =
+                fields.iter().map(|(f, t)| (f.clone(), ty(t))).collect();
             if let Ok(index) = self.define_struct(name, fields, 0) {
                 self.names.insert(name.clone(), Ty::Struct(index));
             }
@@ -419,7 +420,7 @@ mod tests {
              START-OF-SELECTION.
              WRITE run.",
         )
-        .expect("Selektionsereignisse müssen übersetzbar sein");
+        .expect("Selection screen events must be translatable");
 
         assert_eq!(ir.inactive_events.len(), 1);
         assert_eq!(ir.inactive_events[0].line, 1);
@@ -438,7 +439,7 @@ mod tests {
              WRITE run.",
         )
         .err()
-        .expect("Fehler im Ereignis muss gemeldet werden");
+        .expect("Error in event must be reported");
         assert!(errors.iter().any(|e| e.message.contains("unbekannt_typ")));
     }
 
@@ -700,9 +701,11 @@ mod tests {
              ENDCLASS.",
         )
         .err()
-        .expect("Fehler erwartet");
+        .expect("Error expected");
 
-        assert!(errors.iter().any(|e| e.message.contains("LIKE unknown_thing")));
+        assert!(errors
+            .iter()
+            .any(|e| e.message.contains("LIKE unknown_thing")));
     }
 
     #[test]
@@ -987,12 +990,17 @@ mod tests {
         .unwrap();
 
         match ir.stmts.last() {
-            Some(crate::lower::Stmt::ReadTable { table, target, index, .. }) => {
+            Some(crate::lower::Stmt::ReadTable {
+                table,
+                target,
+                index,
+                ..
+            }) => {
                 assert_eq!(table, "rows");
                 assert_eq!(target, "<row>");
                 assert_eq!(*index, crate::ast::Expr::Int(1));
             }
-            other => panic!("ReadTable erwartet, erhalten: {other:?}"),
+            other => panic!("ReadTable expected, got: {other:?}"),
         }
     }
 
@@ -1007,16 +1015,22 @@ mod tests {
 
     #[test]
     fn include_if_found_without_file_is_not_an_error() {
-        assert!(parse_source("REPORT zt.
+        assert!(parse_source(
+            "REPORT zt.
 INCLUDE zinc IF FOUND.
-").is_ok());
+"
+        )
+        .is_ok());
     }
 
     #[test]
     fn include_without_if_found_without_file_is_an_error() {
-        assert!(parse_source("REPORT zt.
+        assert!(parse_source(
+            "REPORT zt.
 INCLUDE zinc.
-").is_err());
+"
+        )
+        .is_err());
     }
 
     #[test]
@@ -1035,7 +1049,7 @@ INCLUDE zinc.
                ENDMETHOD.
              ENDCLASS.",
         )
-        .expect("LIKE auf geerbtes Attribut muss auflösbar sein");
+        .expect("LIKE on inherited attribute must be resolvable");
         assert_eq!(ir.dependencies, vec!["cx_root=>previous".to_string()]);
     }
 
@@ -1055,7 +1069,7 @@ INCLUDE zinc.
                ENDMETHOD.
              ENDCLASS.",
         )
-        .expect("LIKE auf Attribut und Komponente der eigenen Klasse");
+        .expect("LIKE on attribute and component of own class must be resolvable");
     }
 
     #[test]
@@ -1068,8 +1082,11 @@ INCLUDE zinc.
              DATA ls TYPE item.
              DATA name LIKE ls-obj_name.",
         )
-        .expect("Felder aus INCLUDE TYPE müssen bekannt sein");
-        assert!(ir.structs.iter().any(|st| st.name == "item" && st.fields.iter().any(|(f, _)| f == "obj_name")));
+        .expect("Fields from INCLUDE TYPE must be known");
+        assert!(ir
+            .structs
+            .iter()
+            .any(|st| st.name == "item" && st.fields.iter().any(|(f, _)| f == "obj_name")));
     }
 
     #[test]
@@ -1093,6 +1110,6 @@ INCLUDE zinc.
              LOOP AT values ASSIGNING <value>.
              ENDLOOP.",
         )
-        .expect("LIKE auf Feldsymbol muss auflösbar sein");
+        .expect("LIKE on field symbol must be resolvable");
     }
 }

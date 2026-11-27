@@ -1,1 +1,1 @@
-INCLUDE zinc konnte nicht aufgelöst werden
+INCLUDE zinc could not be resolved

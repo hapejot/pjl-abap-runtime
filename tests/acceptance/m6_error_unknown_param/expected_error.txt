@@ -1,1 +1,1 @@
-Parameter 'zz' unbekannt
+parameter 'zz' unknown

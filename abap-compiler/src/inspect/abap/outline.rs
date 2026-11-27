@@ -76,15 +76,24 @@ pub fn outline(prog: &Program) -> String {
                     dump_items(&mut out, &c.other, 2);
                 }
             }
-            TopItem::Routine { kind, name, head, body } => {
-                let label = if name == kind { kind.clone() } else { format!("{kind} {name}") };
+            TopItem::Routine {
+                kind,
+                name,
+                head,
+                body,
+            } => {
+                let label = if name == kind {
+                    kind.clone()
+                } else {
+                    format!("{kind} {name}")
+                };
                 out.push_str(&format!("{label} ({})\n", fmt_stmt(head)));
                 dump_items(&mut out, body, 1);
             }
         }
     }
     if !prog.errors.is_empty() {
-        out.push_str(&format!("\nFehler ({}):\n", prog.errors.len()));
+        out.push_str(&format!("\nError(s) ({}):\n", prog.errors.len()));
         for e in &prog.errors {
             out.push_str(&format!("  L{}: {}\n", e.line, e.message));
         }

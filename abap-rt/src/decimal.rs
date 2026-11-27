@@ -6,7 +6,6 @@
 
 use std::cmp::Ordering;
 
-
 use crate::packed::PackedError;
 
 /// Zusätzliche Nachkommastellen, die eine Division über die größere Eingabeskala hinaus berechnet.
@@ -23,12 +22,20 @@ pub struct Dec {
 impl Dec {
     /// Null mit der angegebenen Skala.
     pub fn zero(scale: usize) -> Dec {
-        Dec { neg: false, digits: vec![0], scale }
+        Dec {
+            neg: false,
+            digits: vec![0],
+            scale,
+        }
     }
 
     /// Entfernt führende Nullen und setzt das Vorzeichen bei 0 auf positiv.
     fn normalized(mut self) -> Dec {
-        let first = self.digits.iter().position(|&d| d != 0).unwrap_or(self.digits.len());
+        let first = self
+            .digits
+            .iter()
+            .position(|&d| d != 0)
+            .unwrap_or(self.digits.len());
         if first == self.digits.len() {
             self.digits = vec![0];
         } else {
@@ -73,7 +80,10 @@ impl Dec {
         let offset = 2 * len - 1 - value.digits.len();
         nibbles[offset..2 * len - 1].copy_from_slice(&value.digits);
         nibbles[2 * len - 1] = if value.neg { 0x0D } else { 0x0C };
-        Ok(nibbles.chunks(2).map(|pair| (pair[0] << 4) | pair[1]).collect())
+        Ok(nibbles
+            .chunks(2)
+            .map(|pair| (pair[0] << 4) | pair[1])
+            .collect())
     }
 
     /// Bringt die Zahl auf die Skala `scale`: Nullen anhängen oder Nachkommaziffern weglassen (ohne Runden).
@@ -89,7 +99,12 @@ impl Dec {
                 digits.push(0);
             }
         }
-        Dec { neg: self.neg, digits, scale }.normalized()
+        Dec {
+            neg: self.neg,
+            digits,
+            scale,
+        }
+        .normalized()
     }
 
     /// Summe. Das Ergebnis hat die größere der beiden Skalen.
@@ -98,11 +113,26 @@ impl Dec {
         let a = self.rescale(scale);
         let b = other.rescale(scale);
         if a.neg == b.neg {
-            Dec { neg: a.neg, digits: mag_add(&a.digits, &b.digits), scale }.normalized()
+            Dec {
+                neg: a.neg,
+                digits: mag_add(&a.digits, &b.digits),
+                scale,
+            }
+            .normalized()
         } else {
             match mag_cmp(&a.digits, &b.digits) {
-                Ordering::Less => Dec { neg: b.neg, digits: mag_sub(&b.digits, &a.digits), scale }.normalized(),
-                _ => Dec { neg: a.neg, digits: mag_sub(&a.digits, &b.digits), scale }.normalized(),
+                Ordering::Less => Dec {
+                    neg: b.neg,
+                    digits: mag_sub(&b.digits, &a.digits),
+                    scale,
+                }
+                .normalized(),
+                _ => Dec {
+                    neg: a.neg,
+                    digits: mag_sub(&a.digits, &b.digits),
+                    scale,
+                }
+                .normalized(),
             }
         }
     }
@@ -135,7 +165,14 @@ impl Dec {
         let mut numerator = self.digits.clone();
         numerator.extend(std::iter::repeat(0).take(shift));
         let digits = mag_div(&numerator, &other.digits);
-        Some(Dec { neg: self.neg != other.neg, digits, scale }.normalized())
+        Some(
+            Dec {
+                neg: self.neg != other.neg,
+                digits,
+                scale,
+            }
+            .normalized(),
+        )
     }
 
     /// Rest wie ABAP `MOD`: `self - other * trunc(self / other)`. Das Vorzeichen folgt dem Dividenden.
@@ -203,7 +240,11 @@ fn mag_sub(a: &[u8], b: &[u8]) -> Vec<u8> {
     let mut borrow = 0i8;
     for k in 0..n {
         let x = a[n - 1 - k] as i8;
-        let y = if k < b.len() { b[b.len() - 1 - k] as i8 } else { 0 };
+        let y = if k < b.len() {
+            b[b.len() - 1 - k] as i8
+        } else {
+            0
+        };
         let mut d = x - y - borrow;
         if d < 0 {
             d += 10;
@@ -265,7 +306,7 @@ fn mag_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
 
 fn fail(message: &str) -> ! {
     let _ = std::io::Write::flush(&mut std::io::stdout());
-    eprintln!("Laufzeitfehler: {message}");
+    eprintln!("Runtime error: {message}");
     std::process::exit(1)
 }
 
@@ -312,8 +353,8 @@ pub unsafe extern "C" fn abap_rt_dec_unpack(ptr: *const u8, len: u64, scale: u64
     let bytes = std::slice::from_raw_parts(ptr, len as usize);
     match Dec::unpack(bytes, scale as usize) {
         Ok(d) => handle(d),
-        Err(PackedError::InvalidNibble) => fail("ungültige gepackte Zahl"),
-        Err(PackedError::Overflow) => fail("Überlauf bei gepackter Zahl"),
+        Err(PackedError::InvalidNibble) => fail("invalid packed number"),
+        Err(PackedError::Overflow) => fail("Overflow in packed number"),
     }
 }
 
@@ -322,19 +363,31 @@ pub unsafe extern "C" fn abap_rt_dec_unpack(ptr: *const u8, len: u64, scale: u64
 pub unsafe extern "C" fn abap_rt_dec_pack(h: *const Dec, ptr: *mut u8, len: u64, scale: u64) {
     let d = value(h).rescale(scale as usize);
     if len == 0 {
-        fail("Überlauf bei gepackter Zahl");
+        fail("Overflow in packed number");
     }
     match d.pack(len as usize) {
         Ok(bytes) => std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()),
-        Err(_) => fail("Überlauf bei gepackter Zahl"),
+        Err(_) => fail("Overflow in packed number"),
     }
 }
 
 /// Ganze Zahl (Skala 0) als Handle.
 #[no_mangle]
 pub extern "C" fn abap_rt_dec_from_int(v: i32) -> *mut Dec {
-    let digits: Vec<u8> = v.unsigned_abs().to_string().bytes().map(|b| b - b'0').collect();
-    handle(Dec { neg: v < 0, digits, scale: 0 }.normalized())
+    let digits: Vec<u8> = v
+        .unsigned_abs()
+        .to_string()
+        .bytes()
+        .map(|b| b - b'0')
+        .collect();
+    handle(
+        Dec {
+            neg: v < 0,
+            digits,
+            scale: 0,
+        }
+        .normalized(),
+    )
 }
 
 #[no_mangle]
@@ -356,7 +409,7 @@ pub unsafe extern "C" fn abap_rt_dec_mul(a: *const Dec, b: *const Dec) -> *mut D
 pub unsafe extern "C" fn abap_rt_dec_div(a: *const Dec, b: *const Dec) -> *mut Dec {
     match value(a).div(value(b)) {
         Some(d) => handle(d),
-        None => fail("Division durch 0"),
+        None => fail("division by 0"),
     }
 }
 
@@ -364,7 +417,7 @@ pub unsafe extern "C" fn abap_rt_dec_div(a: *const Dec, b: *const Dec) -> *mut D
 pub unsafe extern "C" fn abap_rt_dec_mod(a: *const Dec, b: *const Dec) -> *mut Dec {
     match value(a).rem(value(b)) {
         Some(d) => handle(d),
-        None => fail("Division durch 0"),
+        None => fail("division by 0"),
     }
 }
 
@@ -390,13 +443,17 @@ pub unsafe extern "C" fn abap_rt_dec_cmp(a: *const Dec, b: *const Dec) -> i32 {
 pub unsafe extern "C" fn abap_rt_dec_to_int(a: *const Dec) -> i32 {
     let d = value(a).rescale(0);
     if d.digits.len() > 10 {
-        fail("Überlauf bei Umwandlung in ganze Zahl");
+        fail("Overflow converting to integer");
     }
     let magnitude = d.digits.iter().fold(0i64, |acc, &x| acc * 10 + x as i64);
     if magnitude > i32::MAX as i64 + 1 || (!d.neg && magnitude > i32::MAX as i64) {
-        fail("Überlauf bei Umwandlung in ganze Zahl");
+        fail("Overflow converting to integer");
     }
-    if d.neg { (-magnitude) as i32 } else { magnitude as i32 }
+    if d.neg {
+        (-magnitude) as i32
+    } else {
+        magnitude as i32
+    }
 }
 
 /// Ausgabe wie `WRITE`, rechtsbündig in `width` Zeichen.
@@ -412,17 +469,36 @@ mod tests {
 
     #[test]
     fn division_truncates_at_target_scale() {
-        assert_eq!(dec("1", 0).div(&dec("3", 0)).unwrap().rescale(2).format(), "0.33");
-        assert_eq!(dec("10", 0).div(&dec("4", 0)).unwrap().rescale(1).format(), "2.5");
-        assert_eq!(dec("-7", 0).div(&dec("2", 0)).unwrap().rescale(1).format(), "3.5-");
+        assert_eq!(
+            dec("1", 0).div(&dec("3", 0)).unwrap().rescale(2).format(),
+            "0.33"
+        );
+        assert_eq!(
+            dec("10", 0).div(&dec("4", 0)).unwrap().rescale(1).format(),
+            "2.5"
+        );
+        assert_eq!(
+            dec("-7", 0).div(&dec("2", 0)).unwrap().rescale(1).format(),
+            "3.5-"
+        );
     }
 
     #[test]
     fn division_with_scales_and_large_values() {
-        assert_eq!(dec("150", 2).div(&dec("15", 1)).unwrap().rescale(0).format(), "1");
+        assert_eq!(
+            dec("150", 2)
+                .div(&dec("15", 1))
+                .unwrap()
+                .rescale(0)
+                .format(),
+            "1"
+        );
         let big = dec(&format!("1{}", "0".repeat(30)), 0);
         let small = dec(&format!("1{}", "0".repeat(10)), 0);
-        assert_eq!(big.div(&small).unwrap().rescale(0).format(), format!("1{}", "0".repeat(20)));
+        assert_eq!(
+            big.div(&small).unwrap().rescale(0).format(),
+            format!("1{}", "0".repeat(20))
+        );
     }
 
     #[test]
@@ -452,7 +528,11 @@ mod tests {
     }
 
     fn dec(text: &str, scale: usize) -> Dec {
-        let digits: Vec<u8> = text.bytes().filter(|b| b.is_ascii_digit()).map(|b| b - b'0').collect();
+        let digits: Vec<u8> = text
+            .bytes()
+            .filter(|b| b.is_ascii_digit())
+            .map(|b| b - b'0')
+            .collect();
         let neg = text.starts_with('-');
         Dec { neg, digits, scale }.normalized()
     }
@@ -502,7 +582,10 @@ mod tests {
     fn multiplication_beyond_i64() {
         let nines = dec(&"9".repeat(20), 0);
         let r = nines.mul(&nines);
-        assert_eq!(r.format(), "99999999999999999998".to_string() + "00000000000000000001");
+        assert_eq!(
+            r.format(),
+            "99999999999999999998".to_string() + "00000000000000000001"
+        );
     }
 
     #[test]

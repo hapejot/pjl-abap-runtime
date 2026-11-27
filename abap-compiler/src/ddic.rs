@@ -73,13 +73,17 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
         let Some(block) = xml_blocks(xml, "DD01V").first().copied() else {
             continue;
         };
-        let name = xml_value(block, "DOMNAME").unwrap_or_default().to_lowercase();
+        let name = xml_value(block, "DOMNAME")
+            .unwrap_or_default()
+            .to_lowercase();
         let datatype = xml_value(block, "DATATYPE").unwrap_or_default();
         match base_type(block, &datatype) {
             Some(t) => {
                 domains.insert(name, t);
             }
-            None => skipped.push(format!("{path}: Domäne {name} hat Typ {datatype}, der nicht unterstützt wird")),
+            None => skipped.push(format!(
+                "{path}: domain {name} has type {datatype}, which is not supported"
+            )),
         }
     }
 
@@ -88,10 +92,14 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
         let Some(block) = xml_blocks(xml, "DD04V").first().copied() else {
             continue;
         };
-        let name = xml_value(block, "ROLLNAME").unwrap_or_default().to_lowercase();
+        let name = xml_value(block, "ROLLNAME")
+            .unwrap_or_default()
+            .to_lowercase();
         let datatype = xml_value(block, "DATATYPE").unwrap_or_default();
         let ty = if datatype.is_empty() {
-            let dom = xml_value(block, "DOMNAME").unwrap_or_default().to_lowercase();
+            let dom = xml_value(block, "DOMNAME")
+                .unwrap_or_default()
+                .to_lowercase();
             domains.get(&dom).cloned()
         } else {
             base_type(block, &datatype)
@@ -102,9 +110,11 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
             }
             None if datatype.is_empty() => {
                 let dom = xml_value(block, "DOMNAME").unwrap_or_default();
-                skipped.push(format!("{path}: Datenelement {name} verweist auf Domäne {dom}, die nicht im Export liegt"));
+                skipped.push(format!("{path}: data element {name} refers to domain {dom}, which is not in the export"));
             }
-            None => skipped.push(format!("{path}: Datenelement {name} hat Typ {datatype}, der nicht unterstützt wird")),
+            None => skipped.push(format!(
+                "{path}: data element {name} has type {datatype}, which is not supported"
+            )),
         }
     }
 
@@ -114,13 +124,15 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
         let Some(head) = xml_blocks(xml, "DD02V").first().copied() else {
             continue;
         };
-        let name = xml_value(head, "TABNAME").unwrap_or_default().to_lowercase();
+        let name = xml_value(head, "TABNAME")
+            .unwrap_or_default()
+            .to_lowercase();
         let mut fields = Vec::new();
         let mut reason: Option<String> = None;
         for block in xml_blocks(xml, "DD03P") {
             let field = xml_value(block, "FIELDNAME").unwrap_or_default();
             if field.starts_with('.') || xml_value(block, "COMPTYPE").as_deref() == Some("S") {
-                reason = Some("enthält eine INCLUDE-Struktur".into());
+                reason = Some("contains an INCLUDE structure".into());
                 break;
             }
             let ty = match xml_value(block, "DATATYPE") {
@@ -131,7 +143,7 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
             match ty {
                 Some(t) => fields.push((field.to_lowercase(), t)),
                 None => {
-                    reason = Some(format!("Feld {field} hat einen nicht unterstützten Typ"));
+                    reason = Some(format!("field {field} has an unsupported type"));
                     break;
                 }
             }

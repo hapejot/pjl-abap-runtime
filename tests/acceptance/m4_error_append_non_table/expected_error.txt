@@ -1,1 +1,1 @@
-keine interne Tabelle
+not an internal table

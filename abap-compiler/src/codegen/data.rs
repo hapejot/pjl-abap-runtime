@@ -9,7 +9,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         match self.globals.get(name) {
             Some(v) => Ok(v),
-            None => err(line, format!("Feld '{name}' ist nicht deklariert")),
+            None => err(line, format!("Field '{name}' is not declared")),
         }
     }
 
@@ -23,14 +23,20 @@ impl<'ctx> Codegen<'ctx> {
             return Ok((p, ty));
         }
         let Ty::Struct(i) = ty else {
-            return err(line, format!("'{base}' ist keine Struktur, Komponente '{field}' nicht zugreifbar"));
+            return err(
+                line,
+                format!("'{base}' is not a structure, component '{field}' cannot be accessed"),
+            );
         };
         let layout = self.layouts[i].clone();
         let Some(k) = layout.fields.iter().position(|(n, _)| n == field) else {
-            return err(line, format!("Komponente '{field}' unbekannt in '{base}'"));
+            return err(line, format!("Component '{field}' unknown in '{base}'"));
         };
         let fty = layout.fields[k].1;
-        let fp = llvm(self.builder.build_struct_gep(layout.st, p, k as u32, "comp"))?;
+        let fp = llvm(
+            self.builder
+                .build_struct_gep(layout.st, p, k as u32, "comp"),
+        )?;
         Ok((fp, fty))
     }
 
@@ -43,19 +49,28 @@ impl<'ctx> Codegen<'ctx> {
         if let Some((slot, c)) = self.self_ctx {
             let layout = self.layouts[self.classes[c].struct_idx].clone();
             if let Some(k) = layout.fields.iter().position(|(n, _)| n == name) {
-                let obj = llvm(self.builder.build_load(self.ptrt, slot, "me"))?.into_pointer_value();
-                let fp = llvm(self.builder.build_struct_gep(layout.st, obj, k as u32, "attr"))?;
+                let obj =
+                    llvm(self.builder.build_load(self.ptrt, slot, "me"))?.into_pointer_value();
+                let fp = llvm(
+                    self.builder
+                        .build_struct_gep(layout.st, obj, k as u32, "attr"),
+                )?;
                 return Ok((fp, layout.fields[k].1));
             }
         }
         match self.globals.get(name) {
             Some(v) => self.resolve_var(v, name, line),
-            None => err(line, format!("Feld '{name}' ist nicht deklariert")),
+            None => err(line, format!("Field '{name}' is not declared")),
         }
     }
 
     /// Speicherplatz einer Variablen; bei Feldsymbolen Zeiger laden und auf null prüfen.
-    pub(super) fn resolve_var(&self, v: &Var<'ctx>, name: &str, line: usize) -> CResult<(PointerValue<'ctx>, Ty)> {
+    pub(super) fn resolve_var(
+        &self,
+        v: &Var<'ctx>,
+        name: &str,
+        line: usize,
+    ) -> CResult<(PointerValue<'ctx>, Ty)> {
         if !v.fs {
             return Ok((v.slot, v.ty));
         }
@@ -87,14 +102,14 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn object(&self, name: &str, line: usize) -> CResult<(PointerValue<'ctx>, usize)> {
         if name == "me" {
             let Some((slot, c)) = self.self_ctx else {
-                return err(line, "'me' nur innerhalb einer Methode");
+                return err(line, "'me' only allowed within a method");
             };
             let p = llvm(self.builder.build_load(self.ptrt, slot, "me"))?.into_pointer_value();
             return Ok((p, c));
         }
         let (slot, ty) = self.data_base(name, line)?;
         let Ty::Ref(c) = ty else {
-            return err(line, format!("'{name}' ist keine Objektreferenz"));
+            return err(line, format!("'{name}' is not an object reference"));
         };
         let obj = llvm(self.builder.build_load(self.ptrt, slot, "obj"))?.into_pointer_value();
         let is_null = llvm(self.builder.build_is_null(obj, "obj_null"))?;
@@ -109,15 +124,24 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// Attribut eines Objekts: Zeiger auf das Feld und dessen Typ.
-    pub(super) fn field_of(&self, obj: PointerValue<'ctx>, c: usize, attr: &str, line: usize) -> CResult<(PointerValue<'ctx>, Ty)> {
+    pub(super) fn field_of(
+        &self,
+        obj: PointerValue<'ctx>,
+        c: usize,
+        attr: &str,
+        line: usize,
+    ) -> CResult<(PointerValue<'ctx>, Ty)> {
         let layout = self.layouts[self.classes[c].struct_idx].clone();
         let Some(k) = layout.fields.iter().position(|(n, _)| n == attr) else {
             if self.classes[c].external_parent.is_some() {
                 return Ok((obj, Ty::External(0)));
             }
-            return err(line, format!("Attribut '{attr}' unbekannt"));
+            return err(line, format!("Attribute '{attr}' unknown"));
         };
-        let fp = llvm(self.builder.build_struct_gep(layout.st, obj, k as u32, "attr"))?;
+        let fp = llvm(
+            self.builder
+                .build_struct_gep(layout.st, obj, k as u32, "attr"),
+        )?;
         Ok((fp, layout.fields[k].1))
     }
 
@@ -126,10 +150,11 @@ impl<'ctx> Codegen<'ctx> {
         let v = self.var(name, line)?;
         match (v.ty, v.fs) {
             (Ty::Table(e), false) => {
-                let h = llvm(self.builder.build_load(self.ptrt, v.slot, "tab"))?.into_pointer_value();
+                let h =
+                    llvm(self.builder.build_load(self.ptrt, v.slot, "tab"))?.into_pointer_value();
                 Ok((h, e))
             }
-            _ => err(line, format!("'{name}' ist keine interne Tabelle")),
+            _ => err(line, format!("'{name}' is not an internal table")),
         }
     }
 
@@ -148,49 +173,87 @@ impl<'ctx> Codegen<'ctx> {
             Target::Slice { name, off, len } => {
                 let (p, ty) = self.data(name, line)?;
                 let Ty::Char(n) = ty else {
-                    return err(line, format!("Teilfeld nur für Zeichenfelder möglich: '{name}'"));
+                    return err(
+                        line,
+                        format!("Substring only possible for character fields: '{name}'"),
+                    );
                 };
                 if off + len > n {
-                    return err(line, format!("Teilfeld {name}+{off}({len}) liegt außerhalb des Feldes"));
+                    return err(
+                        line,
+                        format!("Substring {name}+{off}({len}) is outside the field"),
+                    );
                 }
                 Ok(Dest::Chars(self.slice_ptr(p, *off)?, *len))
             }
         }
     }
 
-    pub(super) fn dest_of(&self, ty: Ty, p: PointerValue<'ctx>, line: usize) -> CResult<Dest<'ctx>> {
+    pub(super) fn dest_of(
+        &self,
+        ty: Ty,
+        p: PointerValue<'ctx>,
+        line: usize,
+    ) -> CResult<Dest<'ctx>> {
         match ty {
-            Ty::Dynamic => err(line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
+            Ty::Dynamic => err(
+                line,
+                "dynamically typed field symbol: value access not supported yet",
+            ),
             Ty::Int => Ok(Dest::Int(p)),
             Ty::Packed { bytes, scale } => Ok(Dest::Packed(p, bytes, scale)),
             Ty::Char(n) => Ok(Dest::Chars(p, n)),
             Ty::Str => Ok(Dest::Str(p)),
-            Ty::Table(_) => err(line, "Tabelle kann nicht direkt zugewiesen werden"),
+            Ty::Table(_) => err(line, "Table cannot be assigned directly"),
             Ty::Struct(i) => Ok(Dest::Mem(p, i)),
             Ty::Ref(c) => Ok(Dest::Ref(p, c)),
             Ty::External(_) => Ok(Dest::Str(p)),
         }
     }
 
-    pub(super) fn slice_ptr(&self, base: PointerValue<'ctx>, off: usize) -> CResult<PointerValue<'ctx>> {
+    pub(super) fn slice_ptr(
+        &self,
+        base: PointerValue<'ctx>,
+        off: usize,
+    ) -> CResult<PointerValue<'ctx>> {
         let idx = self.len(off);
         // Zeiger auf das Zeichen an Position `off` im Zeichenfeld
-        unsafe { llvm(self.builder.build_gep(self.ctx.i16_type(), base, &[idx], "slice")) }
+        unsafe {
+            llvm(
+                self.builder
+                    .build_gep(self.ctx.i16_type(), base, &[idx], "slice"),
+            )
+        }
     }
 
     /// Liest einen Wert aus einem Speicherplatz des angegebenen Typs.
-    pub(super) fn load_val(&self, p: PointerValue<'ctx>, ty: Ty, _line: usize) -> CResult<Val<'ctx>> {
+    pub(super) fn load_val(
+        &self,
+        p: PointerValue<'ctx>,
+        ty: Ty,
+        _line: usize,
+    ) -> CResult<Val<'ctx>> {
         match ty {
-            Ty::Dynamic => err(_line, "dynamisch typisiertes Feldsymbol: Wertzugriff noch nicht unterstützt"),
-            Ty::Int => Ok(Val::Int(llvm(self.builder.build_load(self.i32t, p, "ld"))?.into_int_value())),
+            Ty::Dynamic => err(
+                _line,
+                "dynamically typed field symbol: value access not supported yet",
+            ),
+            Ty::Int => Ok(Val::Int(
+                llvm(self.builder.build_load(self.i32t, p, "ld"))?.into_int_value(),
+            )),
             Ty::Packed { bytes, scale } => self.load_packed(p, bytes, scale),
             Ty::Char(n) => Ok(Val::Chars(p, n)),
-            Ty::Str => Ok(Val::Str(llvm(self.builder.build_load(self.ptrt, p, "lds"))?.into_pointer_value())),
+            Ty::Str => Ok(Val::Str(
+                llvm(self.builder.build_load(self.ptrt, p, "lds"))?.into_pointer_value(),
+            )),
             Ty::Table(_) => Ok(Val::Table(
                 llvm(self.builder.build_load(self.ptrt, p, "table"))?.into_pointer_value(),
             )),
             Ty::Struct(i) => Ok(Val::Mem(p, i)),
-            Ty::Ref(c) => Ok(Val::Ref(llvm(self.builder.build_load(self.ptrt, p, "ref"))?.into_pointer_value(), c)),
+            Ty::Ref(c) => Ok(Val::Ref(
+                llvm(self.builder.build_load(self.ptrt, p, "ref"))?.into_pointer_value(),
+                c,
+            )),
             Ty::External(_) => Ok(Val::Str(
                 llvm(self.builder.build_load(self.ptrt, p, "external"))?.into_pointer_value(),
             )),

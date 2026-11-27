@@ -59,7 +59,10 @@ pub enum BinOp {
     Add,
     Sub,
     Mul,
+    /// `/`: bei `i` kaufmännisch gerundet (Projektfestlegung).
     Div,
+    /// `DIV`: bei `i` ganzzahliger Quotient, Nachkommastellen werden abgeschnitten.
+    IntDiv,
     Mod,
     BitAnd,
 }
@@ -136,7 +139,7 @@ pub struct CompileError {
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Zeile {}: {}", self.line, self.message)
+        write!(f, "Line {}: {}", self.line, self.message)
     }
 }
 
@@ -189,7 +192,7 @@ fn parse_template(text: &str, line: usize) -> Result<Expr, CompileError> {
         .strip_prefix('|')
         .and_then(|value| value.strip_suffix('|'))
     else {
-        return err(line, "String-Template unvollständig");
+        return err(line, "String template incomplete");
     };
     let chars: Vec<char> = inner.chars().collect();
     let mut parts = Vec::new();
@@ -222,7 +225,7 @@ fn parse_template(text: &str, line: usize) -> Result<Expr, CompileError> {
             index += 1;
         }
         if depth != 0 {
-            return err(line, "String-Template: '}' fehlt");
+            return err(line, "String template: '}' missing");
         }
         let mut expression: String = chars[start..index - 1].iter().collect();
         if let Some(format) = expression
@@ -264,9 +267,9 @@ fn simple_slice_expr(token: &Token, line: usize) -> Result<Expr, CompileError> {
             .text
             .parse::<i64>()
             .map(Expr::Int)
-            .or_else(|_| err(line, "Teilfeldindex zu groß")),
+            .or_else(|_| err(line, "Substring index too large")),
         Kind::Word => Ok(Expr::Var(token.text.to_lowercase())),
-        _ => err(line, "Teilfeldindex muss Zahl oder Feld sein"),
+        _ => err(line, "Substring index must be a number or field"),
     }
 }
 
@@ -281,10 +284,10 @@ impl Parser<'_> {
 
     fn finish(&self, toks: &[Token]) -> Result<(), CompileError> {
         if self.pos != toks.len() {
-            debug!("statement is not nicht zuende: {:?}", toks);
+            debug!("statement is not finished: {:?}", toks);
             return err(
                 self.line,
-                format!("unerwartetes Token '{}'", toks[self.pos].text),
+                format!("unexpected token '{}'", toks[self.pos].text),
             );
         }
         Ok(())
@@ -365,7 +368,7 @@ impl Parser<'_> {
             self.pos += 1;
             let low = self.concat()?;
             if !matches!(self.peek(), Some(token) if token.is_word("AND")) {
-                return err(self.line, "BETWEEN erwartet AND");
+                return err(self.line, "BETWEEN expects AND");
             }
             self.pos += 1;
             let high = self.concat()?;
@@ -377,7 +380,7 @@ impl Parser<'_> {
             self.pos += 2;
             let low = self.concat()?;
             if !matches!(self.peek(), Some(token) if token.is_word("AND")) {
-                return err(self.line, "BETWEEN erwartet AND");
+                return err(self.line, "BETWEEN expects AND");
             }
             self.pos += 1;
             let high = self.concat()?;
@@ -457,10 +460,7 @@ impl Parser<'_> {
                         condition
                     });
                 }
-                return err(
-                    self.line,
-                    "IS erwartet INITIAL, ASSIGNED, BOUND oder SUPPLIED",
-                );
+                return err(self.line, "IS expects INITIAL, ASSIGNED, BOUND or SUPPLIED");
             }
             self.pos += 1;
             let condition = Cond::Initial(lhs);
@@ -477,7 +477,7 @@ impl Parser<'_> {
             Some(t) if t.is_punct(">") || t.is_word("GT") => CmpOp::Gt,
             Some(t) if t.is_punct("<=") || t.is_word("LE") => CmpOp::Le,
             Some(t) if t.is_punct(">=") || t.is_word("GE") => CmpOp::Ge,
-            _ => return err(self.line, "Vergleichsoperator erwartet"),
+            _ => return err(self.line, "Comparison operator expected"),
         };
         self.pos += 1;
         let rhs = self.concat()?;
@@ -520,7 +520,7 @@ impl Parser<'_> {
             let op = match self.peek() {
                 Some(t) if t.is_punct("*") => BinOp::Mul,
                 Some(t) if t.is_punct("/") => BinOp::Div,
-                Some(t) if t.is_word("DIV") => BinOp::Div,
+                Some(t) if t.is_word("DIV") => BinOp::IntDiv,
                 Some(t) if t.is_word("MOD") => BinOp::Mod,
                 Some(t) if t.is_word("BIT-AND") => BinOp::BitAnd,
                 _ => break,
@@ -556,7 +556,7 @@ impl Parser<'_> {
         Ok(Some(match (off, len) {
             (Expr::Int(off), Expr::Int(len)) => {
                 if len == 0 {
-                    return err(self.line, "Teilfeldlänge muss größer 0 sein");
+                    return err(self.line, "Substring length must be greater than 0");
                 }
                 Expr::Slice {
                     name: name.to_lowercase(),
@@ -582,7 +582,7 @@ impl Parser<'_> {
         loop {
             let Some(t) = self.peek().cloned() else {
                 if closing {
-                    return err(self.line, "fehlende schließende Klammer im Aufruf");
+                    return err(self.line, "missing closing parenthesis in call");
                 }
                 break;
             };
@@ -591,7 +591,7 @@ impl Parser<'_> {
                 break;
             }
             if t.is_punct(",") {
-                return err(self.line, "Komma ist in ABAP-Parameterlisten nicht erlaubt");
+                return err(self.line, "Comma is not allowed in ABAP parameter lists");
             }
             if t.is_word("EXPORTING") || t.is_word("IMPORTING") {
                 self.pos += 1;
@@ -625,7 +625,7 @@ impl Parser<'_> {
             let expr = self.concat()?;
             if recv_mode {
                 if receiving.is_some() {
-                    return err(self.line, "RECEIVING nur einmal erlaubt");
+                    return err(self.line, "RECEIVING allowed only once");
                 }
                 receiving = Some(expr);
             } else {
@@ -656,7 +656,7 @@ impl Parser<'_> {
                 .map(|token| token.text.to_lowercase())
                 .ok_or_else(|| CompileError {
                     line: self.line,
-                    message: "Methodenname nach '->' erwartet".into(),
+                    message: "Method name expected after '->'".into(),
                 })?;
             self.pos += 1;
             if matches!(self.peek(), Some(token) if token.is_punct("~")) {
@@ -667,7 +667,7 @@ impl Parser<'_> {
                     .map(|token| token.text.to_lowercase())
                     .ok_or_else(|| CompileError {
                         line: self.line,
-                        message: "Interface-Methode nach '~' erwartet".into(),
+                        message: "Interface method expected after '~'".into(),
                     })?;
                 self.pos += 1;
                 method = format!("{method}~{part}");
@@ -676,7 +676,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 let (args, receiving) = self.arg_list(true)?;
                 if receiving.is_some() {
-                    return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                    return err(self.line, "RECEIVING is only allowed with CALL METHOD");
                 }
                 Some(args)
             } else {
@@ -695,7 +695,7 @@ impl Parser<'_> {
 
     fn primary_base(&mut self) -> Result<Expr, CompileError> {
         let Some(t) = self.peek().cloned() else {
-            return err(self.line, "Ausdruck endet unerwartet");
+            return err(self.line, "Expression ends unexpectedly");
         };
         self.pos += 1;
         match t.kind {
@@ -706,25 +706,25 @@ impl Parser<'_> {
                         self.pos += 1;
                         Ok(e)
                     }
-                    _ => err(self.line, "fehlende schließende Klammer"),
+                    _ => err(self.line, "missing closing parenthesis"),
                 }
             }
             Kind::Literal => match literal_content(&t.text) {
                 Some(s) => Ok(Expr::Lit(s)),
-                None => err(self.line, format!("ungültiges Literal: {}", t.text)),
+                None => err(self.line, format!("invalid literal: {}", t.text)),
             },
             Kind::Template => parse_template(&t.text, self.line),
             Kind::Word if t.text.chars().all(|c| c.is_ascii_digit()) => t
                 .text
                 .parse::<i64>()
                 .map(Expr::Int)
-                .or_else(|_| err(self.line, format!("Zahl zu groß: {}", t.text))),
+                .or_else(|_| err(self.line, format!("Number too large: {}", t.text))),
             Kind::Word if matches!(self.peek(), Some(n) if n.is_punct("=>") || n.is_punct("~")) => {
                 let separator = self.peek().cloned().unwrap();
                 self.pos += 1;
                 let Some(mut name) = self.peek().cloned().filter(|name| name.kind == Kind::Word)
                 else {
-                    return err(self.line, "Name wird nach '{separator}' erwartet");
+                    return err(self.line, "Name expected after '{separator}'");
                 };
                 debug!(
                     "parsed: {}{:?}{:?}",
@@ -740,7 +740,7 @@ impl Parser<'_> {
                         .filter(|token| token.kind == Kind::Word)
                         .ok_or_else(|| CompileError {
                             line: self.line,
-                            message: "Interface-Methode nach '~' erwartet".into(),
+                            message: "Interface method expected after '~'".into(),
                         })?;
                     name.text = format!("{}~{}", name.text, method.text);
                     self.pos += 1;
@@ -757,7 +757,7 @@ impl Parser<'_> {
                     self.pos += 1;
                     let (args, receiving) = self.arg_list(true)?;
                     if receiving.is_some() {
-                        return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                        return err(self.line, "RECEIVING is only allowed with CALL METHOD");
                     }
                     let method = if separator == "~" {
                         format!("{}~{}", t.text.to_lowercase(), name.text.to_lowercase())
@@ -800,18 +800,18 @@ impl Parser<'_> {
                     .peek()
                     .ok_or_else(|| CompileError {
                         line: self.line,
-                        message: "Teilfeldlänge erwartet".into(),
+                        message: "Substring length expected".into(),
                     })?
                     .clone();
                 self.pos += 1;
                 if !matches!(self.peek(), Some(token) if token.is_punct(")")) {
-                    return err(self.line, "Teilfeld: ')' erwartet");
+                    return err(self.line, "Substring: ')' expected");
                 }
                 self.pos += 1;
                 let Expr::Int(len) = simple_slice_expr(&len, self.line)? else {
                     return err(
                         self.line,
-                        "dynamisches Teilfeld als Feldsymbol wird extern behandelt",
+                        "dynamic substring as field symbol is handled externally",
                     );
                 };
                 Ok(Expr::Slice {
@@ -832,7 +832,7 @@ impl Parser<'_> {
                 if t.is_word("boolc") {
                     let condition = self.cond_or()?;
                     if !matches!(self.peek(), Some(token) if token.is_punct(")")) {
-                        return err(self.line, "boolc: ')' erwartet");
+                        return err(self.line, "boolc: ')' expected");
                     }
                     self.pos += 1;
                     return Ok(Expr::Bool(Box::new(condition)));
@@ -840,14 +840,14 @@ impl Parser<'_> {
                 if t.is_word("strlen") {
                     let value = self.concat()?;
                     if !matches!(self.peek(), Some(token) if token.is_punct(")")) {
-                        return err(self.line, "strlen: ')' erwartet");
+                        return err(self.line, "strlen: ')' expected");
                     }
                     self.pos += 1;
                     return Ok(Expr::StrLen(Box::new(value)));
                 }
                 let (mut args, receiving) = self.arg_list(true)?;
                 if receiving.is_some() {
-                    return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                    return err(self.line, "RECEIVING is only allowed with CALL METHOD");
                 }
                 if t.is_word("lines") && args.len() == 1 && args[0].name.is_none() {
                     return Ok(Expr::Lines(Box::new(args.remove(0).expr)));
@@ -875,7 +875,7 @@ impl Parser<'_> {
                     });
                 }
                 let Some(a) = self.peek().cloned().filter(|a| a.kind == Kind::Word) else {
-                    return err(self.line, "Attribut- oder Methodenname nach '->' erwartet");
+                    return err(self.line, "Attribute or method name expected after '->'");
                 };
                 self.pos += 1;
                 let method_name = if matches!(self.peek(), Some(token) if token.is_punct("~")) {
@@ -885,7 +885,7 @@ impl Parser<'_> {
                         .filter(|token| token.kind == Kind::Word)
                         .ok_or_else(|| CompileError {
                             line: self.line,
-                            message: "Interface-Methode nach '~' erwartet".into(),
+                            message: "Interface method expected after '~'".into(),
                         })?
                         .text
                         .to_lowercase();
@@ -898,7 +898,7 @@ impl Parser<'_> {
                     self.pos += 1;
                     let (args, receiving) = self.arg_list(true)?;
                     if receiving.is_some() {
-                        return err(self.line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                        return err(self.line, "RECEIVING is only allowed with CALL METHOD");
                     }
                     if matches!(self.peek(), Some(token) if token.is_punct("->")) {
                         return self.chain_on(Expr::Call {
@@ -924,10 +924,10 @@ impl Parser<'_> {
             },
             _ => {
                 debug!(
-                    "unerwartetes Token hier {}:{} {:?}",
+                    "unexpected token here {}:{} {:?}",
                     self.line, self.pos, self.toks
                 );
-                err(self.line, format!("unerwartetes Token '{}'", t.text))
+                err(self.line, format!("unexpected token '{}'", t.text))
             }
         }
     }

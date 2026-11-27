@@ -8,11 +8,16 @@ fn graph(files: &[(&str, &str)]) -> Graph {
     build(&owned)
 }
 
-fn edge<'a>(g: &'a Graph, from: &str, kind: EdgeKind, hint: &str) -> &'a abap_compiler::inspect::abap::graph::Edge {
+fn edge<'a>(
+    g: &'a Graph,
+    from: &str,
+    kind: EdgeKind,
+    hint: &str,
+) -> &'a abap_compiler::inspect::abap::graph::Edge {
     g.edges
         .iter()
         .find(|e| e.from == from && e.kind == kind && e.hint == hint)
-        .unwrap_or_else(|| panic!("keine Kante {from} {kind:?} {hint}: {:#?}", g.edges))
+        .unwrap_or_else(|| panic!("no edge {from} {kind:?} {hint}: {:#?}", g.edges))
 }
 
 const ZCL_A: &str = "CLASS zcl_a DEFINITION.\n  PUBLIC SECTION.\n    METHODS run.\n    METHODS helper.\nENDCLASS.\n\
@@ -28,7 +33,12 @@ fn method_calls_resolve_where_possible() {
     let me = edge(&g, "zcl_a=>run", EdgeKind::MethodCall, "me->helper");
     assert_eq!(me.to.as_deref(), Some("zcl_a=>helper"));
 
-    let stat = edge(&g, "zcl_a=>run", EdgeKind::StaticMethodCall, "zcl_b=>create");
+    let stat = edge(
+        &g,
+        "zcl_a=>run",
+        EdgeKind::StaticMethodCall,
+        "zcl_b=>create",
+    );
     assert_eq!(stat.to.as_deref(), Some("zcl_b=>create"));
 
     // Typ von `lo` wird nicht verfolgt
@@ -39,7 +49,11 @@ fn method_calls_resolve_where_possible() {
 #[test]
 fn method_nodes_point_to_implementation() {
     let g = graph(&[("zcl_a.clas.abap", ZCL_A), ("zcl_b.clas.abap", ZCL_B)]);
-    let save = g.nodes.iter().find(|n| n.id == "zcl_b=>save").expect("Knoten fehlt");
+    let save = g
+        .nodes
+        .iter()
+        .find(|n| n.id == "zcl_b=>save")
+        .expect("node missing");
     assert_eq!(save.kind, NodeKind::Method);
     assert_eq!(save.file, "zcl_b.clas.abap");
     assert_eq!(save.line, 9);
@@ -50,7 +64,9 @@ fn type_reference_is_an_object_dependency() {
     let g = graph(&[("zcl_a.clas.abap", ZCL_A), ("zcl_b.clas.abap", ZCL_B)]);
     let ty = edge(&g, "zcl_a=>run", EdgeKind::TypeReference, "zcl_b");
     assert_eq!(ty.to.as_deref(), Some("zcl_b"));
-    assert!(g.object_dependencies().contains(&("zcl_a".to_string(), "zcl_b".to_string())));
+    assert!(g
+        .object_dependencies()
+        .contains(&("zcl_a".to_string(), "zcl_b".to_string())));
 }
 
 #[test]
@@ -74,16 +90,24 @@ fn perform_and_function_calls() {
 START-OF-SELECTION.\n  CALL FUNCTION 'Z_FM_ONE'.\n  CALL FUNCTION 'Z_NOT_THERE'.\n\
 FORM calc USING p TYPE i.\nENDFORM.";
     let fugr = "FUNCTION z_fm_one.\nENDFUNCTION.";
-    let g = graph(&[("zreport.prog.abap", report), ("zfg.fugr.zfg_fm.abap", fugr)]);
+    let g = graph(&[
+        ("zreport.prog.abap", report),
+        ("zfg.fugr.zfg_fm.abap", fugr),
+    ]);
 
     let perf = edge(&g, "zreport", EdgeKind::Perform, "calc");
     assert_eq!(perf.to.as_deref(), Some("zreport::form:calc"));
     assert_eq!(edge(&g, "zreport", EdgeKind::Perform, "missing").to, None);
 
     let ev = "zreport::event:start-of-selection";
-    assert!(g.nodes.iter().any(|n| n.id == ev && n.kind == NodeKind::Event));
+    assert!(g
+        .nodes
+        .iter()
+        .any(|n| n.id == ev && n.kind == NodeKind::Event));
     assert_eq!(
-        edge(&g, ev, EdgeKind::FunctionCall, "z_fm_one").to.as_deref(),
+        edge(&g, ev, EdgeKind::FunctionCall, "z_fm_one")
+            .to
+            .as_deref(),
         Some("fm:z_fm_one")
     );
     assert_eq!(edge(&g, ev, EdgeKind::FunctionCall, "z_not_there").to, None);

@@ -71,7 +71,7 @@ impl Lowerer {
             "INCLUDE" => err(
                 line,
                 format!(
-                    "INCLUDE {} konnte nicht aufgelöst werden (Datei nicht im Export)",
+                    "INCLUDE {} could not be resolved (file not in export)",
                     toks.get(1).map(word).unwrap_or_default()
                 ),
             ),
@@ -92,7 +92,7 @@ impl Lowerer {
                     .filter(|token| token.kind == Kind::Word)
                     .ok_or_else(|| CompileError {
                         line,
-                        message: "CONSTANTS ohne Namen".into(),
+                        message: "CONSTANTS without name".into(),
                     })?;
                 self.constants.insert(
                     word(name),
@@ -117,13 +117,13 @@ impl Lowerer {
                 // DATA name TYPE typ
                 let name = match toks.get(1) {
                     Some(t) if t.kind == Kind::Word => word(t),
-                    _ => return err(line, "DATA-Deklaration unvollständig"),
+                    _ => return err(line, "DATA declaration incomplete"),
                 };
                 if !toks
                     .get(2)
                     .is_some_and(|t| t.is_word("TYPE") || t.is_word("LIKE"))
                 {
-                    return err(line, "DATA ohne TYPE/LIKE wird nicht unterstützt");
+                    return err(line, "DATA without TYPE/LIKE is not supported");
                 }
                 let ty = if toks[2].is_word("LIKE") {
                     self.ty_of_like(&toks[3..], line)?
@@ -144,7 +144,7 @@ impl Lowerer {
                     {
                         word(t)
                     }
-                    _ => return err(line, "FIELD-SYMBOLS erwartet <name>"),
+                    _ => return err(line, "FIELD-SYMBOLS expects <name>"),
                 };
                 // Ohne TYPE, mit TYPE any/data: Typ erst zur Laufzeit (dynamisch)
                 let ty = if toks.len() == 2 {
@@ -158,7 +158,7 @@ impl Lowerer {
                 } else if toks.get(2).is_some_and(|t| t.is_word("LIKE")) {
                     self.field_symbol_like_type(&toks[3..], line)?
                 } else {
-                    return err(line, "FIELD-SYMBOLS erwartet TYPE oder LIKE");
+                    return err(line, "FIELD-SYMBOLS expects TYPE or LIKE");
                 };
                 // Feldsymbol ist für LIKE wie eine Variable verwendbar
                 self.data_types.insert(name.clone(), ty);
@@ -186,7 +186,7 @@ impl Lowerer {
                     return Ok(());
                 }
                 let Some(to) = toks.iter().position(|t| t.is_word("TO")) else {
-                    return err(line, "MOVE ohne TO");
+                    return err(line, "MOVE without TO");
                 };
                 let target = parse_target(&toks[to + 1..], line)?;
                 let value = parse_expr(&toks[1..to], line)?;
@@ -216,7 +216,7 @@ impl Lowerer {
                     toks.iter().position(|token| token.is_word("COMPONENT"))
                 else {
                     let Some(to_index) = toks.iter().position(|token| token.is_word("TO")) else {
-                        return err(line, "ASSIGN erwartet TO");
+                        return err(line, "ASSIGN expects TO");
                     };
                     if to_index == 1 && toks.get(to_index + 1).is_some() {
                         out.push(Stmt::ExternalOperation {
@@ -255,15 +255,15 @@ impl Lowerer {
                 let Some(structure_index) =
                     toks.iter().position(|token| token.is_word("STRUCTURE"))
                 else {
-                    return err(line, "ASSIGN COMPONENT erwartet OF STRUCTURE");
+                    return err(line, "ASSIGN COMPONENT expects OF STRUCTURE");
                 };
                 let Some(to_index) = toks.iter().position(|token| token.is_word("TO")) else {
-                    return err(line, "ASSIGN erwartet TO");
+                    return err(line, "ASSIGN expects TO");
                 };
                 let component_token =
                     toks.get(component_index + 1).ok_or_else(|| CompileError {
                         line,
-                        message: "ASSIGN COMPONENT ohne Komponente".into(),
+                        message: "ASSIGN COMPONENT without component".into(),
                     })?;
                 let component = match literal_content(&component_token.text) {
                     Some(component) => component.to_lowercase(),
@@ -282,7 +282,7 @@ impl Lowerer {
                 {
                     return err(
                         line,
-                        "ASSIGN COMPONENT erwartet 'COMPONENT name OF STRUCTURE'",
+                        "ASSIGN COMPONENT expects 'COMPONENT name OF STRUCTURE'",
                     );
                 }
                 let structure = toks
@@ -290,14 +290,14 @@ impl Lowerer {
                     .filter(|token| token.kind == Kind::Word)
                     .ok_or_else(|| CompileError {
                         line,
-                        message: "ASSIGN COMPONENT erwartet Strukturnamen".into(),
+                        message: "ASSIGN COMPONENT expects structure name".into(),
                     })?;
                 let target = toks
                     .get(to_index + 1)
                     .filter(|token| token.kind == Kind::Word)
                     .ok_or_else(|| CompileError {
                         line,
-                        message: "ASSIGN erwartet Feldsymbol".into(),
+                        message: "ASSIGN expects field symbol".into(),
                     })?;
                 out.push(Stmt::AssignComponent {
                     component,
@@ -313,7 +313,7 @@ impl Lowerer {
                     .filter(|token| token.kind == Kind::Word)
                     .ok_or_else(|| CompileError {
                         line,
-                        message: "READ TABLE erwartet Tabellennamen".into(),
+                        message: "READ TABLE expects table name".into(),
                     })?;
                 let assigning_index = toks.iter().position(|token| token.is_word("ASSIGNING"));
                 let Some(assigning) = assigning_index
@@ -374,11 +374,11 @@ impl Lowerer {
                 }
                 // CONCATENATE a b c INTO r [COMPRESSED]. (Operanden: Felder, Komponenten oder Literale)
                 let Some(into) = toks.iter().position(|t| t.is_word("INTO")) else {
-                    return err(line, "CONCATENATE ohne INTO");
+                    return err(line, "CONCATENATE without INTO");
                 };
                 let operands = &toks[1..into];
                 if operands.is_empty() {
-                    return err(line, "CONCATENATE ohne Operanden");
+                    return err(line, "CONCATENATE without operands");
                 }
                 let mut target_toks = &toks[into + 1..];
                 let compressed = target_toks.last().is_some_and(|t| t.is_word("COMPRESSED"));
@@ -414,7 +414,7 @@ impl Lowerer {
                 let (newline, rest) = match toks.get(1) {
                     Some(t) if t.is_punct("/") => (true, &toks[2..]),
                     Some(t) if t.kind == Kind::Word && t.text.starts_with('/') => {
-                        return err(line, "Nach '/' bitte ein Leerzeichen setzen (WRITE / wert)");
+                        return err(line, "Expected a space after '/' (WRITE / value)");
                     }
                     _ => (false, &toks[1..]),
                 };
@@ -463,10 +463,10 @@ impl Lowerer {
                 }
                 // APPEND wert TO tabelle
                 let Some(to) = toks.iter().rposition(|t| t.is_word("TO")) else {
-                    return err(line, "APPEND ohne TO");
+                    return err(line, "APPEND without TO");
                 };
                 if to < 2 || toks.len() != to + 2 || toks[to + 1].kind != Kind::Word {
-                    return err(line, "APPEND erwartet 'APPEND wert TO tabelle.'");
+                    return err(line, "APPEND expects 'APPEND value TO table.'");
                 }
                 let value = parse_expr(&toks[1..to], line)?;
                 out.push(Stmt::Append {
@@ -481,7 +481,7 @@ impl Lowerer {
                 if toks.len() != 5 || !toks[1].is_word("TABLE") || !toks[3].is_word("LINES") {
                     return err(
                         line,
-                        "DESCRIBE unterstützt nur 'DESCRIBE TABLE tab LINES ziel.'",
+                        "DESCRIBE supports only 'DESCRIBE TABLE tab LINES target.'",
                     );
                 }
                 out.push(Stmt::Describe {
@@ -501,7 +501,7 @@ impl Lowerer {
                 }
                 // PERFORM name [USING a b] [CHANGING c]
                 let Some(name_tok) = toks.get(1).filter(|t| t.kind == Kind::Word) else {
-                    return err(line, "PERFORM ohne Routinennamen");
+                    return err(line, "PERFORM without routine name");
                 };
                 let args = parse_args(&toks[2..], line)?;
                 out.push(Stmt::Perform {
@@ -564,12 +564,12 @@ impl Lowerer {
                     || !toks[3].is_punct("->")
                     || toks[4].kind != Kind::Word
                 {
-                    return err(line, "CALL unterstützt nur 'CALL METHOD obj->meth ...'");
+                    return err(line, "CALL supports only 'CALL METHOD obj->meth ...'");
                 }
                 let mut rest = &toks[5..];
                 if rest.first().is_some_and(|t| t.is_punct("(")) {
                     if !rest.last().is_some_and(|t| t.is_punct(")")) || rest.len() < 2 {
-                        return err(line, "fehlende schließende Klammer");
+                        return err(line, "closing parenthesis missing");
                     }
                     rest = &rest[1..rest.len() - 1];
                 }
@@ -596,7 +596,7 @@ impl Lowerer {
                     return Ok(());
                 }
                 if toks.len() < 3 || !toks[1].is_word("OBJECT") || toks[2].kind != Kind::Word {
-                    return err(line, "CREATE OBJECT erwartet einen Objektnamen");
+                    return err(line, "CREATE OBJECT expects an object name");
                 }
                 let end = toks[3..]
                     .iter()
@@ -605,7 +605,7 @@ impl Lowerer {
                     .unwrap_or(toks.len());
                 let (args, receiving) = parse_call_args(&toks[3..end], line)?;
                 if receiving.is_some() {
-                    return err(line, "CREATE OBJECT unterstützt kein RECEIVING");
+                    return err(line, "CREATE OBJECT does not support RECEIVING");
                 }
                 out.push(Stmt::Create {
                     name: word(&toks[2]),
@@ -616,7 +616,7 @@ impl Lowerer {
             }
             "EXIT" => {
                 if toks.len() != 1 {
-                    return err(line, "EXIT mit Zusatz wird nicht unterstützt");
+                    return err(line, "EXIT with addition is not supported");
                 }
                 out.push(Stmt::Exit { line });
                 Ok(())
@@ -637,7 +637,7 @@ impl Lowerer {
             }
             "RETURN" => {
                 if toks.len() != 1 {
-                    return err(line, "RETURN mit Zusatz wird nicht unterstützt");
+                    return err(line, "RETURN with addition is not supported");
                 }
                 out.push(Stmt::Return { line });
                 Ok(())
@@ -648,7 +648,7 @@ impl Lowerer {
                     .filter(|token| token.kind == Kind::Word)
                     .ok_or_else(|| CompileError {
                         line,
-                        message: "RAISE EXCEPTION erwartet eine Referenz".into(),
+                        message: "RAISE EXCEPTION expects a reference".into(),
                     })?;
                 out.push(Stmt::Raise {
                     exception: word(exception),
@@ -807,7 +807,7 @@ impl Lowerer {
                 {
                     let (args, rec) = parse_call_args(&toks[4..toks.len() - 1], line)?;
                     if rec.is_some() {
-                        return err(line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                        return err(line, "RECEIVING is only allowed with CALL METHOD");
                     }
                     out.push(Stmt::MethodCall {
                         recv: "me".into(),
@@ -891,7 +891,7 @@ impl Lowerer {
                 {
                     let (args, rec) = parse_call_args(&toks[6..toks.len() - 1], line)?;
                     if rec.is_some() {
-                        return err(line, "RECEIVING ist nur bei CALL METHOD erlaubt");
+                        return err(line, "RECEIVING is only allowed with CALL METHOD");
                     }
                     out.push(Stmt::MethodCall {
                         recv: word(&toks[0]),
@@ -970,7 +970,7 @@ pub(super) fn parse_constant_expr(tokens: &[Token], line: usize) -> Result<Expr,
             if token.kind == Kind::Literal {
                 value.push_str(&literal_content(&token.text).ok_or_else(|| CompileError {
                     line,
-                    message: "ungültiges Konstanten-Literal".into(),
+                    message: "Invalid constant literal".into(),
                 })?);
             }
         }

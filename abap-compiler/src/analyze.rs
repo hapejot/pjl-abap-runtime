@@ -17,19 +17,78 @@ use serde::Serialize;
 use crate::ast::CompileError;
 use crate::codegen::Codegen;
 use crate::inspect::abap::requirements::{derive, Requirement, TypeKind};
-use crate::lower::parse_source;
 use crate::library::{Library, Object, ObjectKind, Status};
+use crate::lower::parse_source;
 
-const BUILTIN: &[&str] = &["me", "abap_true", "abap_false", "abap_undefined", "sy", "syst", "space", "super"];
+const BUILTIN: &[&str] = &[
+    "me",
+    "abap_true",
+    "abap_false",
+    "abap_undefined",
+    "sy",
+    "syst",
+    "space",
+    "super",
+];
 const KEYWORDS: &[&str] = &[
-    "type", "like", "value", "ref", "to", "of", "table", "standard", "sorted", "hashed", "data", "object",
-    "exception", "any",
+    "type",
+    "like",
+    "value",
+    "ref",
+    "to",
+    "of",
+    "table",
+    "standard",
+    "sorted",
+    "hashed",
+    "data",
+    "object",
+    "exception",
+    "any",
 ];
 const FUNCTIONS: &[&str] = &[
-    "to_upper", "to_lower", "concat_lines_of", "escape", "condense", "strlen", "lines", "boolc", "xstrlen", "match",
-    "replace", "find", "substring", "shift_left", "shift_right", "segment", "char_to_hex", "xsdbool", "numofchar",
-    "to_mixed", "translate", "count", "bit_set", "nmax", "nmin", "ceil", "floor", "round", "trunc", "frac", "abs",
-    "sign", "sqrt", "exp", "log", "ipow", "to_string", "line_exists", "line_index", "reverse", "distance", "contains",
+    "to_upper",
+    "to_lower",
+    "concat_lines_of",
+    "escape",
+    "condense",
+    "strlen",
+    "lines",
+    "boolc",
+    "xstrlen",
+    "match",
+    "replace",
+    "find",
+    "substring",
+    "shift_left",
+    "shift_right",
+    "segment",
+    "char_to_hex",
+    "xsdbool",
+    "numofchar",
+    "to_mixed",
+    "translate",
+    "count",
+    "bit_set",
+    "nmax",
+    "nmin",
+    "ceil",
+    "floor",
+    "round",
+    "trunc",
+    "frac",
+    "abs",
+    "sign",
+    "sqrt",
+    "exp",
+    "log",
+    "ipow",
+    "to_string",
+    "line_exists",
+    "line_index",
+    "reverse",
+    "distance",
+    "contains",
     "matches",
 ];
 
@@ -39,16 +98,16 @@ pub struct Options {
     /// ABAP-Programm, das übersetzt und ausgewertet wird
     pub input: PathBuf,
     /// Vollständigen Bericht als JSON in diese Datei schreiben
-    #[arg(long, value_name = "DATEI")]
+    #[arg(long, value_name = "FILE")]
     pub json: Option<PathBuf>,
     /// Anzahl der Namen, die in der Übersicht gezeigt werden
     #[arg(long, default_value_t = 15)]
     pub top: usize,
     /// Bibliothek mit bekannten externen Objekten (JSON, wiederholbar)
-    #[arg(long = "library", value_name = "DATEI")]
+    #[arg(long = "library", value_name = "FILE")]
     pub library: Vec<PathBuf>,
     /// Objekte ohne Quelle in diese Bibliothek-Datei (JSON) schreiben
-    #[arg(long = "unknown-out", value_name = "DATEI")]
+    #[arg(long = "unknown-out", value_name = "FILE")]
     pub unknown_out: Option<PathBuf>,
 }
 
@@ -102,13 +161,22 @@ struct NameMessage {
 }
 
 const MESSAGE_PATTERNS: &[(&str, &str)] = &[
-    ("nicht_deklariert", r"^Feld '([^']+)' ist nicht deklariert$"),
-    ("keine_objektreferenz", r"^'([^']+)' ist keine Objektreferenz$"),
-    ("keine_tabelle", r"^'([^']+)' ist keine interne Tabelle$"),
-    ("create_object_keine_referenz", r"^CREATE OBJECT erwartet eine Objektreferenz: '([^']+)'$"),
-    ("methode_unbekannt", r"^Methode '([^']+)' unbekannt$"),
-    ("attribut_unbekannt", r"^Attribut '([^']+)' unbekannt$"),
-    ("komponente_unbekannt", r"^Komponente '([^']+)' unbekannt in '([^']+)'$"),
+    ("nicht_deklariert", r"^Field '([^']+)' is not declared$"),
+    (
+        "keine_objektreferenz",
+        r"^'([^']+)' is not an object reference$",
+    ),
+    ("keine_tabelle", r"^'([^']+)' is not an internal table$"),
+    (
+        "create_object_keine_referenz",
+        r"^CREATE OBJECT expects an object reference: '([^']+)'$",
+    ),
+    ("methode_unbekannt", r"^Method '([^']+)' unknown$"),
+    ("attribut_unbekannt", r"^Attribute '([^']+)' unknown$"),
+    (
+        "komponente_unbekannt",
+        r"^Component '([^']+)' unknown in '([^']+)'$",
+    ),
 ];
 
 fn message_regexes() -> &'static [(&'static str, Regex)] {
@@ -116,14 +184,14 @@ fn message_regexes() -> &'static [(&'static str, Regex)] {
     RE.get_or_init(|| {
         MESSAGE_PATTERNS
             .iter()
-            .map(|(c, p)| (*c, Regex::new(p).expect("gültiges Muster")))
+            .map(|(c, p)| (*c, Regex::new(p).expect("valid pattern")))
             .collect()
     })
 }
 
 fn quoted_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new("'[^']*'").expect("gültiges Muster"))
+    RE.get_or_init(|| Regex::new("'[^']*'").expect("valid pattern"))
 }
 
 fn name_message(msg: &str) -> Option<NameMessage> {
@@ -160,7 +228,7 @@ fn ci(pattern: &str) -> Regex {
     RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
-        .expect("gültiges Muster")
+        .expect("valid pattern")
 }
 
 fn kind_name(kind: TypeKind) -> &'static str {
@@ -179,7 +247,9 @@ fn usage_rules(name: &str) -> Vec<(&'static str, Regex, usize)> {
         ("klasse_statisch", ci(&format!(r"\b{e}\s*=>")), 3),
         (
             "klasse_oder_interface",
-            ci(&format!(r"(REF\s+TO|NEW|CATCH|RAISE\s+EXCEPTION\s+TYPE|CREATE\s+OBJECT\s+\S+\s+TYPE)\s+{e}\b")),
+            ci(&format!(
+                r"(REF\s+TO|NEW|CATCH|RAISE\s+EXCEPTION\s+TYPE|CREATE\s+OBJECT\s+\S+\s+TYPE)\s+{e}\b"
+            )),
             3,
         ),
         ("interface", ci(&format!(r"\b{e}~")), 4),
@@ -192,17 +262,28 @@ fn usage_rules(name: &str) -> Vec<(&'static str, Regex, usize)> {
         ),
         ("objektreferenz", ci(&format!(r"\b{e}\s*->")), 2),
         ("struktur", ci(&format!(r"\b{e}-\w")), 1),
-        ("zeichenfeld_teil", ci(&format!(r"\b{e}\s*\(\s*\d+\s*\)")), 1),
+        (
+            "zeichenfeld_teil",
+            ci(&format!(r"\b{e}\s*\(\s*\d+\s*\)")),
+            1,
+        ),
     ]
 }
 
 /// Art aus den Verwendungsmustern. `candidates` sind die Zeilen, die den Namen enthalten.
-fn infer_kind(name: &str, lines: &[&str], candidates: &[usize]) -> (String, BTreeMap<&'static str, usize>) {
+fn infer_kind(
+    name: &str,
+    lines: &[&str],
+    candidates: &[usize],
+) -> (String, BTreeMap<&'static str, usize>) {
     let rules = usage_rules(name);
     let mut evidence = BTreeMap::new();
     let mut best: Option<(&'static str, usize, usize)> = None;
     for (kind, re, weight) in &rules {
-        let found = candidates.iter().filter(|&&i| re.is_match(lines[i])).count();
+        let found = candidates
+            .iter()
+            .filter(|&&i| re.is_match(lines[i]))
+            .count();
         if found > 0 {
             evidence.insert(*kind, found);
             let better = match best {
@@ -229,7 +310,7 @@ fn declarations(full: &str) -> HashMap<String, usize> {
     let mut line = 1usize;
     let mut last = 0usize;
     for c in re.captures_iter(full) {
-        let m = c.get(0).expect("Gesamttreffer");
+        let m = c.get(0).expect("whole match");
         line += full[last..m.start()].matches('\n').count();
         last = m.start();
         let name = [1, 3, 4, 5]
@@ -246,7 +327,7 @@ fn declarations(full: &str) -> HashMap<String, usize> {
 /// Index: Bezeichner (klein) -> Zeilen, in denen er vorkommt.
 fn token_index(lines: &[&str]) -> HashMap<String, Vec<usize>> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"[<>\w]+").expect("gültiges Muster"));
+    let re = RE.get_or_init(|| Regex::new(r"[<>\w]+").expect("valid pattern"));
     let mut index: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, line) in lines.iter().enumerate() {
         let mut seen = BTreeSet::new();
@@ -315,7 +396,12 @@ pub fn analyze_with(src: &str, program_name: &str, libraries: &[Library]) -> Rep
                     entry.2.insert(s);
                 }
             }
-            None => *report.other_messages.entry(message_template(&e.message)).or_insert(0) += 1,
+            None => {
+                *report
+                    .other_messages
+                    .entry(message_template(&e.message))
+                    .or_insert(0) += 1
+            }
         }
     }
 
@@ -331,7 +417,10 @@ pub fn analyze_with(src: &str, program_name: &str, libraries: &[Library]) -> Rep
         };
         // Externe Objekte, die in einer Bibliothek stehen, gelten als bekannt
         let mut library_name = None;
-        if matches!(classification, "extern_klasse_oder_interface" | "unbekannt_extern_oder_fehlend") {
+        if matches!(
+            classification,
+            "extern_klasse_oder_interface" | "unbekannt_extern_oder_fehlend"
+        ) {
             let found = libraries
                 .iter()
                 .find_map(|l| l.get(&base).map(|o| (l.name.clone(), o.kind)));
@@ -347,7 +436,11 @@ pub fn analyze_with(src: &str, program_name: &str, libraries: &[Library]) -> Rep
             .unwrap_or_default();
         let samples = sample_lines
             .iter()
-            .filter_map(|&n| lines.get(n.wrapping_sub(1)).map(|t| (n, t.trim().chars().take(140).collect())))
+            .filter_map(|&n| {
+                lines
+                    .get(n.wrapping_sub(1))
+                    .map(|t| (n, t.trim().chars().take(140).collect()))
+            })
             .collect();
         let stat = report.by_classification.entry(classification).or_default();
         stat.names += 1;
@@ -372,12 +465,19 @@ pub fn analyze_with(src: &str, program_name: &str, libraries: &[Library]) -> Rep
     report.unknown = report
         .names
         .iter()
-        .filter(|n| matches!(n.classification, "unbekannt_extern_oder_fehlend" | "extern_klasse_oder_interface"))
+        .filter(|n| {
+            matches!(
+                n.classification,
+                "unbekannt_extern_oder_fehlend" | "extern_klasse_oder_interface"
+            )
+        })
         .map(|n| Object::new(&n.name, object_kind(&n.inferred_kind), Status::Unknown))
         .collect();
-    report
-        .names
-        .sort_by(|a, b| a.classification.cmp(b.classification).then(b.message_count.cmp(&a.message_count)));
+    report.names.sort_by(|a, b| {
+        a.classification
+            .cmp(b.classification)
+            .then(b.message_count.cmp(&a.message_count))
+    });
     report
 }
 
@@ -414,32 +514,46 @@ fn classify(
         return ("im_export_methode_ohne_empfaenger", None, None);
     }
     if let Some(r) = externals.get(base) {
-        return ("extern_klasse_oder_interface", None, Some(kind_name(r.kind)));
+        return (
+            "extern_klasse_oder_interface",
+            None,
+            Some(kind_name(r.kind)),
+        );
     }
     if let Some(&line) = decls.get(base) {
-        return ("im_quelltext_deklariert_compiler_kennt_es_nicht", Some(line), None);
+        return (
+            "im_quelltext_deklariert_compiler_kennt_es_nicht",
+            Some(line),
+            None,
+        );
     }
     ("unbekannt_extern_oder_fehlend", None, None)
 }
 
 fn print_summary(report: &Report, top: usize) {
-    println!("Übersetzungsfehler gesamt: {}", report.total_messages);
+    println!("Translation errors total: {}", report.total_messages);
     let named: usize = report.by_classification.values().map(|s| s.messages).sum();
-    println!("davon mit Namensbezug: {named} in {} Namen\n", report.names.len());
-    println!("{:<46} {:>6} {:>10}", "Klasse", "Namen", "Meldungen");
+    println!(
+        "of which with name reference: {named} in {} names\n",
+        report.names.len()
+    );
+    println!("{:<46} {:>6} {:>10}", "Class", "Names", "Messages");
     for (class, stat) in &report.by_classification {
         println!("{class:<46} {:>6} {:>10}", stat.names, stat.messages);
     }
-    println!("\nNamen der Klasse unbekannt_extern_oder_fehlend (Top {top}):");
+    println!("\nNames in class unbekannt_extern_oder_fehlend (top {top}):");
     for n in report
         .names
         .iter()
         .filter(|n| n.classification == "unbekannt_extern_oder_fehlend")
         .take(top)
     {
-        println!("  {:<34} [{}] {} Meldungen", n.name, n.inferred_kind, n.message_count);
+        println!(
+            "  {:<34} [{}] {} messages",
+            n.name, n.inferred_kind, n.message_count
+        );
     }
-    println!("\nMeldungen ohne Namensbezug (Top {top}):");
+    println!("\nMessages without name reference (top {top}):");
     let mut others: Vec<_> = report.other_messages.iter().collect();
     others.sort_by(|a, b| b.1.cmp(a.1));
     for (msg, count) in others.into_iter().take(top) {
@@ -481,7 +595,11 @@ pub fn run(opts: Options) {
             eprintln!("abapc: {e}");
             std::process::exit(1);
         }
-        println!("Unbekannte Objekte ({}): {}", unknown.objects.len(), path.display());
+        println!(
+            "Unknown objects ({}): {}",
+            unknown.objects.len(),
+            path.display()
+        );
     }
     if let Some(path) = &opts.json {
         match serde_json::to_string_pretty(&report) {
@@ -490,10 +608,10 @@ pub fn run(opts: Options) {
                     eprintln!("abapc: {}: {e}", path.display());
                     std::process::exit(1);
                 }
-                println!("\nBericht geschrieben: {}", path.display());
+                println!("\nReport written: {}", path.display());
             }
             Err(e) => {
-                eprintln!("abapc: JSON-Ausgabe fehlgeschlagen: {e}");
+                eprintln!("abapc: JSON output failed: {e}");
                 std::process::exit(1);
             }
         }

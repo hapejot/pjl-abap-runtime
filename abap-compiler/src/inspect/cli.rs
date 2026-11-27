@@ -17,13 +17,15 @@ use zip::ZipArchive;
 
 fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
     let mut entry = archive.by_name(path).unwrap_or_else(|e| {
-        eprintln!("Datei '{path}' nicht im ZIP gefunden: {e}");
+        eprintln!("File '{path}' not found in the ZIP: {e}");
         process::exit(1);
     });
     let mut buf = Vec::new();
-    entry.read_to_end(&mut buf).expect("Lesefehler");
+    entry.read_to_end(&mut buf).expect("read error");
     let text = String::from_utf8_lossy(&buf).into_owned();
-    text.strip_prefix('\u{feff}').map(str::to_string).unwrap_or(text)
+    text.strip_prefix('\u{feff}')
+        .map(str::to_string)
+        .unwrap_or(text)
 }
 
 /// Untersucht ZIP-Exporte aus abapGit.
@@ -37,15 +39,15 @@ pub struct Options {
     pub files: bool,
 
     /// Nur Objekte dieses Typs (z.B. CLAS, DTEL, DOMA, DEVC)
-    #[arg(long = "type", value_name = "TYP")]
+    #[arg(long = "type", value_name = "TYPE")]
     pub type_filter: Option<String>,
 
     /// Inhalt einer Datei im ZIP ausgeben (Pfad wie in --files)
-    #[arg(long, value_name = "PFAD")]
+    #[arg(long, value_name = "PATH")]
     pub show: Option<String>,
 
     /// ABAP-Datei aus dem ZIP parsen und Gliederung ausgeben
-    #[arg(long, value_name = "PFAD")]
+    #[arg(long, value_name = "PATH")]
     pub ast: Option<String>,
 
     /// Alle .abap-Dateien parsen und Fehler melden
@@ -139,22 +141,22 @@ pub fn run(mut opts: Options) {
     opts.type_filter = opts.type_filter.map(|t| t.to_uppercase());
 
     let file = File::open(&opts.zip_path).unwrap_or_else(|e| {
-        eprintln!("Kann '{}' nicht oeffnen: {e}", opts.zip_path);
+        eprintln!("Cannot open '{}': {e}", opts.zip_path);
         process::exit(1);
     });
     let mut archive = ZipArchive::new(file).unwrap_or_else(|e| {
-        eprintln!("Kein gueltiges ZIP: {e}");
+        eprintln!("Invalid ZIP: {e}");
         process::exit(1);
     });
 
     // Einzelne Datei ausgeben
     if let Some(path) = &opts.show {
         let mut entry = archive.by_name(path).unwrap_or_else(|e| {
-            eprintln!("Datei '{path}' nicht im ZIP gefunden: {e}");
+            eprintln!("File '{path}' not found in the ZIP: {e}");
             process::exit(1);
         });
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf).expect("Lesefehler");
+        entry.read_to_end(&mut buf).expect("read error");
         let text = String::from_utf8_lossy(&buf);
         let mut out = io::stdout().lock();
         let _ = out.write_all(strip_bom(&text).as_bytes());
@@ -200,7 +202,7 @@ pub fn run(mut opts: Options) {
         match crate::inspect::model::render_json(&model) {
             Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                eprintln!("JSON output failed: {e}");
                 process::exit(1);
             }
         }
@@ -213,7 +215,7 @@ pub fn run(mut opts: Options) {
         match serde_json::to_string_pretty(&reqs) {
             Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                eprintln!("JSON output failed: {e}");
                 process::exit(1);
             }
         }
@@ -226,7 +228,7 @@ pub fn run(mut opts: Options) {
         match serde_json::to_string_pretty(&graph) {
             Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("JSON-Ausgabe fehlgeschlagen: {e}");
+                eprintln!("JSON output failed: {e}");
                 process::exit(1);
             }
         }
@@ -261,7 +263,10 @@ pub fn run(mut opts: Options) {
             }
             for f in names {
                 if let Some(src) = by_name.get(f.as_str()) {
-                    sources.entry(key.clone()).or_default().push((f, src.to_string()));
+                    sources
+                        .entry(key.clone())
+                        .or_default()
+                        .push((f, src.to_string()));
                 }
             }
             objects.push(crate::inspect::tui::app::Object {
@@ -271,7 +276,7 @@ pub fn run(mut opts: Options) {
         }
 
         if let Err(e) = crate::inspect::tui::run(objects, sources) {
-            eprintln!("TUI-Fehler: {e}");
+            eprintln!("TUI error: {e}");
             process::exit(1);
         }
         return;
@@ -286,31 +291,35 @@ pub fn run(mut opts: Options) {
             let prog = crate::inspect::abap::parse_l1(&src);
             if !prog.errors.is_empty() {
                 total_errors += prog.errors.len();
-                println!("{name}: {} Fehler", prog.errors.len());
+                println!("{name}: {} error(s)", prog.errors.len());
                 for e in prog.errors.iter().take(5) {
                     println!("    L{}: {}", e.line, e.message);
                 }
             }
         }
-        println!("\n{} ABAP-Dateien geprueft, {} Fehler gesamt", names.len(), total_errors);
+        println!(
+            "\n{} ABAP files checked, {} error(s) total",
+            names.len(),
+            total_errors
+        );
         return;
     }
 
     // Alle Dateien (Rohsicht)
     let mut entries: Vec<(String, u64)> = Vec::with_capacity(archive.len());
     for i in 0..archive.len() {
-        let e = archive.by_index(i).expect("ZIP-Eintrag");
+        let e = archive.by_index(i).expect("ZIP entry");
         if !e.is_dir() {
             entries.push((e.name().to_string(), e.size()));
         }
     }
 
     if opts.files {
-        println!("{:>10}  PFAD", "GROESSE");
+        println!("{:>10}  PATH", "SIZE");
         for (name, size) in &entries {
             println!("{size:>10}  {name}");
         }
-        println!("\n{} Dateien", entries.len());
+        println!("\n{} files", entries.len());
         return;
     }
 
@@ -350,7 +359,7 @@ pub fn run(mut opts: Options) {
         println!("Meta: {}", meta.join(", "));
     }
     println!();
-    println!("{:<8} {:<40} {:>6}  DATEIEN", "TYP", "OBJEKT", "ANZ");
+    println!("{:<8} {:<40} {:>6}  FILES", "TYPE", "OBJECT", "COUNT");
     println!("{}", "-".repeat(78));
     for o in &filtered {
         let names: Vec<&str> = o
@@ -374,11 +383,11 @@ pub fn run(mut opts: Options) {
         *per_type.entry(o.obj_type.as_str()).or_insert(0) += 1;
     }
     let summary: Vec<String> = per_type.iter().map(|(t, n)| format!("{t}={n}")).collect();
-    println!("Objekte gesamt: {} ({})", objects.len(), summary.join(", "));
-    println!("Gefilterte Ausgabe: {}", filtered.len());
+    println!("Objects total: {} ({})", objects.len(), summary.join(", "));
+    println!("Filtered output: {}", filtered.len());
 
     if !other.is_empty() {
-        println!("\nNicht zuordenbare Dateien ({}):", other.len());
+        println!("\nUnassignable files ({}):", other.len());
         for p in &other {
             println!("  {p}");
         }

@@ -24,7 +24,7 @@ use crate::inspect::objects::object_key;
 /// Alle Programme (PROG-Objekte) eines ZIP-Exports: Name (klein) -> geparstes Programm.
 pub fn load_programs(zip_path: &Path) -> Result<BTreeMap<String, Program>, String> {
     let file = File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("Kein gültiges ZIP: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
     let mut programs = BTreeMap::new();
     for (path, src) in read_abap_files(&mut archive) {
         if let Some((obj_type, name)) = object_key(&path) {
@@ -43,13 +43,16 @@ fn has_report(prog: &Program) -> bool {
 }
 
 /// Name des Hauptprogramms: der angegebene, sonst das einzige Programm mit REPORT.
-pub fn main_program(programs: &BTreeMap<String, Program>, requested: Option<&str>) -> Result<String, String> {
+pub fn main_program(
+    programs: &BTreeMap<String, Program>,
+    requested: Option<&str>,
+) -> Result<String, String> {
     if let Some(name) = requested {
         let key = name.to_lowercase();
         return if programs.contains_key(&key) {
             Ok(key)
         } else {
-            Err(format!("Programm '{name}' ist im Export nicht vorhanden"))
+            Err(format!("Program '{name}' not found in the export"))
         };
     }
     let reports: Vec<&String> = programs
@@ -59,10 +62,13 @@ pub fn main_program(programs: &BTreeMap<String, Program>, requested: Option<&str
         .collect();
     match reports.as_slice() {
         [one] => Ok((*one).clone()),
-        [] => Err("kein Programm mit REPORT im Export; --program angeben".into()),
+        [] => Err("no program with REPORT in the export; specify --program".into()),
         many => Err(format!(
-            "mehrere Programme mit REPORT ({}); --program angeben",
-            many.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            "several programs with REPORT ({}); specify --program",
+            many.iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -86,7 +92,11 @@ pub fn expand_includes(main: &mut Program, programs: &BTreeMap<String, Program>)
 }
 
 /// Oberste Ebene: ein Include wird an seiner Stelle durch seine Elemente ersetzt.
-fn expand_top(items: &mut Vec<TopItem>, programs: &BTreeMap<String, Program>, stack: &mut Vec<String>) {
+fn expand_top(
+    items: &mut Vec<TopItem>,
+    programs: &BTreeMap<String, Program>,
+    stack: &mut Vec<String>,
+) {
     let mut out = Vec::with_capacity(items.len());
     for item in std::mem::take(items) {
         let target = match &item {
@@ -199,7 +209,10 @@ mod tests {
     }
 
     fn lib(files: &[(&str, &str)]) -> BTreeMap<String, Program> {
-        files.iter().map(|(n, s)| (n.to_string(), prog(s))).collect()
+        files
+            .iter()
+            .map(|(n, s)| (n.to_string(), prog(s)))
+            .collect()
     }
 
     #[test]
@@ -220,7 +233,10 @@ mod tests {
 
     #[test]
     fn nested_include_keeps_statements_and_hoists_routines() {
-        let libs = lib(&[("dyn", "MODULE status OUTPUT.\n  WRITE 'x'.\nENDMODULE.\nWRITE 'y'.\n")]);
+        let libs = lib(&[(
+            "dyn",
+            "MODULE status OUTPUT.\n  WRITE 'x'.\nENDMODULE.\nWRITE 'y'.\n",
+        )]);
         let mut main = prog("REPORT zt.\nSTART-OF-SELECTION.\n  INCLUDE dyn.\n  WRITE 'z'.\n");
         expand_includes(&mut main, &libs);
         // MODULE wandert auf die oberste Ebene, WRITE bleibt im Block
@@ -279,12 +295,15 @@ mod tests {
 /// DDIC-Definitionen (TABL, DTEL, DOMA) eines ZIP-Exports.
 pub fn load_ddic(zip_path: &Path) -> Result<Ddic, String> {
     let file = File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;
-    let mut archive = ZipArchive::new(file).map_err(|e| format!("Kein gültiges ZIP: {e}"))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
     let mut files = Vec::new();
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("ZIP-Eintrag {i}: {e}"))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("ZIP entry {i}: {e}"))?;
         let name = entry.name().to_string();
-        if name.ends_with(".tabl.xml") || name.ends_with(".dtel.xml") || name.ends_with(".doma.xml") {
+        if name.ends_with(".tabl.xml") || name.ends_with(".dtel.xml") || name.ends_with(".doma.xml")
+        {
             let mut text = String::new();
             entry
                 .read_to_string(&mut text)

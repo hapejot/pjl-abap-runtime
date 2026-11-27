@@ -8,15 +8,15 @@
 //! Werte: Ganzzahl (`i32`), Zeichenfeld (Zeiger + Länge in Zeichen), String (Handle der Runtime).
 //! Interne Tabellen sind Handles auf `RtTable`; Feldsymbole sind Zeiger auf Zeilen oder Felder.
 
-mod layout;
-mod emit;
-mod decl;
+mod arith;
 mod data;
+mod decl;
+mod emit;
+mod expr;
+mod layout;
+mod packed;
 mod routines;
 mod stmt;
-mod expr;
-mod packed;
-mod arith;
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -26,7 +26,9 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::{Linkage, Module};
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, IntType, PointerType};
-use inkwell::values::{ArrayValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{
+    ArrayValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::ast::{err, BinOp, CmpOp, CompileError, Cond, Expr, NamedArg};
@@ -36,7 +38,10 @@ type CResult<T> = Result<T, CompileError>;
 
 /// Fehler aus LLVM (Builder) in einen Übersetzungsfehler umwandeln.
 fn llvm<T, E: Display>(r: Result<T, E>) -> CResult<T> {
-    r.map_err(|e| CompileError { line: 0, message: format!("LLVM-Fehler: {e}") })
+    r.map_err(|e| CompileError {
+        line: 0,
+        message: format!("LLVM error: {e}"),
+    })
 }
 
 /// Layout einer Struktur: gepackte LLVM-Struktur mit den Komponenten in Reihenfolge.
@@ -230,22 +235,52 @@ impl<'ctx> Codegen<'ctx> {
         let f = |name: &str, ty| module.add_function(name, ty, Some(Linkage::External));
         let rt = Rt {
             write_int: f("abap_rt_write_int", void.fn_type(&[i32t.into()], false)),
-            dec_unpack: f("abap_rt_dec_unpack", ptrt.fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false)),
-            dec_pack: f("abap_rt_dec_pack", void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into(), i64t.into()], false)),
+            dec_unpack: f(
+                "abap_rt_dec_unpack",
+                ptrt.fn_type(&[ptrt.into(), i64t.into(), i64t.into()], false),
+            ),
+            dec_pack: f(
+                "abap_rt_dec_pack",
+                void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into(), i64t.into()], false),
+            ),
             dec_from_int: f("abap_rt_dec_from_int", ptrt.fn_type(&[i32t.into()], false)),
-            dec_add: f("abap_rt_dec_add", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
-            dec_sub: f("abap_rt_dec_sub", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
-            dec_mul: f("abap_rt_dec_mul", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
-            dec_div: f("abap_rt_dec_div", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
-            dec_mod: f("abap_rt_dec_mod", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_add: f(
+                "abap_rt_dec_add",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            dec_sub: f(
+                "abap_rt_dec_sub",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            dec_mul: f(
+                "abap_rt_dec_mul",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            dec_div: f(
+                "abap_rt_dec_div",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            dec_mod: f(
+                "abap_rt_dec_mod",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
             dec_mark: f("abap_rt_dec_mark", i64t.fn_type(&[], false)),
             arith_error: f("abap_rt_arith_error", void.fn_type(&[i32t.into()], false)),
             dec_release: f("abap_rt_dec_release", void.fn_type(&[i64t.into()], false)),
             dec_neg: f("abap_rt_dec_neg", ptrt.fn_type(&[ptrt.into()], false)),
-            dec_cmp: f("abap_rt_dec_cmp", i32t.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            dec_cmp: f(
+                "abap_rt_dec_cmp",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
             dec_to_int: f("abap_rt_dec_to_int", i32t.fn_type(&[ptrt.into()], false)),
-            dec_write: f("abap_rt_dec_write", void.fn_type(&[ptrt.into(), i64t.into()], false)),
-            write_chars: f("abap_rt_write_chars", void.fn_type(&[ptrt.into(), i64t.into()], false)),
+            dec_write: f(
+                "abap_rt_dec_write",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            write_chars: f(
+                "abap_rt_write_chars",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
             write_str: f("abap_rt_write_str", void.fn_type(&[ptrt.into()], false)),
             newline: f("abap_rt_newline", void.fn_type(&[], false)),
             newfield: f("abap_rt_newfield", void.fn_type(&[], false)),
@@ -258,16 +293,37 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_chars_cmp",
                 i32t.fn_type(&[ptrt.into(), i64t.into(), ptrt.into(), i64t.into()], false),
             ),
-            str_new: f("abap_rt_str_new", ptrt.fn_type(&[ptrt.into(), i64t.into()], false)),
-            str_from_chars: f("abap_rt_str_from_chars", ptrt.fn_type(&[ptrt.into(), i64t.into()], false)),
-            str_to_chars: f("abap_rt_str_to_chars", void.fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false)),
-            str_concat: f("abap_rt_str_concat", ptrt.fn_type(&[ptrt.into(), ptrt.into()], false)),
-            str_cmp: f("abap_rt_str_cmp", i32t.fn_type(&[ptrt.into(), ptrt.into()], false)),
+            str_new: f(
+                "abap_rt_str_new",
+                ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            str_from_chars: f(
+                "abap_rt_str_from_chars",
+                ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
+            str_to_chars: f(
+                "abap_rt_str_to_chars",
+                void.fn_type(&[ptrt.into(), i64t.into(), ptrt.into()], false),
+            ),
+            str_concat: f(
+                "abap_rt_str_concat",
+                ptrt.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
+            str_cmp: f(
+                "abap_rt_str_cmp",
+                i32t.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
             int_to_str: f("abap_rt_int_to_str", ptrt.fn_type(&[i32t.into()], false)),
             table_new: f("abap_rt_table_new", ptrt.fn_type(&[i64t.into()], false)),
-            table_append: f("abap_rt_table_append", void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into()], false)),
+            table_append: f(
+                "abap_rt_table_append",
+                void.fn_type(&[ptrt.into(), ptrt.into(), i64t.into()], false),
+            ),
             table_count: f("abap_rt_table_count", i64t.fn_type(&[ptrt.into()], false)),
-            table_row: f("abap_rt_table_row", ptrt.fn_type(&[ptrt.into(), i64t.into()], false)),
+            table_row: f(
+                "abap_rt_table_row",
+                ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
             table_clear: f("abap_rt_table_clear", void.fn_type(&[ptrt.into()], false)),
             fs_unassigned: f("abap_rt_fs_unassigned", void.fn_type(&[], false)),
             type_mismatch: f("abap_rt_type_mismatch", void.fn_type(&[], false)),
@@ -277,18 +333,9 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_exception_raise",
                 void.fn_type(&[ptrt.into(), i64t.into()], false),
             ),
-            exception_pending: f(
-                "abap_rt_exception_pending",
-                i32t.fn_type(&[], false),
-            ),
-            exception_class: f(
-                "abap_rt_exception_class",
-                i64t.fn_type(&[], false),
-            ),
-            exception_object: f(
-                "abap_rt_exception_object",
-                ptrt.fn_type(&[], false),
-            ),
+            exception_pending: f("abap_rt_exception_pending", i32t.fn_type(&[], false)),
+            exception_class: f("abap_rt_exception_class", i64t.fn_type(&[], false)),
+            exception_object: f("abap_rt_exception_object", ptrt.fn_type(&[], false)),
             exception_clear: f("abap_rt_exception_clear", void.fn_type(&[], false)),
             external_call: f(
                 "abap_rt_external_call",
@@ -379,7 +426,11 @@ impl<'ctx> Codegen<'ctx> {
                 } else {
                     vec![self.ptrt.into()]
                 };
-                ps.extend(m.params.iter().map(|_| BasicMetadataTypeEnum::from(self.ptrt)));
+                ps.extend(
+                    m.params
+                        .iter()
+                        .map(|_| BasicMetadataTypeEnum::from(self.ptrt)),
+                );
                 if m.ret.is_some() {
                     ps.push(self.ptrt.into());
                 }
@@ -417,12 +468,23 @@ impl<'ctx> Codegen<'ctx> {
         // Formen zuerst deklarieren, damit PERFORM auch vorwärts aufrufen kann
         for f in &ir.forms {
             if self.forms.contains_key(&f.name) {
-                return err(f.line, format!("FORM '{}' ist bereits definiert", f.name));
+                return err(f.line, format!("FORM '{}' is already defined", f.name));
             }
-            let params: Vec<BasicMetadataTypeEnum<'ctx>> = f.params.iter().map(|_| self.ptrt.into()).collect();
-            let fun = self.module.add_function(&format!("abap_form_{}", f.name), void.fn_type(&params, false), None);
+            let params: Vec<BasicMetadataTypeEnum<'ctx>> =
+                f.params.iter().map(|_| self.ptrt.into()).collect();
+            let fun = self.module.add_function(
+                &format!("abap_form_{}", f.name),
+                void.fn_type(&params, false),
+                None,
+            );
             let sig = f.params.iter().map(|p| (p.ty, p.changing)).collect();
-            self.forms.insert(f.name.clone(), FormSig { f: fun, params: sig });
+            self.forms.insert(
+                f.name.clone(),
+                FormSig {
+                    f: fun,
+                    params: sig,
+                },
+            );
         }
 
         let fn_type = self.i32t.fn_type(&[], false);

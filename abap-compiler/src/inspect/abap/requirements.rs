@@ -16,7 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
-use super::graph::{build as build_graph, group_programs, name_at, scopes_of, type_owner, Owner, Scope};
+use super::graph::{
+    build as build_graph, group_programs, name_at, scopes_of, type_owner, Owner, Scope,
+};
 use super::lexer::{Kind, Token};
 use super::parser::Statement;
 use crate::inspect::model::is_builtin_type;
@@ -185,17 +187,34 @@ fn analyze(s: &Statement, cx: &Cx<'_>, reqs: &mut BTreeMap<String, Builder>) {
         if t.is_word("TYPE") {
             if let Some(owner) = type_owner(toks, i).filter(|o| !is_builtin_type(o)) {
                 if kw == "CREATE" {
-                    entry(reqs, cx, line, &owner, "create_object", &format!("TYPE {owner}")).class = true;
+                    entry(
+                        reqs,
+                        cx,
+                        line,
+                        &owner,
+                        "create_object",
+                        &format!("TYPE {owner}"),
+                    )
+                    .class = true;
                 } else if kw == "RAISE" {
                     entry(reqs, cx, line, &owner, "raise", &format!("TYPE {owner}")).class = true;
                 } else if toks.get(i + 1).is_some_and(|x| x.is_word("REF")) {
-                    entry(reqs, cx, line, &owner, "object_ref", &format!("REF TO {owner}")).either = true;
+                    entry(
+                        reqs,
+                        cx,
+                        line,
+                        &owner,
+                        "object_ref",
+                        &format!("REF TO {owner}"),
+                    )
+                    .either = true;
                 }
             }
         }
 
         // Statische Zugriffe: `zcl_x=>m( )` ist eine Klasse, `zif_x=>konst` Klasse oder Interface
-        if t.is_punct("=>") && i > 0 && toks[i - 1].kind == Kind::Word && !toks[i - 1].is_word("me") {
+        if t.is_punct("=>") && i > 0 && toks[i - 1].kind == Kind::Word && !toks[i - 1].is_word("me")
+        {
             let x = toks[i - 1].text.to_lowercase();
             if !is_builtin_type(&x) {
                 if let Some(m) = toks.get(i + 1).filter(|w| w.kind == Kind::Word) {
@@ -261,7 +280,15 @@ fn analyze(s: &Statement, cx: &Cx<'_>, reqs: &mut BTreeMap<String, Builder>) {
         if let Some(i) = toks.iter().position(|t| t.is_word("OF")) {
             if i >= 2 && toks[i - 2].is_word("EVENT") {
                 if let Some(cls) = name_at(toks, i + 1) {
-                    entry(reqs, cx, line, &cls, "event", &format!("FOR EVENT OF {cls}")).class = true;
+                    entry(
+                        reqs,
+                        cx,
+                        line,
+                        &cls,
+                        "event",
+                        &format!("FOR EVENT OF {cls}"),
+                    )
+                    .class = true;
                 }
             }
         }
@@ -298,7 +325,9 @@ fn analyze(s: &Statement, cx: &Cx<'_>, reqs: &mut BTreeMap<String, Builder>) {
 
 fn merge(into: &mut Env, from: &Env) {
     for (var, types) in from {
-        into.entry(var.clone()).or_default().extend(types.iter().cloned());
+        into.entry(var.clone())
+            .or_default()
+            .extend(types.iter().cloned());
     }
 }
 

@@ -139,7 +139,10 @@ pub fn tokenize(src: &str) -> Vec<Token> {
             kind = Kind::Word;
             i = end + 1;
             // Komponente am Feldsymbol: <fs>-feld
-            while i + 1 < n && chars[i] == '-' && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
+            while i + 1 < n
+                && chars[i] == '-'
+                && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_')
+            {
                 i += 1;
                 while i < n && is_word_char(chars[i]) {
                     i += 1;
@@ -152,7 +155,10 @@ pub fn tokenize(src: &str) -> Vec<Token> {
                 let d = chars[i];
                 if is_word_char(d) {
                     i += 1;
-                } else if d == '-' && i + 1 < n && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
+                } else if d == '-'
+                    && i + 1 < n
+                    && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_')
+                {
                     // Komponenten- und Klassenbezeichner: sy-subrc, CLASS-DATA
                     i += 1;
                 } else {
@@ -162,12 +168,21 @@ pub fn tokenize(src: &str) -> Vec<Token> {
         } else {
             kind = Kind::Punct;
             let two: String = chars[i..(i + 2).min(n)].iter().collect();
-            i += if MULTI_PUNCT.contains(&two.as_str()) { 2 } else { 1 };
+            i += if MULTI_PUNCT.contains(&two.as_str()) {
+                2
+            } else {
+                1
+            };
         }
 
         let end = i.min(n);
         let text: String = chars[start..end].iter().collect();
-        toks.push(Token { kind, text, line: tok_line, col });
+        toks.push(Token {
+            kind,
+            text,
+            line: tok_line,
+            col,
+        });
     }
 
     toks

@@ -10,7 +10,7 @@ pub(super) fn when_values(toks: &[Token], line: usize) -> Result<Option<Vec<Expr
     let mut values = Vec::new();
     for part in toks.split(|t| t.is_word("OR")) {
         if part.is_empty() {
-            return err(line, "WHEN ohne Wert");
+            return err(line, "WHEN without value");
         }
         values.push(parse_expr(part, line)?);
     }
@@ -35,13 +35,13 @@ impl Lowerer {
                     match item {
                         Item::Statement(s) if s.keyword() == "ELSEIF" => {
                             if matches!(segs.last(), Some((None, _))) {
-                                return err(s.line, "ELSEIF nach ELSE");
+                                return err(s.line, "ELSEIF after ELSE");
                             }
                             segs.push((Some(parse_cond(&s.tokens[1..], s.line)?), Vec::new()));
                         }
                         Item::Statement(s) if s.keyword() == "ELSE" && s.tokens.len() == 1 => {
                             if matches!(segs.last(), Some((None, _))) {
-                                return err(s.line, "doppeltes ELSE");
+                                return err(s.line, "duplicate ELSE");
                             }
                             segs.push((None, Vec::new()));
                         }
@@ -67,7 +67,7 @@ impl Lowerer {
             }
             "CASE" => {
                 if toks.len() < 2 {
-                    return err(line, "CASE ohne Ausdruck");
+                    return err(line, "CASE without expression");
                 }
                 let subject = parse_expr(&toks[1..], line)?;
                 // Segmente: (Werte, Körper); None = WHEN OTHERS
@@ -76,14 +76,14 @@ impl Lowerer {
                     match item {
                         Item::Statement(s) if s.keyword() == "WHEN" => {
                             if matches!(segs.last(), Some((None, _))) {
-                                return err(s.line, "WHEN nach WHEN OTHERS");
+                                return err(s.line, "WHEN after WHEN OTHERS");
                             }
                             let values = when_values(&s.tokens[1..], s.line)?;
                             segs.push((values, Vec::new()));
                         }
                         _ => match segs.last_mut() {
                             Some(seg) => seg.1.push(item.clone()),
-                            None => return err(line, "Anweisung vor dem ersten WHEN in CASE"),
+                            None => return err(line, "Statement before the first WHEN in CASE"),
                         },
                     }
                 }
@@ -111,7 +111,7 @@ impl Lowerer {
                 } else {
                     let last = toks.last().unwrap();
                     if toks.len() < 3 || !last.is_word("TIMES") {
-                        return err(line, "DO erwartet 'DO n TIMES.' oder 'DO.'");
+                        return err(line, "DO expects 'DO n TIMES.' or 'DO.'");
                     }
                     Some(parse_expr(&toks[1..toks.len() - 1], line)?)
                 };
@@ -186,7 +186,7 @@ impl Lowerer {
                 if toks.len() < 5 || !toks[1].is_word("AT") || toks[2].kind != Kind::Word {
                     return err(
                         line,
-                        "LOOP unterstützt nur 'LOOP AT tabelle INTO|ASSIGNING ziel.'",
+                        "LOOP supports only 'LOOP AT table INTO|ASSIGNING target.'",
                     );
                 }
                 let table = word(&toks[2]);
@@ -195,7 +195,7 @@ impl Lowerer {
                 } else if toks[3].is_word("ASSIGNING") {
                     LoopTarget::Assigning(word(&toks[4]))
                 } else {
-                    return err(line, "LOOP erwartet INTO oder ASSIGNING");
+                    return err(line, "LOOP expects INTO or ASSIGNING");
                 };
                 let filter = match toks.iter().position(|token| token.is_word("WHERE")) {
                     None => None,
@@ -222,7 +222,7 @@ impl Lowerer {
                                     .filter(|token| token.kind == Kind::Word)
                                     .ok_or_else(|| CompileError {
                                         line,
-                                        message: "LOOP WHERE ohne Komponente".into(),
+                                        message: "LOOP WHERE without component".into(),
                                     })?;
                                 Some(LoopFilter {
                                     component: word(component),
@@ -260,7 +260,7 @@ impl Lowerer {
                     match item {
                         Item::Statement(statement) if statement.keyword() == "CATCH" => {
                             if statement.tokens.len() < 2 {
-                                return err(statement.line, "CATCH erwartet eine Exception-Klasse");
+                                return err(statement.line, "CATCH expects an exception class");
                             }
                             let class = word(&statement.tokens[1]);
                             let target = statement
@@ -318,10 +318,7 @@ impl Lowerer {
                 self.lower_nodes(&nodes(body), out)?;
                 Ok(())
             }
-            other => err(
-                line,
-                format!("Nicht unterstütztes block Statement: {other}"),
-            ),
+            other => err(line, format!("Unsupported block statement: {other}")),
         }
     }
 }

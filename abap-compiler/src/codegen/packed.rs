@@ -10,27 +10,42 @@ impl<'ctx> Codegen<'ctx> {
         match v {
             Val::Int(i) => self.call_ptr(self.rt.dec_from_int, &[i.into()]),
             Val::Dec(h) => Ok(h),
-            _ => err(line, "Arithmetik nur mit Zahlen (ganzzahlig oder DEC)"),
+            _ => err(line, "Arithmetic only with numbers (integer or DEC)"),
         }
     }
 
     /// Liest ein gepacktes Feld mit `bytes` Bytes und Skala `scale`.
-    pub(super) fn load_packed(&self, p: PointerValue<'ctx>, bytes: usize, scale: usize) -> CResult<Val<'ctx>> {
+    pub(super) fn load_packed(
+        &self,
+        p: PointerValue<'ctx>,
+        bytes: usize,
+        scale: usize,
+    ) -> CResult<Val<'ctx>> {
         let len = self.len(bytes);
         let scale_value = self.len(scale);
-        let h = self.call_ptr(self.rt.dec_unpack, &[p.into(), len.into(), scale_value.into()])?;
+        let h = self.call_ptr(
+            self.rt.dec_unpack,
+            &[p.into(), len.into(), scale_value.into()],
+        )?;
         Ok(Val::Dec(h))
     }
 
     /// Summe, Differenz oder Produkt, wenn mindestens ein Operand gepackt ist.
-    pub(super) fn packed_arith(&self, op: BinOp, a: Val<'ctx>, b: Val<'ctx>, line: usize) -> CResult<Val<'ctx>> {
+    pub(super) fn packed_arith(
+        &self,
+        op: BinOp,
+        a: Val<'ctx>,
+        b: Val<'ctx>,
+        line: usize,
+    ) -> CResult<Val<'ctx>> {
         let f = match op {
             BinOp::Add => self.rt.dec_add,
             BinOp::Sub => self.rt.dec_sub,
             BinOp::Mul => self.rt.dec_mul,
-            BinOp::Div => self.rt.dec_div,
+            // DEC: DIV nutzt bisher dieselbe Routine wie `/`; ein eigener Abschnitt fehlt noch
+            BinOp::Div | BinOp::IntDiv => self.rt.dec_div,
             BinOp::Mod => self.rt.dec_mod,
-            _ => return err(line, "Bitoperationen mit DEC-Feldern werden nicht unterstützt"),
+            _ => return err(line, "Bit operations with DEC fields are not supported"),
         };
         let x = self.dec_handle(a, line)?;
         let y = self.dec_handle(b, line)?;
@@ -54,7 +69,10 @@ impl<'ctx> Codegen<'ctx> {
         let x = self.dec_handle(a, line)?;
         let y = self.dec_handle(b, line)?;
         let c = self.call_int(self.rt.dec_cmp, &[x.into(), y.into()])?;
-        llvm(self.builder.build_int_compare(pred, c, self.i32t.const_zero(), "dcmp"))
+        llvm(
+            self.builder
+                .build_int_compare(pred, c, self.i32t.const_zero(), "dcmp"),
+        )
     }
 
     /// Prüfung auf Initialwert (Null).
@@ -73,11 +91,14 @@ impl<'ctx> Codegen<'ctx> {
     ) -> CResult<()> {
         let h = match v {
             Val::Int(_) | Val::Dec(_) => self.dec_handle(v, line)?,
-            _ => return err(line, "Text oder Struktur kann nicht einem DEC-Feld zugewiesen werden"),
+            _ => return err(line, "Text or structure cannot be assigned to a DEC field"),
         };
         let len = self.len(bytes);
         let scale_value = self.len(scale);
-        self.call_void(self.rt.dec_pack, &[h.into(), p.into(), len.into(), scale_value.into()])
+        self.call_void(
+            self.rt.dec_pack,
+            &[h.into(), p.into(), len.into(), scale_value.into()],
+        )
     }
 
     /// Schreibt eine gepackte Zahl mit `WRITE`.

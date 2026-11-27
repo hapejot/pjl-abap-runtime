@@ -332,14 +332,11 @@ fn take_closer(c: &mut Cursor, closer: &str) {
     match c.peek().cloned() {
         Some(e) if e.keyword() == closer => c.pos += 1,
         Some(e) if is_end(&e) => {
-            c.error(
-                e.line,
-                format!("{closer} erwartet, {} gefunden", e.keyword()),
-            );
+            c.error(e.line, format!("expected {closer}, found {}", e.keyword()));
             c.pos += 1;
         }
-        Some(e) => c.error(e.line, format!("{closer} fehlt")),
-        None => c.error(0, format!("{closer} fehlt (Dateiende)")),
+        Some(e) => c.error(e.line, format!("{closer} missing")),
+        None => c.error(0, format!("{closer} missing (end of file)")),
     }
 }
 
@@ -386,7 +383,7 @@ fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
 
     loop {
         let Some(s) = c.peek().cloned() else {
-            c.error(line, format!("{end_kw} fehlt (Dateiende)"));
+            c.error(line, format!("{end_kw} missing (end of file)"));
             break;
         };
         c.pos += 1;
@@ -394,7 +391,7 @@ fn parse_class(c: &mut Cursor, head: Statement, kind: ClassKind) -> ClassDef {
             break;
         }
         if is_end(&s) {
-            c.error(s.line, format!("unerwartet {}", s.keyword()));
+            c.error(s.line, format!("unexpected {}", s.keyword()));
             continue;
         }
         let kw = s.keyword();
@@ -492,7 +489,7 @@ pub fn parse_l1(src: &str) -> Program {
     while let Some(s) = c.peek().cloned() {
         c.pos += 1;
         if is_end(&s) {
-            c.error(s.line, format!("unerwartet {}", s.keyword()));
+            c.error(s.line, format!("unexpected {}", s.keyword()));
             items.push(TopItem::Statement(s));
             continue;
         }

@@ -1,1 +1,1 @@
-kann nicht verkettet werden
+cannot be concatenated

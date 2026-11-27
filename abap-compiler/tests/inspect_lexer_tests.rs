@@ -11,7 +11,10 @@ fn skips_comment_line_in_column_one() {
 
 #[test]
 fn skips_inline_quote_comment() {
-    assert_eq!(texts("DATA a. \" rest\nDATA b."), vec!["DATA", "a", ".", "DATA", "b", "."]);
+    assert_eq!(
+        texts("DATA a. \" rest\nDATA b."),
+        vec!["DATA", "a", ".", "DATA", "b", "."]
+    );
 }
 
 #[test]
@@ -44,7 +47,10 @@ fn string_template_is_one_token() {
 
 #[test]
 fn component_selector_stays_one_word() {
-    assert_eq!(texts("IF sy-subrc = 0."), vec!["IF", "sy-subrc", "=", "0", "."]);
+    assert_eq!(
+        texts("IF sy-subrc = 0."),
+        vec!["IF", "sy-subrc", "=", "0", "."]
+    );
 }
 
 #[test]

@@ -6,12 +6,12 @@
 //! Zeichenfelder (`TYPE c`) sind Puffer fester Länge, der Compiler kennt die Länge.
 //! Strings (`TYPE string`) sind Handles auf `RtStr`. Sie werden nicht freigegeben (kein GC).
 
-pub mod packed;
 pub mod decimal;
+pub mod packed;
 
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 const BLANK: u16 = 0x20;
 
@@ -97,7 +97,7 @@ pub extern "C" fn abap_rt_exception_clear() {
 #[no_mangle]
 pub unsafe extern "C" fn abap_rt_external_call(name: *const u16, len: u64) {
     let function = String::from_utf16_lossy(units(name, len));
-    eprintln!("abapc runtime: externen Funktionsbaustein '{function}' nicht implementiert");
+    eprintln!("abapc runtime: external function module '{function}' not implemented");
     std::process::exit(78);
 }
 
@@ -106,10 +106,7 @@ pub unsafe extern "C" fn abap_rt_external_call(name: *const u16, len: u64) {
 /// # Safety
 /// Beide Handles müssen aus dieser Laufzeit stammen oder null sein.
 #[no_mangle]
-pub unsafe extern "C" fn abap_rt_pattern_match(
-    value: *const RtStr,
-    pattern: *const RtStr,
-) -> i32 {
+pub unsafe extern "C" fn abap_rt_pattern_match(value: *const RtStr, pattern: *const RtStr) -> i32 {
     let Some(value) = value.as_ref() else {
         return 0;
     };
@@ -172,10 +169,7 @@ fn wildcard_match(value: &[u16], pattern: &[u16]) -> bool {
                 let Some(chars) = chars.as_ref() else {
                     return 0;
                 };
-                value
-                    .data
-                    .iter()
-                    .any(|unit| chars.data.contains(unit)) as i32
+                value.data.iter().any(|unit| chars.data.contains(unit)) as i32
             }
 
             /// # Safety
@@ -209,7 +203,9 @@ fn wildcard_match(value: &[u16], pattern: &[u16]) -> bool {
                 offset: i32,
                 length: i32,
             ) -> *mut RtStr {
-                let data = value.as_ref().map_or(&[][..], |string| string.data.as_slice());
+                let data = value
+                    .as_ref()
+                    .map_or(&[][..], |string| string.data.as_slice());
                 let start = offset.max(0) as usize;
                 let end = if length < 0 {
                     data.len()
@@ -221,13 +217,14 @@ fn wildcard_match(value: &[u16], pattern: &[u16]) -> bool {
                 } else {
                     &data[start..end]
                 };
-                Box::into_raw(Box::new(RtStr { data: slice.to_vec() }))
+                Box::into_raw(Box::new(RtStr {
+                    data: slice.to_vec(),
+                }))
             }
             value
                 .data
                 .windows(needle.data.len())
-                .any(|window| window == needle.data)
-                as i32
+                .any(|window| window == needle.data) as i32
         }
     }
     while pattern_index < pattern.len() && pattern[pattern_index] == b'*' as u16 {
@@ -247,15 +244,17 @@ unsafe fn move_into(dst: *mut u16, dlen: u64, src: &[u16]) {
     }
 }
 
-/// WRITE für ganze Zahlen (ABAP-Darstellung: ohne führende Nullen, negatives Vorzeichen am Ende).
+/// WRITE für ganze Zahlen. Projektfestlegung (siehe doc/sprache.md Abschnitt 7): Die Ziffern sind
+/// rechtsbündig in 10 Stellen. Negative Zahlen haben das Minuszeichen danach, dadurch 11 Zeichen.
+/// Positive Zahlen haben 10 Zeichen, das Alignment zwischen Feldern kommt über die Tabs.
 #[no_mangle]
 pub extern "C" fn abap_rt_write_int(value: i32) {
-    let mut s = value.unsigned_abs().to_string();
+    let mut s = format!("{:>10}", value.unsigned_abs());
     if value < 0 {
         s.push('-');
     }
 
-    out(format!("{:>10}", s).as_bytes());
+    out(s.as_bytes());
 }
 
 #[no_mangle]
@@ -468,7 +467,7 @@ pub unsafe extern "C" fn abap_rt_table_clear(t: *mut RtTable) {
 #[no_mangle]
 pub extern "C" fn abap_rt_fs_unassigned() -> ! {
     let _ = io::stdout().flush();
-    eprintln!("Laufzeitfehler: Feldsymbol ist nicht zugewiesen (GETWA_NOT_ASSIGNED)");
+    eprintln!("Runtime error: field symbol is not assigned (GETWA_NOT_ASSIGNED)");
     std::process::exit(1)
 }
 
@@ -476,7 +475,7 @@ pub extern "C" fn abap_rt_fs_unassigned() -> ! {
 #[no_mangle]
 pub extern "C" fn abap_rt_obj_new(size: u64) -> *mut u8 {
     let size = (size as usize).max(8);
-    let layout = std::alloc::Layout::from_size_align(size, 8).expect("gültiges Layout");
+    let layout = std::alloc::Layout::from_size_align(size, 8).expect("valid layout");
     unsafe { std::alloc::alloc_zeroed(layout) }
 }
 
@@ -484,7 +483,7 @@ pub extern "C" fn abap_rt_obj_new(size: u64) -> *mut u8 {
 #[no_mangle]
 pub extern "C" fn abap_rt_unbound() -> ! {
     let _ = io::stdout().flush();
-    eprintln!("Laufzeitfehler: Objektreferenz ist nicht gesetzt (CX_SY_REF_IS_INITIAL)");
+    eprintln!("Runtime error: object reference is not set (CX_SY_REF_IS_INITIAL)");
     std::process::exit(1)
 }
 
@@ -492,7 +491,7 @@ pub extern "C" fn abap_rt_unbound() -> ! {
 #[no_mangle]
 pub extern "C" fn abap_rt_type_mismatch() -> ! {
     let _ = io::stdout().flush();
-    eprintln!("Laufzeitfehler: Typ des Feldsymbols passt nicht (CASTING)");
+    eprintln!("Runtime error: type of field symbol does not match (CASTING)");
     std::process::exit(1)
 }
 
@@ -501,8 +500,8 @@ pub extern "C" fn abap_rt_type_mismatch() -> ! {
 pub extern "C" fn abap_rt_arith_error(kind: i32) -> ! {
     let _ = io::stdout().flush();
     match kind {
-        0 => eprintln!("Laufzeitfehler: arithmetischer Überlauf bei ganzer Zahl (TYPE i)"),
-        _ => eprintln!("Laufzeitfehler: Division durch 0"),
+        0 => eprintln!("Runtime error: arithmetic overflow for integer (TYPE i)"),
+        _ => eprintln!("Runtime error: division by 0"),
     }
     std::process::exit(1)
 }

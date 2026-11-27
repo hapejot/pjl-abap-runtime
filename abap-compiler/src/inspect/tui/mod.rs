@@ -70,9 +70,16 @@ fn source_style(text: &str) -> ContentStyle {
         style(FILE_HEADER, None, true)
     } else if t.starts_with('*') || t.starts_with('"') {
         style(COMMENT, None, false)
-    } else if ["CLASS ", "METHOD ", "FORM ", "FUNCTION ", "MODULE ", "INTERFACE "]
-        .iter()
-        .any(|k| t.to_uppercase().starts_with(k))
+    } else if [
+        "CLASS ",
+        "METHOD ",
+        "FORM ",
+        "FUNCTION ",
+        "MODULE ",
+        "INTERFACE ",
+    ]
+    .iter()
+    .any(|k| t.to_uppercase().starts_with(k))
     {
         style(DECL, None, true)
     } else {
@@ -99,7 +106,12 @@ impl Drop for TermGuard {
 }
 
 /// Schreibt eine Zeile aus gestylten Teilen, abgeschnitten auf die Breite.
-fn line(out: &mut Stdout, row: usize, cols: usize, parts: Vec<(String, ContentStyle)>) -> io::Result<()> {
+fn line(
+    out: &mut Stdout,
+    row: usize,
+    cols: usize,
+    parts: Vec<(String, ContentStyle)>,
+) -> io::Result<()> {
     queue!(
         out,
         cursor::MoveTo(0, row as u16),
@@ -147,9 +159,13 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
     app.src_off = app.src_off.min(max_src);
 
     // Kopfzeile
-    let shown_objects = app.rows.iter().filter(|r| matches!(r, Row::Object(_))).count();
+    let shown_objects = app
+        .rows
+        .iter()
+        .filter(|r| matches!(r, Row::Object(_)))
+        .count();
     let head = format!(
-        " Objekte {}/{}   Filter: {}",
+        " Objects {}/{}   Filter: {}",
         shown_objects,
         app.objects.len(),
         app.filter
@@ -166,7 +182,12 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
         let idx = app.list_off + r;
         let row = 1 + r;
         let Some(&item) = app.rows.get(idx) else {
-            line(out, row, cols, vec![(" ".repeat(cols), style(Color::Reset, None, false))])?;
+            line(
+                out,
+                row,
+                cols,
+                vec![(" ".repeat(cols), style(Color::Reset, None, false))],
+            )?;
             continue;
         };
         let selected = idx == app.sel;
@@ -174,9 +195,16 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
             Row::Object(oi) => {
                 let (t, n) = &app.objects[oi].key;
                 if selected {
-                    let bg = if app.focus_src { SEL_BG_SRC } else { SEL_BG_LIST };
+                    let bg = if app.focus_src {
+                        SEL_BG_SRC
+                    } else {
+                        SEL_BG_LIST
+                    };
                     let fg = if app.focus_src { BAR_FG } else { SEL_FG };
-                    vec![(full(&format!(" {:<8} {}", t, n), cols), style(fg, Some(bg), true))]
+                    vec![(
+                        full(&format!(" {:<8} {}", t, n), cols),
+                        style(fg, Some(bg), true),
+                    )]
                 } else {
                     vec![
                         (format!(" {:<8} ", t), style(type_color(t), None, true)),
@@ -188,9 +216,18 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
                 let e = &app.objects[oi].entries[ei];
                 let indent = format!("     {}", "  ".repeat(e.depth));
                 // Signatur: Deklaration ohne Schlüsselwort und Namen
-                let rest = e.detail.split_whitespace().skip(2).collect::<Vec<_>>().join(" ");
+                let rest = e
+                    .detail
+                    .split_whitespace()
+                    .skip(2)
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 if selected {
-                    let bg = if app.focus_src { SEL_BG_SRC } else { SEL_BG_LIST };
+                    let bg = if app.focus_src {
+                        SEL_BG_SRC
+                    } else {
+                        SEL_BG_LIST
+                    };
                     let fg = if app.focus_src { BAR_FG } else { SEL_FG };
                     let text = if rest.is_empty() {
                         format!("{indent}{}", e.label)
@@ -214,10 +251,10 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
     }
 
     // Titelbalken des Quelltextbereichs
-    let focus = if app.focus_src { "Quelltext" } else { "Liste" };
+    let focus = if app.focus_src { "Source" } else { "List" };
     let title = match app.current() {
-        Some((t, n)) => format!(" {t} {n}   [Fokus: {focus}] "),
-        None => " kein Objekt ausgewaehlt ".to_string(),
+        Some((t, n)) => format!(" {t} {n}   [Focus: {focus}] "),
+        None => " no object selected ".to_string(),
     };
     let title_style = if app.focus_src {
         style(SRC_TITLE_FG, Some(SRC_TITLE_BG), true)
@@ -228,23 +265,37 @@ fn draw(out: &mut Stdout, app: &mut App) -> io::Result<()> {
 
     // Quelltext
     for r in 0..src_h {
-        let text = app.lines.get(app.src_off + r).map(String::as_str).unwrap_or("");
-        line(out, list_h + 1 + r, cols, vec![(text.to_string(), source_style(text))])?;
+        let text = app
+            .lines
+            .get(app.src_off + r)
+            .map(String::as_str)
+            .unwrap_or("");
+        line(
+            out,
+            list_h + 1 + r,
+            cols,
+            vec![(text.to_string(), source_style(text))],
+        )?;
     }
 
     // Statusleiste
     let (status, st) = if app.filter_mode {
         (
-            format!(" Filter: {}_    Enter: fertig   Esc: leeren", app.filter),
+            format!(" Filter: {}_    Enter: done   Esc: clear", app.filter),
             style(STATUS_FG, Some(FILTER_BG), true),
         )
     } else {
         (
-            " / Filter  Tab Fokus  Up/Down  PgUp/PgDn  g/G Anfang/Ende  q Beenden".to_string(),
+            " / Filter  Tab Focus  Up/Down  PgUp/PgDn  g/G start/end  q quit".to_string(),
             style(STATUS_FG, Some(STATUS_BG), false),
         )
     };
-    line(out, rows.saturating_sub(1), cols, vec![(full(&status, cols), st)])?;
+    line(
+        out,
+        rows.saturating_sub(1),
+        cols,
+        vec![(full(&status, cols), st)],
+    )?;
 
     out.flush()
 }

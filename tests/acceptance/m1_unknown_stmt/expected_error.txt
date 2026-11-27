@@ -1,1 +1,1 @@
-Nicht unterstütztes Statement: SORT
+Unsupported statement: SORT

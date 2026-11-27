@@ -8,8 +8,7 @@ use abap_compiler::{
     analyze,
     ast::CompileError,
     codegen::Codegen,
-    inspect,
-    library,
+    inspect, library,
     lower::{lower_program_with, parse_source},
     project,
 };
@@ -92,7 +91,7 @@ fn fail_all(mut errors: Vec<CompileError>) -> ! {
     for e in &errors {
         eprintln!("abapc: {e}");
     }
-    eprintln!("abapc: {} Fehler gefunden", errors.len());
+    eprintln!("abapc: {} error(s) found", errors.len());
     process::exit(1);
 }
 
@@ -116,7 +115,7 @@ fn emit_object(module: &inkwell::module::Module, path: &Path) -> Result<(), Stri
             RelocMode::PIC,
             CodeModel::Default,
         )
-        .ok_or("Zielmaschine konnte nicht erstellt werden")?;
+        .ok_or("Could not create target machine")?;
     module.set_triple(&triple);
     module.set_data_layout(&tm.get_target_data().get_data_layout());
     tm.write_to_file(module, FileType::Object, path)
@@ -154,7 +153,7 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
             "/DEFAULTLIB:msvcrt",
         ])
         .output()
-        .map_err(|e| format!("Linker 'link.exe' nicht startbar: {e}"))?;
+        .map_err(|e| format!("Cannot start linker 'link.exe': {e}"))?;
 
     #[cfg(not(target_env = "msvc"))]
     let output = Command::new("cc")
@@ -164,12 +163,12 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
         .arg(exe)
         .args(["-lpthread", "-ldl", "-lm", "-lgcc_s"])
         .output()
-        .map_err(|e| format!("Linker 'cc' nicht startbar: {e}"))?;
+        .map_err(|e| format!("Cannot start linker 'cc': {e}"))?;
     if output.status.success() {
         Ok(())
     } else {
         Err(format!(
-            "Linken fehlgeschlagen:\n{}{}",
+            "Linking failed:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ))
@@ -196,9 +195,11 @@ fn main() {
         None => {}
     }
     let (Some(input), Some(output)) = (cli.input, cli.output) else {
-        fail("Eingabedatei und -o <ausgabe> angeben (Analyse: abapc inspect <zip>)")
+        fail("Specify input file and -o <output> (analysis: abapc inspect <zip>)")
     };
-    let is_zip = input.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    let is_zip = input
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
     let args = Args {
         input,
         output,
@@ -219,12 +220,15 @@ fn main() {
     let ir = if is_zip {
         // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
         let mut programs = project::load_programs(&args.input).unwrap_or_else(|e| fail(e));
-        let name = project::main_program(&programs, args.program.as_deref()).unwrap_or_else(|e| fail(e));
-        let mut prog = programs.remove(&name).expect("Hauptprogramm ist im Export vorhanden");
+        let name =
+            project::main_program(&programs, args.program.as_deref()).unwrap_or_else(|e| fail(e));
+        let mut prog = programs
+            .remove(&name)
+            .expect("main program is present in the export");
         project::expand_includes(&mut prog, &programs);
         let ddic = project::load_ddic(&args.input).unwrap_or_else(|e| fail(e));
         for skipped in &ddic.skipped {
-            eprintln!("abapc: Hinweis: DDIC-Objekt übersprungen: {skipped}");
+            eprintln!("abapc: note: DDIC object skipped: {skipped}");
         }
         match lower_program_with(&prog, &ddic) {
             Ok(ir) => ir,
@@ -246,20 +250,17 @@ fn main() {
     }
     if let Some(ll) = &args.emit_ir {
         if let Err(e) = cg.module.print_to_file(ll) {
-            fail(format!("IR-Datei nicht schreibbar: {e}"));
+            fail(format!("IR file not writable: {e}"));
         }
     }
 
     let obj = args.output.with_extension("o");
     if let Err(e) = emit_object(&cg.module, &obj) {
-        fail(format!("Objektdatei: {e}"));
+        fail(format!("Object file: {e}"));
     }
     let runtime = args.runtime.clone().unwrap_or_else(default_runtime);
     if !runtime.exists() {
-        fail(format!(
-            "Laufzeitbibliothek nicht gefunden: {}",
-            runtime.display()
-        ));
+        fail(format!("runtime library not found: {}", runtime.display()));
     }
     if let Err(e) = link(&obj, &runtime, &args.output) {
         fail(e);

@@ -25,49 +25,59 @@ fn run_case(dir: &Path, work: &Path) -> Result<(), String> {
         .arg("--emit-ir")
         .arg(&ll)
         .output()
-        .map_err(|e| format!("abapc konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("abapc could not be started: {e}"))?;
     let stderr = String::from_utf8_lossy(&compile.stderr).to_string();
 
     if let Ok(expected_err) = fs::read_to_string(dir.join("expected_error.txt")) {
         if compile.status.success() {
-            return Err("Übersetzung hätte scheitern müssen".into());
+            return Err("translation should have failed".into());
         }
         if !stderr.contains(expected_err.trim()) {
-            return Err(format!("Fehlermeldung passt nicht: {stderr}"));
+            return Err(format!("error message does not match: {stderr}"));
         }
         return Ok(());
     }
 
     if !compile.status.success() {
-        return Err(format!("Übersetzung fehlgeschlagen: {stderr}"));
+        return Err(format!("translation failed: {stderr}"));
     }
 
     let run = Command::new(&exe)
         .output()
-        .map_err(|e| format!("Programm konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("program could not be started: {e}"))?;
 
     // Erwarteter Laufzeitfehler: Programm muss fehlschlagen, stderr muss den Text enthalten
     if let Ok(expected_rt) = fs::read_to_string(dir.join("expected_runtime_error.txt")) {
         let err_out = String::from_utf8_lossy(&run.stderr).to_string();
         if run.status.success() {
-            return Err("Laufzeitfehler erwartet, Programm lief durch".into());
+            return Err("runtime error expected, but program ran successfully".into());
         }
         if !err_out.contains(expected_rt.trim()) {
-            return Err(format!("Laufzeitfehler passt nicht: {err_out}"));
+            return Err(format!("runtime error does not match: {err_out}"));
         }
         return Ok(());
     }
 
     if !run.status.success() {
-        return Err(format!("Programm mit Fehler beendet: {:?}", run.status));
+        return Err(format!("program ended with error: {:?}", run.status));
     }
     let actual = String::from_utf8_lossy(&run.stdout).to_string();
     let expected = fs::read_to_string(dir.join("expected.txt"))
-        .map_err(|e| format!("expected.txt fehlt: {e}"))?;
+        .map_err(|e| format!("expected.txt missing: {e}"))?;
     if actual != expected {
-        return Err(format!("Ausgabe weicht ab\n  erwartet: {expected:?}\n  erhalten: {actual:?}"));
+        return Err(format!(
+            "Output differs\n  expected: {expected:?}\n  actual: {actual:?}"
+        ));
     }
     Ok(())
+}
+
+/// Liest `zu-pruefen.txt` im Fallverzeichnis: Fälle, deren Erwartung gegen den ABAP-Standard
+/// noch nicht belegt ist. Der Fall läuft trotzdem wie gewohnt; der Hinweis erscheint nur im Bericht.
+fn zu_pruefen_hinweis(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(dir.join("zu-pruefen.txt")).ok()?;
+    let erste_zeile = text.lines().next().unwrap_or_default().trim().to_string();
+    Some(erste_zeile)
 }
 
 #[test]
@@ -76,20 +86,39 @@ fn acceptance() {
     fs::create_dir_all(&work).unwrap();
 
     let mut dirs: Vec<PathBuf> = fs::read_dir(cases_dir())
-        .expect("tests/acceptance fehlt")
+        .expect("tests/acceptance missing")
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.join("prog.abap").exists())
         .collect();
     dirs.sort();
-    assert!(!dirs.is_empty(), "keine Testfälle gefunden");
+    assert!(!dirs.is_empty(), "no test cases found");
+
+    let mut zu_pruefen = Vec::new();
+    for dir in &dirs {
+        if let Some(hinweis) = zu_pruefen_hinweis(dir) {
+            zu_pruefen.push(format!(
+                "{}: {hinweis}",
+                dir.file_name().unwrap().to_string_lossy()
+            ));
+        }
+    }
+    if !zu_pruefen.is_empty() {
+        println!("To check (expectation not verified against the ABAP standard):");
+        for zeile in &zu_pruefen {
+            println!("  {zeile}");
+        }
+    }
 
     let mut failures = Vec::new();
     for dir in &dirs {
         if let Err(msg) = run_case(dir, &work) {
-            failures.push(format!("{}: {msg}", dir.file_name().unwrap().to_string_lossy()));
+            failures.push(format!(
+                "{}: {msg}",
+                dir.file_name().unwrap().to_string_lossy()
+            ));
         }
     }
     let passed = dirs.len() - failures.len();
-    println!("{passed}/{} Akzeptanztests bestanden", dirs.len());
+    println!("{passed}/{} acceptance tests passed", dirs.len());
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }

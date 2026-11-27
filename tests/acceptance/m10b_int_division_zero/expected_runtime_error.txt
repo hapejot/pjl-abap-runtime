@@ -1,1 +1,1 @@
-Division durch 0
+division by 0

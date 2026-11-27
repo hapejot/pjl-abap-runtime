@@ -1107,7 +1107,8 @@ fn analyze_with_inventory(files: &[(String, String)], inventory_files: &[String]
     }
     for (file, src) in files {
         add_declared_inventory(&collect_program(&parse_l1(src)), &mut inventory);
-        let key = crate::inspect::objects::object_key(file).unwrap_or_else(|| (String::new(), file.clone()));
+        let key = crate::inspect::objects::object_key(file)
+            .unwrap_or_else(|| (String::new(), file.clone()));
         groups
             .entry(key)
             .or_default()

@@ -8,11 +8,14 @@ fn reqs(files: &[(&str, &str)]) -> Requirements {
     derive(&owned)
 }
 
-fn find<'a>(r: &'a Requirements, name: &str) -> &'a abap_compiler::inspect::abap::requirements::Requirement {
+fn find<'a>(
+    r: &'a Requirements,
+    name: &str,
+) -> &'a abap_compiler::inspect::abap::requirements::Requirement {
     r.items
         .iter()
         .find(|i| i.name == name)
-        .unwrap_or_else(|| panic!("keine Anforderung für {name}: {:#?}", r.items))
+        .unwrap_or_else(|| panic!("no requirement for {name}: {:#?}", r.items))
 }
 
 const APP: &str = "CLASS zcl_app DEFINITION.\n  PUBLIC SECTION.\n    METHODS run.\nENDCLASS.\n\

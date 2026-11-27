@@ -70,7 +70,7 @@ impl SymbolCatalog {
             if catalog.classes.contains_key(&name) {
                 return symbol_error(
                     class.head.line,
-                    format!("Symbol '{name}' ist mehrfach definiert"),
+                    format!("Symbol '{name}' is defined more than once"),
                 );
             }
 
@@ -83,7 +83,7 @@ impl SymbolCatalog {
                         if !methods.insert(method.clone()) {
                             return symbol_error(
                                 member.statement.line,
-                                format!("Methode '{method}' in '{name}' ist mehrfach deklariert"),
+                                format!("Method '{method}' in '{name}' is declared more than once"),
                             );
                         }
                     }
@@ -206,19 +206,19 @@ impl SymbolCatalog {
             let Some(symbol) = self.classes.get_mut(&name) else {
                 return symbol_error(
                     class.head.line,
-                    format!("Implementierung für unbekannte Klasse '{name}'"),
+                    format!("Implementation for unknown class '{name}'"),
                 );
             };
             if symbol.kind != SymbolKind::Class {
                 return symbol_error(
                     class.head.line,
-                    format!("Interface '{name}' hat keinen Implementierungskörper"),
+                    format!("Interface '{name}' has no implementation body"),
                 );
             }
             if !seen.insert(name.clone()) {
                 return symbol_error(
                     class.head.line,
-                    format!("Implementierung für Klasse '{name}' ist mehrfach vorhanden"),
+                    format!("Implementation for class '{name}' is present more than once"),
                 );
             }
             for method in &class.methods {
@@ -235,13 +235,13 @@ impl SymbolCatalog {
                 if !symbol.methods.contains(&method_name) && !is_interface_method {
                     return symbol_error(
                         method.head.line,
-                        format!("Methode '{method_name}' ist in Klasse '{name}' nicht deklariert"),
+                        format!("Method '{method_name}' is not declared in class '{name}'"),
                     );
                 }
                 if !symbol.implemented_methods.insert(method_name.clone()) {
                     return symbol_error(
                         method.head.line,
-                        format!("Methode '{method_name}' in '{name}' ist mehrfach implementiert"),
+                        format!("Method '{method_name}' in '{name}' is implemented more than once"),
                     );
                 }
             }
@@ -323,10 +323,11 @@ mod tests {
 
     #[test]
     fn rejects_implementation_without_declaration() {
-        let error = SymbolCatalog::from_program(&parse_l1("CLASS ghost IMPLEMENTATION.\nENDCLASS."))
-            .unwrap_err();
+        let error =
+            SymbolCatalog::from_program(&parse_l1("CLASS ghost IMPLEMENTATION.\nENDCLASS."))
+                .unwrap_err();
 
-        assert!(error.message.contains("unbekannte Klasse 'ghost'"));
+        assert!(error.message.contains("unknown class 'ghost'"));
     }
 
     #[test]
@@ -340,7 +341,7 @@ mod tests {
         ))
         .unwrap_err();
 
-        assert!(error.message.contains("nicht deklariert"));
+        assert!(error.message.contains("is not declared in class"));
     }
 
     #[test]

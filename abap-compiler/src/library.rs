@@ -9,7 +9,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-
 /// Woher die Metadaten stammen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -171,11 +170,11 @@ impl Library {
     }
 
     pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self).map_err(|e| format!("JSON-Ausgabe fehlgeschlagen: {e}"))
+        serde_json::to_string_pretty(self).map_err(|e| format!("JSON output failed: {e}"))
     }
 
     pub fn from_json(text: &str) -> Result<Self, String> {
-        serde_json::from_str(text).map_err(|e| format!("Bibliothek ungültig: {e}"))
+        serde_json::from_str(text).map_err(|e| format!("Invalid library: {e}"))
     }
 
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -281,7 +280,9 @@ mod tests {
 
 // --- Ableitung aus ABAP-Quelltext --------------------------------------------------------------
 
-use crate::inspect::abap::{parse_l1, ClassDef, ClassKind, MemberKind, MethodSig, Statement, TopItem, Visibility};
+use crate::inspect::abap::{
+    parse_l1, ClassDef, ClassKind, MemberKind, MethodSig, Statement, TopItem, Visibility,
+};
 
 /// Liest die öffentlichen Typen eines Quelltexts (Klassen und Interfaces) als Objekte.
 /// Nicht öffentliche Member und Ereignisse werden nicht übernommen.
@@ -382,28 +383,50 @@ fn params_from_raw(raw: &str, kind: ParamKind) -> Vec<Param> {
         }
         let mut typ = String::new();
         let mut optional = false;
-        if words.get(i).is_some_and(|w| w.eq_ignore_ascii_case("TYPE") || w.eq_ignore_ascii_case("LIKE")) {
+        if words
+            .get(i)
+            .is_some_and(|w| w.eq_ignore_ascii_case("TYPE") || w.eq_ignore_ascii_case("LIKE"))
+        {
             let keyword = words[i].to_lowercase();
             i += 1;
             if words.get(i).is_some_and(|w| w.eq_ignore_ascii_case("REF"))
-                && words.get(i + 1).is_some_and(|w| w.eq_ignore_ascii_case("TO"))
+                && words
+                    .get(i + 1)
+                    .is_some_and(|w| w.eq_ignore_ascii_case("TO"))
             {
-                typ = format!("ref to {}", words.get(i + 2).copied().unwrap_or("").to_lowercase());
+                typ = format!(
+                    "ref to {}",
+                    words.get(i + 2).copied().unwrap_or("").to_lowercase()
+                );
                 i += 3;
             } else if words.get(i).is_some_and(|w| is_table_keyword(w)) {
                 // TYPE [STANDARD|SORTED|HASHED|INDEX] TABLE [OF x]
                 let mut kind = String::new();
-                if words.get(i).is_some_and(|w| ["STANDARD", "SORTED", "HASHED", "INDEX"].iter().any(|k| w.eq_ignore_ascii_case(k))) {
+                if words.get(i).is_some_and(|w| {
+                    ["STANDARD", "SORTED", "HASHED", "INDEX"]
+                        .iter()
+                        .any(|k| w.eq_ignore_ascii_case(k))
+                }) {
                     kind = words[i].to_lowercase();
                     i += 1;
                 }
-                if words.get(i).is_some_and(|w| w.eq_ignore_ascii_case("TABLE")) {
-                    kind = if kind.is_empty() { "table".into() } else { format!("{kind} table") };
+                if words
+                    .get(i)
+                    .is_some_and(|w| w.eq_ignore_ascii_case("TABLE"))
+                {
+                    kind = if kind.is_empty() {
+                        "table".into()
+                    } else {
+                        format!("{kind} table")
+                    };
                     i += 1;
                 }
                 if words.get(i).is_some_and(|w| w.eq_ignore_ascii_case("OF")) {
                     i += 1;
-                    typ = format!("table of {}", words.get(i).copied().unwrap_or("").to_lowercase());
+                    typ = format!(
+                        "table of {}",
+                        words.get(i).copied().unwrap_or("").to_lowercase()
+                    );
                     i += 1;
                 } else {
                     typ = kind;
@@ -462,10 +485,15 @@ fn is_identifier(word: &str) -> bool {
 /// `DATA name TYPE typ` bzw. `CLASS-DATA name TYPE typ`.
 fn attribute_from_statement(s: &Statement) -> Option<Attribute> {
     let name = s.tokens.get(1)?.text.to_lowercase();
-    let pos = s.tokens.iter().position(|t| t.is_word("TYPE") || t.is_word("LIKE"))?;
+    let pos = s
+        .tokens
+        .iter()
+        .position(|t| t.is_word("TYPE") || t.is_word("LIKE"))?;
     let keyword = s.tokens[pos].text.to_lowercase();
     let rest = &s.tokens[pos + 1..];
-    let typ = if rest.first().is_some_and(|t| t.is_word("REF")) && rest.get(1).is_some_and(|t| t.is_word("TO")) {
+    let typ = if rest.first().is_some_and(|t| t.is_word("REF"))
+        && rest.get(1).is_some_and(|t| t.is_word("TO"))
+    {
         format!("ref to {}", rest.get(2)?.text.to_lowercase())
     } else {
         type_name(&keyword, &rest.first()?.text)
@@ -508,8 +536,12 @@ fn read_sources_from_dir(dir: &Path, out: &mut Vec<(String, String)>) -> Result<
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.is_dir() {
             read_sources_from_dir(&path, out)?;
-        } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("abap")) {
-            let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("abap"))
+        {
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             out.push((path.display().to_string(), text));
         }
     }
@@ -523,8 +555,9 @@ pub fn build(opts: BuildOptions) -> Result<(), String> {
         read_sources_from_dir(&opts.input, &mut files)?;
         files
     } else {
-        let file = std::fs::File::open(&opts.input).map_err(|e| format!("{}: {e}", opts.input.display()))?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Kein gültiges ZIP: {e}"))?;
+        let file = std::fs::File::open(&opts.input)
+            .map_err(|e| format!("{}: {e}", opts.input.display()))?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid ZIP: {e}"))?;
         crate::inspect::cli::read_abap_files(&mut archive)
     };
     let origin = Origin::Sap {
@@ -534,7 +567,7 @@ pub fn build(opts: BuildOptions) -> Result<(), String> {
     let lib = library_from_sources(&opts.name, origin, &files);
     lib.save(&opts.output)?;
     println!(
-        "{} Quelldateien, {} Objekte nach {}",
+        "{} source files, {} objects written to {}",
         files.len(),
         lib.objects.len(),
         opts.output.display()
@@ -576,8 +609,14 @@ ENDCLASS.\n";
         assert_eq!(class.interfaces, vec!["if_some"]);
         // private Methoden gehören nicht zur öffentlichen Schnittstelle
         assert!(class.methods.iter().all(|m| m.name != "hidden"));
-        assert!(class.attributes.iter().any(|a| a.name == "kind_x" && a.is_static));
-        assert!(class.attributes.iter().any(|a| a.name == "counter" && a.is_static && a.typ == "i"));
+        assert!(class
+            .attributes
+            .iter()
+            .any(|a| a.name == "kind_x" && a.is_static));
+        assert!(class
+            .attributes
+            .iter()
+            .any(|a| a.name == "counter" && a.is_static && a.typ == "i"));
     }
 
     #[test]

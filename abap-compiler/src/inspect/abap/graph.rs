@@ -17,9 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 
 use super::lexer::{Kind, Token};
-use super::parser::{
-    parse_l1, ClassDef, ClassKind, Item, MemberKind, Program, Statement, TopItem,
-};
+use super::parser::{parse_l1, ClassDef, ClassKind, Item, MemberKind, Program, Statement, TopItem};
 use crate::inspect::model::is_builtin_type;
 use crate::inspect::objects::object_key;
 
@@ -233,7 +231,14 @@ fn class_scopes<'a>(c: &'a ClassDef, file: &str, owner: &Owner<'_>, out: &mut Ve
             let mut other = Vec::new();
             flatten(&c.other, &mut other);
             out.push(Scope {
-                node: make_node(owner, NodeKind::Class, cls.clone(), &c.name, file, c.head.line),
+                node: make_node(
+                    owner,
+                    NodeKind::Class,
+                    cls.clone(),
+                    &c.name,
+                    file,
+                    c.head.line,
+                ),
                 extra: Vec::new(),
                 class: None,
                 file: file.to_string(),
@@ -310,7 +315,14 @@ pub(crate) fn scopes_of<'a>(prog: &'a Program, file: &str, owner: &Owner<'_>) ->
     }
     if !top.is_empty() {
         out.push(Scope {
-            node: make_node(owner, NodeKind::Object, owner.obj.to_string(), owner.obj, file, 1),
+            node: make_node(
+                owner,
+                NodeKind::Object,
+                owner.obj.to_string(),
+                owner.obj,
+                file,
+                1,
+            ),
             extra: Vec::new(),
             class: None,
             file: file.to_string(),
@@ -397,9 +409,9 @@ fn scan(s: &Statement, cx: &Ctx<'_>, out: &mut Vec<Pending>) {
             }
         }
         "INCLUDE"
-            if !toks
-                .get(1)
-                .is_some_and(|t| t.is_word("TYPE") || t.is_word("STRUCTURE") || t.text.starts_with('<')) =>
+            if !toks.get(1).is_some_and(|t| {
+                t.is_word("TYPE") || t.is_word("STRUCTURE") || t.text.starts_with('<')
+            }) =>
         {
             if let Some(n) = name_at(toks, 1) {
                 push(EdgeKind::Include, n.clone(), Lookup::Exact(n));
@@ -432,7 +444,11 @@ fn scan(s: &Statement, cx: &Ctx<'_>, out: &mut Vec<Pending>) {
         }
         "CALL" if toks.get(1).is_some_and(|t| t.is_word("FUNCTION")) => {
             if let Some(n) = name_at(toks, 2) {
-                push(EdgeKind::FunctionCall, n.clone(), Lookup::Exact(format!("fm:{n}")));
+                push(
+                    EdgeKind::FunctionCall,
+                    n.clone(),
+                    Lookup::Exact(format!("fm:{n}")),
+                );
             }
         }
         "CREATE" if toks.get(1).is_some_and(|t| t.is_word("OBJECT")) => {

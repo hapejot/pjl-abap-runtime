@@ -9,7 +9,10 @@ impl<'ctx> Codegen<'ctx> {
             let field_tys: Vec<inkwell::types::BasicTypeEnum<'ctx>> =
                 def.fields.iter().map(|(_, t)| self.llvm_ty(*t)).collect();
             let st = self.ctx.struct_type(&field_tys, true);
-            self.layouts.push(Layout { st, fields: def.fields.clone() });
+            self.layouts.push(Layout {
+                st,
+                fields: def.fields.clone(),
+            });
         }
     }
 
@@ -43,7 +46,11 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Char(n) => 2 * n as u64,
             Ty::Packed { bytes, .. } => bytes as u64,
             Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => 8,
-            Ty::Struct(i) => self.layouts[i].fields.iter().map(|(_, t)| self.size_of(*t)).sum(),
+            Ty::Struct(i) => self.layouts[i]
+                .fields
+                .iter()
+                .map(|(_, t)| self.size_of(*t))
+                .sum(),
         }
     }
 
@@ -53,15 +60,24 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Leerer String, aufgerufen mit dem angegebenen Builder.
     pub(super) fn empty_on(&self, b: &Builder<'ctx>) -> CResult<PointerValue<'ctx>> {
-        match self.call_on(b, self.rt.str_new, &[self.ptrt.const_null().into(), self.len(0).into()])? {
+        match self.call_on(
+            b,
+            self.rt.str_new,
+            &[self.ptrt.const_null().into(), self.len(0).into()],
+        )? {
             Some(v) => Ok(v.into_pointer_value()),
-            None => err(0, "str_new ohne Rückgabe"),
+            None => err(0, "str_new without return value"),
         }
     }
 
     /// Setzt einen Speicherplatz auf den Initialwert seines Typs: Zahl 0, Zeichen Leerzeichen,
     /// String leer, Tabelle neu angelegt, Struktur mit Leerzeichen bzw. leeren Strings in den Komponenten.
-    pub(super) fn init_value(&self, b: &Builder<'ctx>, slot: PointerValue<'ctx>, ty: Ty) -> CResult<()> {
+    pub(super) fn init_value(
+        &self,
+        b: &Builder<'ctx>,
+        slot: PointerValue<'ctx>,
+        ty: Ty,
+    ) -> CResult<()> {
         match ty {
             Ty::Dynamic => {
                 llvm(b.build_store(slot, self.ptrt.const_null()))?;
@@ -83,7 +99,7 @@ impl<'ctx> Codegen<'ctx> {
                 let size = self.len(self.elem_size(e) as usize);
                 let t = match self.call_on(b, self.rt.table_new, &[size.into()])? {
                     Some(v) => v.into_pointer_value(),
-                    None => return err(0, "table_new ohne Rückgabe"),
+                    None => return err(0, "table_new without return value"),
                 };
                 llvm(b.build_store(slot, t))?;
             }
@@ -94,7 +110,10 @@ impl<'ctx> Codegen<'ctx> {
                 let layout = self.layouts[i].clone();
                 llvm(b.build_store(slot, layout.st.const_zero()))?;
                 for (k, (_, fty)) in layout.fields.iter().enumerate() {
-                    if matches!(fty, Ty::Str | Ty::Char(_) | Ty::Packed { .. } | Ty::Table(_) | Ty::Struct(_)) {
+                    if matches!(
+                        fty,
+                        Ty::Str | Ty::Char(_) | Ty::Packed { .. } | Ty::Table(_) | Ty::Struct(_)
+                    ) {
                         let fp = llvm(b.build_struct_gep(layout.st, slot, k as u32, "fi"))?;
                         self.init_value(b, fp, *fty)?;
                     }
@@ -110,7 +129,10 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Leerer String zur Laufzeit (nicht im Einstieg).
     pub(super) fn empty_string_now(&self) -> CResult<PointerValue<'ctx>> {
-        self.call_ptr(self.rt.str_new, &[self.ptrt.const_null().into(), self.len(0).into()])
+        self.call_ptr(
+            self.rt.str_new,
+            &[self.ptrt.const_null().into(), self.len(0).into()],
+        )
     }
 
     /// Temporärer Speicherplatz für einen Zeilenwert, im Einstieg angelegt.

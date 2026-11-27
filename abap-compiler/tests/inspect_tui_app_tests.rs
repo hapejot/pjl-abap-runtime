@@ -24,15 +24,30 @@ fn sample() -> App {
                 entry(1, "METHODS run", "zcl_a.clas.abap", 5),
             ],
         },
-        Object { key: ("PROG".into(), "zfoo".into()), entries: vec![entry(0, "FORM fill", "zfoo.prog.abap", 3)] },
-        Object { key: ("PROG".into(), "zbar".into()), entries: vec![] },
+        Object {
+            key: ("PROG".into(), "zfoo".into()),
+            entries: vec![entry(0, "FORM fill", "zfoo.prog.abap", 3)],
+        },
+        Object {
+            key: ("PROG".into(), "zbar".into()),
+            entries: vec![],
+        },
     ];
     let mut sources: Sources = BTreeMap::new();
     sources.insert(
         ("CLAS".into(), "zcl_a".into()),
-        vec![("zcl_a.clas.abap".into(), "CLASS zcl_a DEFINITION.\n\tENDCLASS.\n\nMETHOD run.\nENDMETHOD.".into())],
+        vec![(
+            "zcl_a.clas.abap".into(),
+            "CLASS zcl_a DEFINITION.\n\tENDCLASS.\n\nMETHOD run.\nENDMETHOD.".into(),
+        )],
     );
-    sources.insert(("PROG".into(), "zfoo".into()), vec![("zfoo.prog.abap".into(), "DATA a.\nFORM fill.\nENDFORM.".into())]);
+    sources.insert(
+        ("PROG".into(), "zfoo".into()),
+        vec![(
+            "zfoo.prog.abap".into(),
+            "DATA a.\nFORM fill.\nENDFORM.".into(),
+        )],
+    );
     App::new(objects, sources)
 }
 
@@ -51,7 +66,11 @@ fn starts_with_all_objects_and_first_selected() {
 fn down_moves_through_entries_then_to_next_object() {
     let mut app = sample();
     key(&mut app, KeyCode::Down);
-    assert_eq!(app.current().unwrap().1, "zcl_a", "Eintrag gehoert zum Objekt");
+    assert_eq!(
+        app.current().unwrap().1,
+        "zcl_a",
+        "entry belongs to the object"
+    );
     assert_eq!(app.current_entry().unwrap().label, "CLASS zcl_a");
     key(&mut app, KeyCode::Down);
     key(&mut app, KeyCode::Down);
@@ -67,7 +86,11 @@ fn entry_selection_scrolls_source_to_its_line() {
     key(&mut app, KeyCode::Down);
     key(&mut app, KeyCode::Down);
     assert_eq!(app.current_entry().unwrap().label, "METHODS run");
-    let header = app.lines.iter().position(|l| l.starts_with("---- zcl_a")).unwrap();
+    let header = app
+        .lines
+        .iter()
+        .position(|l| l.starts_with("---- zcl_a"))
+        .unwrap();
     assert_eq!(app.src_off, header + 5 - 2);
     assert!(!app.focus_src);
 }
@@ -76,7 +99,7 @@ fn entry_selection_scrolls_source_to_its_line() {
 fn enter_on_entry_moves_focus_to_source() {
     let mut app = sample();
     key(&mut app, KeyCode::Enter);
-    assert!(!app.focus_src, "Enter auf Objekt wechselt nicht");
+    assert!(!app.focus_src, "Enter on object does not switch focus");
     key(&mut app, KeyCode::Down);
     key(&mut app, KeyCode::Enter);
     assert!(app.focus_src);
@@ -137,7 +160,7 @@ fn tab_switches_focus_and_arrows_scroll_source() {
     let before = app.src_off;
     key(&mut app, KeyCode::Down);
     assert_eq!(app.src_off, before + 1);
-    assert_eq!(app.sel, 0, "Auswahl bleibt, wenn der Quelltext Fokus hat");
+    assert_eq!(app.sel, 0, "selection stays when the source has focus");
 }
 
 #[test]

@@ -23,7 +23,10 @@ impl<'ctx> Codegen<'ctx> {
         self.stmt_marks.push(mark);
         let result = self.emit_stmt_dispatch(s);
         self.stmt_marks.pop();
-        let open = self.builder.get_insert_block().is_some_and(|b| b.get_terminator().is_none());
+        let open = self
+            .builder
+            .get_insert_block()
+            .is_some_and(|b| b.get_terminator().is_none());
         if open {
             self.release_to(mark)?;
         }
@@ -64,7 +67,13 @@ impl<'ctx> Codegen<'ctx> {
         match used.as_slice() {
             [] => self.emit_stmt_plain(s),
             [name] => self.emit_specialized(name, s),
-            _ => err(0, format!("mehrere dynamische Feldsymbole in einer Anweisung ({}) noch nicht unterstützt", used.join(", "))),
+            _ => err(
+                0,
+                format!(
+                    "multiple dynamic field symbols in one statement ({}) not supported yet",
+                    used.join(", ")
+                ),
+            ),
         }
     }
 
@@ -83,15 +92,19 @@ impl<'ctx> Codegen<'ctx> {
     fn emit_specialized(&mut self, name: &str, s: &Stmt) -> CResult<()> {
         let tag_slot = self.var(name, 0)?.tag.ok_or_else(|| CompileError {
             line: 0,
-            message: format!("Feldsymbol '{name}' hat keinen Typ-Tag"),
+            message: format!("Field symbol '{name}' has no type tag"),
         })?;
-        let tag = llvm(self.builder.build_load(self.ptrt, tag_slot, "spec_tag"))?.into_pointer_value();
+        let tag =
+            llvm(self.builder.build_load(self.ptrt, tag_slot, "spec_tag"))?.into_pointer_value();
         let end = self.new_block("fs_spec_end")?;
         for ty in self.dynamic_types.clone() {
             let want = self.type_descriptor(ty, 0)?;
             let t = llvm(self.builder.build_ptr_to_int(tag, self.i64t, "spec_t"))?;
             let w = llvm(self.builder.build_ptr_to_int(want, self.i64t, "spec_w"))?;
-            let eq = llvm(self.builder.build_int_compare(IntPredicate::EQ, t, w, "spec_eq"))?;
+            let eq = llvm(
+                self.builder
+                    .build_int_compare(IntPredicate::EQ, t, w, "spec_eq"),
+            )?;
             let hit = self.new_block("fs_spec_hit")?;
             let next = self.new_block("fs_spec_next")?;
             llvm(self.builder.build_conditional_branch(eq, hit, next))?;
@@ -148,10 +161,10 @@ impl<'ctx> Codegen<'ctx> {
             Stmt::AssignFs { fs, source, line } => {
                 let target = self.var(fs, *line)?.clone();
                 if !target.fs {
-                    return err(*line, format!("ASSIGN-Ziel '{fs}' ist kein Feldsymbol"));
+                    return err(*line, format!("ASSIGN target '{fs}' is not a field symbol"));
                 }
                 let Some(tag_slot) = target.tag else {
-                    return err(*line, format!("Feldsymbol '{fs}' hat keinen Typ-Tag"));
+                    return err(*line, format!("Field symbol '{fs}' has no type tag"));
                 };
                 let (p, ty) = self.data(source, *line)?;
                 if ty == Ty::Dynamic {
@@ -159,19 +172,23 @@ impl<'ctx> Codegen<'ctx> {
                     if target.ty != Ty::Dynamic {
                         return err(
                             *line,
-                            format!("ASSIGN: dynamische Quelle '{source}' für typisiertes Feldsymbol '{fs}' braucht eine Laufzeitprüfung (noch nicht unterstützt)"),
+                            format!("ASSIGN: dynamic source '{source}' for typed field symbol '{fs}' needs a runtime check (not supported yet)"),
                         );
                     }
                     let src = self.var(source, *line)?.clone();
                     let Some(src_tag) = src.tag else {
-                        return err(*line, format!("Quelle '{source}' hat keinen Typ-Tag"));
+                        return err(*line, format!("Source '{source}' has no type tag"));
                     };
-                    let tag = llvm(self.builder.build_load(self.ptrt, src_tag, "src_tag"))?.into_pointer_value();
+                    let tag = llvm(self.builder.build_load(self.ptrt, src_tag, "src_tag"))?
+                        .into_pointer_value();
                     llvm(self.builder.build_store(target.slot, p))?;
                     llvm(self.builder.build_store(tag_slot, tag))?;
                     return Ok(());
                 }
-                if target.ty != Ty::Dynamic && target.ty != ty && self.fs_override.contains_key(source) {
+                if target.ty != Ty::Dynamic
+                    && target.ty != ty
+                    && self.fs_override.contains_key(source)
+                {
                     // Spezialisierter Zweig mit anderem Typ: nur bei Erreichen zur Laufzeit ein Fehler
                     self.call_void(self.rt.type_mismatch, &[])?;
                     llvm(self.builder.build_unreachable())?;
@@ -182,7 +199,7 @@ impl<'ctx> Codegen<'ctx> {
                 if target.ty != Ty::Dynamic && target.ty != ty {
                     return err(
                         *line,
-                        format!("ASSIGN: '{source}' passt nicht zu Feldsymbol '{fs}'"),
+                        format!("ASSIGN: '{source}' does not match field symbol '{fs}'"),
                     );
                 }
                 let descriptor = self.type_descriptor(ty, *line)?;
@@ -200,7 +217,7 @@ impl<'ctx> Codegen<'ctx> {
                 let Ty::Ref(class_idx) = ty else {
                     return err(
                         *line,
-                        format!("RAISE EXCEPTION erwartet eine Objektreferenz: '{exception}'"),
+                        format!("RAISE EXCEPTION expects an object reference: '{exception}'"),
                     );
                 };
                 let object = llvm(
@@ -216,7 +233,7 @@ impl<'ctx> Codegen<'ctx> {
                     ],
                 )?;
                 let Some(target) = self.exception_target.or(self.exit_fn) else {
-                    return err(*line, "RAISE EXCEPTION ohne Rücksprungziel");
+                    return err(*line, "RAISE EXCEPTION without jump target");
                 };
                 llvm(self.builder.build_unconditional_branch(target))?;
                 self.open_dead_block()
@@ -229,7 +246,7 @@ impl<'ctx> Codegen<'ctx> {
             } => self.emit_try(body, catches, cleanup, *line),
             Stmt::Return { .. } => {
                 let Some(exit) = self.exit_fn else {
-                    return err(0, "RETURN ohne Routine");
+                    return err(0, "RETURN without routine");
                 };
                 llvm(self.builder.build_unconditional_branch(exit))?;
                 self.open_dead_block()
@@ -240,7 +257,7 @@ impl<'ctx> Codegen<'ctx> {
                 let Ty::Ref(c) = ty else {
                     return err(
                         *line,
-                        format!("CREATE OBJECT erwartet eine Objektreferenz: '{name}'"),
+                        format!("CREATE OBJECT expects an object reference: '{name}'"),
                     );
                 };
                 let st = self.classes[c].struct_idx;
@@ -253,7 +270,7 @@ impl<'ctx> Codegen<'ctx> {
                 } else if !args.is_empty() {
                     return err(
                         *line,
-                        format!("CREATE OBJECT: Klasse hat keinen Konstruktor für '{name}'"),
+                        format!("CREATE OBJECT: class has no constructor for '{name}'"),
                     );
                 }
                 Ok(())
@@ -273,7 +290,10 @@ impl<'ctx> Codegen<'ctx> {
                 if !matches!(ty, Ty::Struct(_)) {
                     let target_symbol = self.var(target, *line)?.clone();
                     if !target_symbol.fs {
-                        return err(*line, format!("ASSIGN-Ziel '{target}' ist kein Feldsymbol"));
+                        return err(
+                            *line,
+                            format!("ASSIGN target '{target}' is not a field symbol"),
+                        );
                     }
                     llvm(
                         self.builder
@@ -284,7 +304,7 @@ impl<'ctx> Codegen<'ctx> {
                 let Ty::Struct(index) = ty else {
                     return err(
                         *line,
-                        format!("'{structure}' ist keine statisch bekannte Struktur"),
+                        format!("'{structure}' is not a statically known structure"),
                     );
                 };
                 let layout = self.layouts[index].clone();
@@ -293,19 +313,22 @@ impl<'ctx> Codegen<'ctx> {
                 else {
                     return err(
                         *line,
-                        format!("Komponente '{component}' unbekannt in '{structure}'"),
+                        format!("Component '{component}' unknown in '{structure}'"),
                     );
                 };
                 let target_symbol = self.var(target, *line)?.clone();
                 if !target_symbol.fs {
-                    return err(*line, format!("ASSIGN-Ziel '{target}' ist kein Feldsymbol"));
+                    return err(
+                        *line,
+                        format!("ASSIGN target '{target}' is not a field symbol"),
+                    );
                 }
                 let field_ty = layout.fields[field_index].1;
                 if target_symbol.ty != field_ty {
                     return err(
                         *line,
                         format!(
-                            "Komponente '{component}' hat einen anderen Typ als Feldsymbol '{target}'"
+                            "Component '{component}' has a different type than field symbol '{target}'"
                         ),
                     );
                 }
@@ -329,7 +352,7 @@ impl<'ctx> Codegen<'ctx> {
                 if !target_symbol.fs || target_symbol.ty != element.ty() {
                     return err(
                         *line,
-                        format!("READ TABLE-Ziel '{target}' hat nicht den Zeilentyp"),
+                        format!("READ TABLE target '{target}' does not have the line type"),
                     );
                 }
                 let index = self.int_operand(index, *line)?;
@@ -415,14 +438,14 @@ impl<'ctx> Codegen<'ctx> {
             Stmt::While { cond, body, line } => self.emit_while(cond, body, *line),
             Stmt::Exit { line } => {
                 let Some(lp) = self.loops.last().copied() else {
-                    return err(*line, "EXIT außerhalb einer Schleife");
+                    return err(*line, "EXIT outside a loop");
                 };
                 llvm(self.builder.build_unconditional_branch(lp.exit))?;
                 self.open_dead_block()
             }
             Stmt::Continue { line } => {
                 let Some(lp) = self.loops.last().copied() else {
-                    return err(*line, "CONTINUE außerhalb einer Schleife");
+                    return err(*line, "CONTINUE outside a loop");
                 };
                 llvm(self.builder.build_unconditional_branch(lp.next))?;
                 self.open_dead_block()
@@ -432,7 +455,7 @@ impl<'ctx> Codegen<'ctx> {
                 // Nicht erfüllt: nächster Durchlauf (Schleife) bzw. Programmende (außerhalb)
                 let target = match self.loops.last().copied() {
                     Some(lp) => lp.next,
-                    None => self.exit_fn.expect("exit-Block fehlt"),
+                    None => self.exit_fn.expect("exit block missing"),
                 };
                 let cont = self.new_block("check_ok")?;
                 llvm(self.builder.build_conditional_branch(c, cont, target))?;
@@ -487,16 +510,19 @@ impl<'ctx> Codegen<'ctx> {
                 if ty != Ty::Int {
                     return err(
                         *line,
-                        format!("DESCRIBE LINES erwartet ein ganzzahliges Feld: '{target}'"),
+                        format!("DESCRIBE LINES expects an integer field: '{target}'"),
                     );
                 }
                 llvm(self.builder.build_store(p, n32))?;
                 Ok(())
             }
             Stmt::NotSupported { tokens } => {
-                let keyword = tokens.first().map(|t| t.text.to_uppercase()).unwrap_or_default();
+                let keyword = tokens
+                    .first()
+                    .map(|t| t.text.to_uppercase())
+                    .unwrap_or_default();
                 let line = tokens.first().map_or(0, |t| t.line);
-                err(line, format!("Nicht unterstütztes Statement: {keyword}"))
+                err(line, format!("Unsupported statement: {keyword}"))
             }
         }
     }
@@ -509,7 +535,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Char(n) => (2, n as u64),
             Ty::Str => (3, 0),
             Ty::Struct(_) => (4, self.size_of(ty)),
-            _ => return err(line, "ASSIGN auf diesen Typ wird noch nicht unterstützt"),
+            _ => return err(line, "ASSIGN to this type is not supported yet"),
         };
         let name = format!("abap_td_{kind}_{len}");
         if let Some(global) = self.module.get_global(&name) {
@@ -528,33 +554,29 @@ impl<'ctx> Codegen<'ctx> {
     /// Gibt einen Wert aus; Objekte, Strukturen und Tabellen sind nicht ausgabefähig.
     pub(super) fn write_value(&mut self, v: Val<'ctx>, line: usize) -> CResult<()> {
         match v {
-                    Val::Ref(..) => {
-                        return err(line, "Objektreferenz kann nicht ausgegeben werden")
-                    }
-                    Val::Mem(..) => {
-                        return err(
-                            line,
-                            "Struktur kann nicht ausgegeben werden (nur Komponenten)",
-                        )
-                    }
-                    Val::Table(_) => {
-                        return err(line, "Interne Tabelle kann nicht ausgegeben werden")
-                    }
-                    Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
-                    v @ Val::Dec(_) => {
-                        let h = self.dec_handle(v, line)?;
-                        self.write_packed(h)?
-                    }
-                    Val::Chars(p, n) => {
-                        self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
-                    }
-                    Val::Str(h) => self.call_void(self.rt.write_str, &[h.into()])?,
+            Val::Ref(..) => return err(line, "Object reference cannot be output"),
+            Val::Mem(..) => return err(line, "Structure cannot be output (components only)"),
+            Val::Table(_) => return err(line, "Internal table cannot be output"),
+            Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
+            v @ Val::Dec(_) => {
+                let h = self.dec_handle(v, line)?;
+                self.write_packed(h)?
+            }
+            Val::Chars(p, n) => {
+                self.call_void(self.rt.write_chars, &[p.into(), self.len(n).into()])?
+            }
+            Val::Str(h) => self.call_void(self.rt.write_str, &[h.into()])?,
         }
         Ok(())
     }
 
     /// Zuweisung. Dynamische Feldsymbole werden zur Laufzeit gegen ihren Typ-Tag geprüft.
-    pub(super) fn assign_stmt(&mut self, target: &Target, value: &Expr, line: usize) -> CResult<()> {
+    pub(super) fn assign_stmt(
+        &mut self,
+        target: &Target,
+        value: &Expr,
+        line: usize,
+    ) -> CResult<()> {
         let dst = self.dest(target, line)?;
         let v = self.eval(value, line)?;
         self.store(dst, v, line)
@@ -567,7 +589,7 @@ impl<'ctx> Codegen<'ctx> {
                     llvm(self.builder.build_store(slot, obj))?;
                     Ok(())
                 }
-                _ => err(line, "Objektreferenz passt nicht zum Zieltyp"),
+                _ => err(line, "Object reference does not match the target type"),
             },
             Dest::Mem(p, i) => match v {
                 // Struktur-Zuweisung kopiert alle Komponenten (gleicher Typ)
@@ -582,10 +604,10 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Val::Mem(..) => err(
                     line,
-                    "Struktur kann nur einer Struktur desselben Typs zugewiesen werden",
+                    "Structure can only be assigned to a structure of the same type",
                 ),
                 Val::Str(_) | Val::Chars(_, _) => Ok(()),
-                _ => err(line, "Wert kann nicht einer Struktur zugewiesen werden"),
+                _ => err(line, "Value cannot be assigned to a structure"),
             },
             Dest::Packed(p, bytes, scale) => self.store_packed(p, bytes, scale, v, line),
             Dest::Int(p) => match v {
@@ -599,21 +621,15 @@ impl<'ctx> Codegen<'ctx> {
                     llvm(self.builder.build_store(p, i))?;
                     Ok(())
                 }
-                Val::Mem(..) => err(
-                    line,
-                    "Struktur kann nicht einem ganzzahligen Feld zugewiesen werden",
-                ),
-                _ => err(
-                    line,
-                    "Text kann nicht einem ganzzahligen Feld zugewiesen werden",
-                ),
+                Val::Mem(..) => err(line, "Structure cannot be assigned to an integer field"),
+                _ => err(line, "Text cannot be assigned to an integer field"),
             },
             Dest::Chars(p, n) => match v {
                 Val::Ref(..) => err(
                     line,
-                    "Objektreferenz kann keinem Zeichenfeld zugewiesen werden",
+                    "Object reference cannot be assigned to a character field",
                 ),
-                Val::Table(_) => err(line, "Tabelle kann keinem Zeichenfeld zugewiesen werden"),
+                Val::Table(_) => err(line, "Table cannot be assigned to a character field"),
                 // Zuweisung kürzt bzw. füllt mit Leerzeichen auf
                 Val::Chars(sp, sl) => self.call_void(
                     self.rt.chars_move,
@@ -625,12 +641,9 @@ impl<'ctx> Codegen<'ctx> {
                 ),
                 Val::Int(_) | Val::Dec(_) => err(
                     line,
-                    "Zahl kann nicht einem Zeichenfeld zugewiesen werden (noch nicht unterstützt)",
+                    "Number cannot be assigned to a character field (not supported yet)",
                 ),
-                Val::Mem(..) => err(
-                    line,
-                    "Struktur kann nicht einem Zeichenfeld zugewiesen werden",
-                ),
+                Val::Mem(..) => err(line, "Structure cannot be assigned to a character field"),
             },
             Dest::Str(slot) => {
                 let h = match v {
@@ -639,22 +652,17 @@ impl<'ctx> Codegen<'ctx> {
                     Val::Chars(sp, sl) => {
                         self.call_ptr(self.rt.str_from_chars, &[sp.into(), self.len(sl).into()])?
                     }
-                    Val::Int(_) | Val::Dec(_) => return err(
-                        line,
-                        "Zahl kann nicht einem String zugewiesen werden (noch nicht unterstützt)",
-                    ),
-                    Val::Mem(..) => {
-                        return err(line, "Struktur kann nicht einem String zugewiesen werden")
-                    }
-                    Val::Ref(..) => {
+                    Val::Int(_) | Val::Dec(_) => {
                         return err(
                             line,
-                            "Objektreferenz kann nicht einem String zugewiesen werden",
+                            "Number cannot be assigned to a string (not supported yet)",
                         )
                     }
-                    Val::Table(_) => {
-                        return err(line, "Tabelle kann nicht einem String zugewiesen werden")
+                    Val::Mem(..) => return err(line, "Structure cannot be assigned to a string"),
+                    Val::Ref(..) => {
+                        return err(line, "Object reference cannot be assigned to a string")
                     }
+                    Val::Table(_) => return err(line, "Table cannot be assigned to a string"),
                 };
                 llvm(self.builder.build_store(slot, h))?;
                 Ok(())
@@ -705,7 +713,7 @@ impl<'ctx> Codegen<'ctx> {
                     Some(prev) => llvm(self.builder.build_or(prev, eq, "when_or"))?,
                 });
             }
-            let c = any.expect("WHEN ohne Werte wird im Lowering abgefangen");
+            let c = any.expect("WHEN without values is caught in lowering");
             let then = self.new_block("when")?;
             let next = self.new_block("when_next")?;
             llvm(self.builder.build_conditional_branch(c, then, next))?;
@@ -731,7 +739,7 @@ impl<'ctx> Codegen<'ctx> {
             Some(e) => {
                 let n = match self.eval(e, line)? {
                     Val::Int(i) => i,
-                    _ => return err(line, "Anzahl bei DO muss ganzzahlig sein"),
+                    _ => return err(line, "DO count must be an integer"),
                 };
                 let limit = llvm(self.alloca.build_alloca(self.i32t, "do_limit"))?;
                 let cnt = llvm(self.alloca.build_alloca(self.i32t, "do_counter"))?;
@@ -855,7 +863,7 @@ impl<'ctx> Codegen<'ctx> {
                 if wty != e.ty() {
                     return err(
                         line,
-                        format!("Arbeitsbereich passt nicht zum Tabellentyp: '{wa}'"),
+                        format!("Work area does not match the table type: '{wa}'"),
                     );
                 }
                 let v = self.read_row(row, e)?;
@@ -865,12 +873,12 @@ impl<'ctx> Codegen<'ctx> {
             LoopTarget::Assigning(fs) => {
                 let v = self.var(fs, line)?;
                 if !v.fs {
-                    return err(line, format!("ASSIGNING erwartet ein Feldsymbol: '{fs}'"));
+                    return err(line, format!("ASSIGNING expects a field symbol: '{fs}'"));
                 }
                 if v.ty != e.ty() {
                     return err(
                         line,
-                        format!("Feldsymbol passt nicht zum Tabellentyp: '{fs}'"),
+                        format!("Field symbol does not match the table type: '{fs}'"),
                     );
                 }
                 llvm(self.builder.build_store(v.slot, row))?;
@@ -878,7 +886,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         if let Some(filter) = filter {
             let Elem::Struct(structure) = e else {
-                return err(line, "LOOP WHERE benötigt strukturierte Tabellenzeilen");
+                return err(line, "LOOP WHERE requires structured table lines");
             };
             let layout = self.layouts[structure].clone();
             let Some(field_index) = layout
@@ -888,7 +896,7 @@ impl<'ctx> Codegen<'ctx> {
             else {
                 return err(
                     line,
-                    format!("LOOP WHERE: Komponente '{}' unbekannt", filter.component),
+                    format!("LOOP WHERE: component '{}' unknown", filter.component),
                 );
             };
             let field = llvm(self.builder.build_struct_gep(
@@ -1010,7 +1018,7 @@ impl<'ctx> Codegen<'ctx> {
                 let Ty::Ref(_) = ty else {
                     return err(
                         catch.line,
-                        format!("CATCH INTO erwartet Objektreferenz: '{target}'"),
+                        format!("CATCH INTO expects object reference: '{target}'"),
                     );
                 };
                 let object = self.call_ptr(self.rt.exception_object, &[])?;
@@ -1034,7 +1042,7 @@ impl<'ctx> Codegen<'ctx> {
         self.emit_block(cleanup)?;
         let target = outer_target.or(self.exit_fn).ok_or_else(|| CompileError {
             line,
-            message: "Unbehandelte Exception ohne Rücksprungziel".into(),
+            message: "Unhandled exception without jump target".into(),
         })?;
         self.br_if_open(target)?;
         self.builder.position_at_end(continuation);
@@ -1061,4 +1069,3 @@ impl<'ctx> Codegen<'ctx> {
             .collect()
     }
 }
-

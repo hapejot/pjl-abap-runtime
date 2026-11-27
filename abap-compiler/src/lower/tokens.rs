@@ -33,11 +33,7 @@ pub(super) fn parse_target(toks: &[Token], line: usize) -> Result<Target, Compil
                     attr: format!("{}~{}", word(owner), word(name)),
                 })
             } else {
-                Ok(Target::Var(format!(
-                    "{}=>{}",
-                    word(owner),
-                    word(name)
-                )))
+                Ok(Target::Var(format!("{}=>{}", word(owner), word(name))))
             }
         }
         [t] if t.kind == Kind::Word => Ok(Target::Var(word(t))),
@@ -49,35 +45,45 @@ pub(super) fn parse_target(toks: &[Token], line: usize) -> Result<Target, Compil
                 && is_num(len)
                 && r.is_punct(")") =>
         {
-            let off: usize = off.text.parse().or_else(|_| err(line, "Offset ungültig"))?;
-            let len: usize = len.text.parse().or_else(|_| err(line, "Länge ungültig"))?;
+            let off: usize = off.text.parse().or_else(|_| err(line, "Invalid offset"))?;
+            let len: usize = len.text.parse().or_else(|_| err(line, "Invalid length"))?;
             if len == 0 {
-                return err(line, "Teilfeldlänge muss größer 0 sein");
+                return err(line, "Substring length must be greater than 0");
             }
-            Ok(Target::Slice { name: word(t), off, len })
+            Ok(Target::Slice {
+                name: word(t),
+                off,
+                len,
+            })
         }
         // Teilfeld ohne Offset, auch für Feldsymbole: `name(len)` bzw. `<fs>(len)`
         [t, l, len, r]
-            if t.kind == Kind::Word
-                && l.is_punct("(")
-                && is_num(len)
-                && r.is_punct(")") =>
+            if t.kind == Kind::Word && l.is_punct("(") && is_num(len) && r.is_punct(")") =>
         {
-            let len: usize = len.text.parse().or_else(|_| err(line, "Länge ungültig"))?;
+            let len: usize = len.text.parse().or_else(|_| err(line, "Invalid length"))?;
             if len == 0 {
-                return err(line, "Teilfeldlänge muss größer 0 sein");
+                return err(line, "Substring length must be greater than 0");
             }
-            Ok(Target::Slice { name: word(t), off: 0, len })
+            Ok(Target::Slice {
+                name: word(t),
+                off: 0,
+                len,
+            })
         }
         [o, arrow, a] if o.kind == Kind::Word && arrow.is_punct("->") && a.kind == Kind::Word => {
-            Ok(Target::Attr { obj: word(o), attr: word(a) })
+            Ok(Target::Attr {
+                obj: word(o),
+                attr: word(a),
+            })
         }
         // Syntaktisch gültig, aber Zuweisung an verkettete Attribute ist noch nicht implementiert
-        _ if toks.iter().filter(|t| t.is_punct("->")).count() > 1 => err(
+        _ if toks.iter().filter(|t| t.is_punct("->")).count() > 1 => {
+            err(line, "Assignment to chained attribute not supported yet")
+        }
+        _ => err(
             line,
-            "Zuweisung an verkettetes Attribut wird noch nicht übersetzt",
+            "Target must be a field, a substring name+off(len) or an attribute obj->attr",
         ),
-        _ => err(line, "Ziel muss ein Feld, ein Teilfeld name+off(len) oder ein Attribut obj->attr sein"),
     }
 }
 
@@ -86,10 +92,10 @@ pub(super) fn single_operand(t: &Token, line: usize) -> Result<Expr, CompileErro
     match t.kind {
         Kind::Literal => match literal_content(&t.text) {
             Some(s) => Ok(Expr::Lit(s)),
-            None => err(line, format!("ungültiges Literal: {}", t.text)),
+            None => err(line, format!("Invalid literal: {}", t.text)),
         },
         Kind::Word => Ok(Expr::Var(word(t))),
-        _ => err(line, format!("ungültiger Operand: {}", t.text)),
+        _ => err(line, format!("Invalid operand: {}", t.text)),
     }
 }
 
@@ -109,13 +115,13 @@ pub(super) fn parse_args(toks: &[Token], line: usize) -> Result<Vec<Arg>, Compil
         let expr = match t.kind {
             Kind::Literal => match literal_content(&t.text) {
                 Some(s) => Expr::Lit(s),
-                None => return err(line, format!("ungültiges Literal: {}", t.text)),
+                None => return err(line, format!("Invalid literal: {}", t.text)),
             },
             Kind::Word if t.text.chars().all(|c| c.is_ascii_digit()) => {
-                Expr::Int(t.text.parse().or_else(|_| err(line, "Zahl zu groß"))?)
+                Expr::Int(t.text.parse().or_else(|_| err(line, "Number too large"))?)
             }
             Kind::Word => Expr::Var(word(t)),
-            _ => return err(line, format!("ungültiger Aktualparameter: {}", t.text)),
+            _ => return err(line, format!("Invalid actual parameter: {}", t.text)),
         };
         out.push(Arg { expr, changing });
     }
@@ -128,7 +134,7 @@ pub(super) fn expr_to_target(e: Expr, line: usize) -> Result<Target, CompileErro
         Expr::Var(n) => Ok(Target::Var(n)),
         Expr::Attr { obj, attr } => Ok(Target::Attr { obj, attr }),
         Expr::Slice { name, off, len } => Ok(Target::Slice { name, off, len }),
-        _ => err(line, "RECEIVING erwartet eine Variable als Ziel"),
+        _ => err(line, "RECEIVING expects a variable as target"),
     }
 }
 

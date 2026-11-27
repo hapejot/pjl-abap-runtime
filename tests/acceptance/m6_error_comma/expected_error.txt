@@ -1,1 +1,1 @@
-Komma ist in ABAP-Parameterlisten nicht erlaubt
+Comma is not allowed in ABAP parameter lists

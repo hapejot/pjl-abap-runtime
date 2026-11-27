@@ -1,0 +1,4 @@
+Die erwartete Ausgabe enthält Tabulatoren zwischen den Feldern (`a<TAB> <TAB>b`).
+ABAP gibt meines Wissens keine Tabulatoren aus. Die Erwartung ist verdächtig.
+Zu belegen über sap-specialist oder ABAP-Doku.
+Siehe doc/sprache.md, Abschnitt 7, Punkt 3.
