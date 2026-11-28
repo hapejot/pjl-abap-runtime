@@ -5,11 +5,26 @@ Bedienung über Dynpros (Terminal, crossterm). Am Ende schreibt das Programm ein
 
 Dateien in diesem Ordner:
 
-- `prog.abap`: Programm (Logik, Validierung, Bericht)
+- `prog.abap`: Programm (Schichten, siehe unten)
 - `prog.dynp`: Dynpros 0100 (Kunde), 0200 (Kontakt und Verkaufschance), 0300 (Bestätigung, Modalfenster)
 - `db.sql`: Tabellen mit Primärschlüssel und Startdaten (frei erfundene Beispieldaten)
-- `input.keys`, `expected.txt`, `expected_screen.txt`: Akzeptanzlauf
 - `zu-pruefen.txt`: Erwartungen, die nicht aus dem ABAP-Standard belegt sind
+
+Der Akzeptanzlauf liegt unter `tests/acceptance/m16_crm/`. Dort liegen Kopien von `prog.abap` und `prog.dynp`,
+dazu `input.keys` (Eingabeskript) und die erwarteten Ausgaben.
+
+## Aufbau des Programms
+
+- **Dynpro** (Module in `prog.abap`): nur PBO- und PAI-Module. Sie kopieren über `to_dynpro` und `from_dynpro`
+  zwischen den Dynpro-Feldern und der Maske und rufen das View-Model auf.
+- **View-Model** (`lcl_crm_view`): Zustand der Bildschirme und Entscheidungen zu den Tasten. Kein SQL.
+- **Service** (`lcl_crm_service`): Anwendungsfälle und Transaktionsgrenzen (`COMMIT WORK`, `ROLLBACK WORK`).
+- **Validierung** (`lcl_validator`): Prüfungen der Eingaben, Ausnahme `lcx_crm`.
+- **DAOs** (`lcl_dao_kunde`, `lcl_dao_kontakt`, `lcl_dao_chance`): das einzige SQL. Sie liefern einzelne Sätze.
+- **Bericht** (`lcl_report`): WRITE-Liste.
+
+Die DAOs sind konkrete Klassen, nicht Interfaces, und werden direkt erzeugt. Die Gründe und die offenen
+Feature-Requests stehen in `doc/feature-requests/` (FR-001 bis FR-004).
 
 ## Übersetzen
 
@@ -62,32 +77,37 @@ Die Anwendung läuft im Terminal (80 × 24). Mit F3 wird das Hauptbild verlassen
 
 ## Bedienung
 
+Es werden nur die Funktionstasten F1 bis F12 verwendet. F4 ist die Wertehilfe (SAP-Standard) und hat nur
+auf dem Feld Phase eine Wirkung.
+
 Hauptbild Kunde (0100):
 
 | Taste | Funktion |
 |---|---|
 | Eingabe (Enter) | Kundennummer geändert: diesen Kunden laden. Unbekannte Nummer: Neuanlage mit dieser Nummer |
-| F5 | Kontakte und Verkaufschancen des Kunden (Dynpro 0200) |
-| F7 / F8 | vorheriger / nächster Kunde |
-| F9 | neuer Kunde (Nummer vergibt das Programm) |
-| F11 | Sichern (Anlegen oder Ändern) |
-| F14 | Kunde löschen, mit Bestätigung. Kontakte und Verkaufschancen werden mit gelöscht |
-| F12 / Esc | Eingaben verwerfen |
+| F2 | Sichern (Anlegen oder Ändern) |
 | F3 | Zurück, Bericht |
+| F4 | Wertehilfe (keine Wirkung auf diesem Bild) |
+| F5 / F6 | vorheriger / nächster Kunde |
+| F7 | neuer Kunde (Nummer vergibt das Programm) |
+| F8 | Eingaben verwerfen |
+| F9 | Kunde löschen, mit Bestätigung. Kontakte und Verkaufschancen werden mit gelöscht |
+| F10 | Kontakte und Verkaufschancen des Kunden (Dynpro 0200) |
 
 Kontakte und Verkaufschancen (0200): Der obere Block ist der Kontakt, der untere die Verkaufschance.
 
 | Taste | Funktion |
 |---|---|
+| F2 | Kontakt löschen, mit Bestätigung |
+| F3 | zurück zum Kunden. Ungesicherte Eingaben gehen verloren |
+| F4 auf Phase | Wertehilfe: wechselt zwischen offen, gewonnen, verloren |
+| F5 / F6 | vorherige / nächste Verkaufschance |
 | F7 / F8 | vorheriger / nächster Kontakt |
 | F9 | neuer Kontakt |
-| F14 | Kontakt löschen, mit Bestätigung |
-| F5 / F6 | vorherige / nächste Verkaufschance |
 | F10 | neue Verkaufschance |
-| F15 | Verkaufschance löschen, mit Bestätigung |
 | F11 | Sichern: speichert die angezeigten Blöcke |
-| F4 auf Phase | Wertehilfe: wechselt zwischen offen, gewonnen, verloren |
-| F3 / F12 | zurück zum Kunden. Ungesicherte Eingaben gehen verloren |
+| F12 | Eingaben verwerfen, zurück zum Kunden |
+| F1 | Verkaufschance löschen, mit Bestätigung |
 
 Bestätigung (0300, Modalfenster): F5 Ja, F12 Nein.
 
@@ -108,6 +128,6 @@ fehlender Name, E-Mail ohne @, Wert 0, Phase ohne Abschlussdatum.
 
     cargo test -p abap-compiler --test acceptance
 
-Der Fall `m16_crm` führt den Ablauf aus `input.keys` aus und vergleicht Bericht und Gitterabzüge.
-Der Runner liest nur `prog.abap`, `db.sql`, `input.keys`, die `expected*.txt`-Dateien und `zu-pruefen.txt`.
+Der Fall `m16_crm` führt den Ablauf aus `input.keys` aus und vergleicht Bericht und Bildschirmabzüge.
+Der Runner liest nur `prog.abap`, `prog.dynp`, `db.sql`, `input.keys`, die `expected*.txt`-Dateien und `zu-pruefen.txt`.
 Diese README wird vom Runner nicht gelesen.
