@@ -19,8 +19,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -44,8 +44,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -69,8 +69,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -94,8 +94,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -119,8 +119,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -144,8 +144,8 @@ Kontakte und Verkaufschancen
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -169,8 +169,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Gespeichert.                                                                   
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -194,8 +194,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Gespeichert.                                                                   
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -219,8 +219,8 @@ Kontakte und Verkaufschancen
                                                                                 
  E-Mail muss ein @ enthalten.                                                   
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
 Eingabe prüfen                                                                  
 ----
 Kontakte und Verkaufschancen                                                    
@@ -244,8 +244,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Gespeichert.                                                                   
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -269,8 +269,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Wert muss groesser 0 sein.                                                     
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
 Eingabe prüfen                                                                  
 ----
 Kontakte und Verkaufschancen                                                    
@@ -294,8 +294,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Wert muss groesser 0 sein.                                                     
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
 Eingabe prüfen                                                                  
 ----
 Kontakte und Verkaufschancen                                                    
@@ -319,8 +319,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Abschlussdatum fehlt.                                                          
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
 Eingabe prüfen                                                                  
 ----
 Kontakte und Verkaufschancen                                                    
@@ -344,8 +344,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Gespeichert.                                                                   
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -369,8 +369,8 @@ Kontakte und Verkaufschancen
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -394,8 +394,8 @@ Kontakte und Verkaufschancen
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -419,8 +419,8 @@ Kontakte und Verkaufschancen
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -444,8 +444,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Verkaufschance gelöscht.                                                       
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -469,8 +469,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Verkaufschance gelöscht.                                                       
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 Kontakte und Verkaufschancen                                                    
@@ -494,8 +494,8 @@ Kontakte und Verkaufschancen
                                                                                 
  Kontakt gelöscht.                                                              
                                                                                 
-F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
-F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+F1 CLöschen  F2 KLöschen  F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt        
+F8 Kontakt>  F9 KNeu  F10 CNeu  F11 Sichern  F12 Abbruch                        
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -519,8 +519,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -544,8 +544,8 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----
 CRM: Kunde                                                                      
@@ -569,7 +569,7 @@ CRM: Kunde
                                                                                 
                                                                                 
                                                                                 
-F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
-F14 Löschen                                                                     
+F2 Sichern  F3 Zurück  F5 <Kunde  F6 Kunde>  F7 Neu  F8 Abbruch  F9 Löschen     
+F10 Kontakte                                                                    
                                                                                 
 ----

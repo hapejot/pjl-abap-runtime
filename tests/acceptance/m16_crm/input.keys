@@ -16,28 +16,28 @@ KEY DELETE
 TYPE '3'
 KEY ENTER
 SNAPSHOT
-' Blättern zurück: Kunde 2 (F7)
-KEY F7
+' Blättern zurück: Kunde 2 (F5)
+KEY F5
 SNAPSHOT
 ' Neuanlage: Kunde 4. Die Nummer vergibt das Programm.
-KEY F9
+KEY F7
 FIELD ZNAME
 TYPE 'Testfirma Sued'
 FIELD ZORT
 TYPE 'Stuttgart'
 FIELD ZBRANCHE
 TYPE 'Software'
-KEY F11
+KEY F2
 SNAPSHOT
-' Zurück zu Kunde 2 (F7 zweimal), Ort ändern
-KEY F7
-KEY F7
+' Zurück zu Kunde 2 (F5 zweimal), Ort ändern
+KEY F5
+KEY F5
 FIELD ZORT
 TYPE 'Koeln-Deutz'
-KEY F11
+KEY F2
 SNAPSHOT
-' Kontakte und Verkaufschancen von Kunde 2 (F5)
-KEY F5
+' Kontakte und Verkaufschancen von Kunde 2 (F10)
+KEY F10
 SNAPSHOT
 ' Kontakt 3 ändern: Telefon
 FIELD ZTELEFON
@@ -94,15 +94,15 @@ SNAPSHOT
 ' Verkaufschance 4 (verloren) wählen. Löschen mit Nein (F12), dann mit Ja (F5).
 KEY F5
 SNAPSHOT
-KEY SHIFT-F3
+KEY F1
 SNAPSHOT
 KEY F12
 SNAPSHOT
-KEY SHIFT-F3
+KEY F1
 KEY F5
 SNAPSHOT
 ' Kontakt 5 löschen (Ja)
-KEY SHIFT-F2
+KEY F2
 SNAPSHOT
 KEY F5
 SNAPSHOT
@@ -110,7 +110,7 @@ SNAPSHOT
 KEY F3
 SNAPSHOT
 ' Kunde 2 samt Kontakten und Verkaufschancen löschen (Bestätigung mit F5)
-KEY SHIFT-F2
+KEY F9
 SNAPSHOT
 KEY F5
 SNAPSHOT
