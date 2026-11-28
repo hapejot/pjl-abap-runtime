@@ -7,6 +7,7 @@ sample*
 .cargo
 zabapgit_standalone.prog.abap
 *.exe
+*.sqlite
 
 # Aus SAP-Systemen abgeleitete Metadaten: nicht einchecken (systemabhängig, lizenzrechtlich ungeklärt)
 libraries/
