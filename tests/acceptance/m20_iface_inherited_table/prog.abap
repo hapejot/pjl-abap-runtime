@@ -1,0 +1,29 @@
+REPORT ztest.
+INTERFACE lif_calc.
+  METHODS run RETURNING VALUE(rv) TYPE string.
+ENDINTERFACE.
+CLASS lcl_base DEFINITION.
+  PUBLIC SECTION.
+    INTERFACES lif_calc.
+ENDCLASS.
+CLASS lcl_base IMPLEMENTATION.
+  METHOD lif_calc~run.
+    rv = 'base'.
+  ENDMETHOD.
+ENDCLASS.
+CLASS lcl_child DEFINITION INHERITING FROM lcl_base.
+  PUBLIC SECTION.
+    METHODS extra.
+ENDCLASS.
+CLASS lcl_child IMPLEMENTATION.
+  METHOD extra.
+  ENDMETHOD.
+ENDCLASS.
+DATA lo TYPE REF TO lif_calc.
+DATA lc TYPE REF TO lcl_child.
+DATA lv TYPE string.
+START-OF-SELECTION.
+  CREATE OBJECT lc.
+  lo = lc.
+  lv = lo->run( ).
+  WRITE / lv.

@@ -292,29 +292,12 @@ impl<'ctx> Codegen<'ctx> {
                 self.open_dead_block()
             }
 
-            Stmt::Create { name, args, line } => {
-                let (slot, ty) = self.data(name, *line)?;
-                let Ty::Ref(c) = ty else {
-                    return err(
-                        *line,
-                        format!("CREATE OBJECT expects an object reference: '{name}'"),
-                    );
-                };
-                let st = self.classes[c].struct_idx;
-                let size = self.len(self.size_of(Ty::Struct(st)) as usize);
-                let obj = self.call_ptr(self.rt.obj_new, &[size.into()])?;
-                self.init_value(&self.builder, obj, Ty::Struct(st))?;
-                llvm(self.builder.build_store(slot, obj))?;
-                if self.has_method(c, "constructor") {
-                    self.emit_method_call(name, "constructor", args, None, *line)?;
-                } else if !args.is_empty() {
-                    return err(
-                        *line,
-                        format!("CREATE OBJECT: class has no constructor for '{name}'"),
-                    );
-                }
-                Ok(())
-            }
+            Stmt::Create {
+                name,
+                class,
+                args,
+                line,
+            } => self.emit_create(name, class.as_deref(), args, *line),
             Stmt::Assign {
                 target,
                 value,
@@ -419,7 +402,7 @@ impl<'ctx> Codegen<'ctx> {
                 let dst = self.dest(target, *line)?;
                 // CLEAR: Zahl 0, Zeichen Leerzeichen, String leer
                 match dst {
-                    Dest::Ref(p, _) => {
+                    Dest::Ref(p, _) | Dest::Iface(p, _) => {
                         llvm(self.builder.build_store(p, self.ptrt.const_null()))?;
                     }
                     Dest::Mem(p, i) => self.init_value(&self.builder, p, Ty::Struct(i))?,
@@ -450,6 +433,7 @@ impl<'ctx> Codegen<'ctx> {
             Stmt::Write {
                 newline,
                 value,
+                conversion,
                 line,
             } => {
                 if *newline {
@@ -461,7 +445,17 @@ impl<'ctx> Codegen<'ctx> {
                     return Ok(());
                 };
                 let v = self.eval(value, *line)?;
-                self.write_value(v, *line)
+                match (conversion.as_deref(), v) {
+                    (None, v) => self.write_value(v, *line),
+                    (Some("ALPHA"), Val::Chars(p, n)) => self.call_void(
+                        self.rt.write_convexit_alpha,
+                        &[p.into(), self.len(n).into()],
+                    ),
+                    (Some(routine), _) => err(
+                        *line,
+                        format!("Conversion routine '{routine}' needs a character field"),
+                    ),
+                }
             }
             Stmt::If {
                 branches,
@@ -615,7 +609,7 @@ impl<'ctx> Codegen<'ctx> {
     /// Gibt einen Wert aus; Objekte, Strukturen und Tabellen sind nicht ausgabefähig.
     pub(super) fn write_value(&mut self, v: Val<'ctx>, line: usize) -> CResult<()> {
         match v {
-            Val::Ref(..) => return err(line, "Object reference cannot be output"),
+            Val::Ref(..) | Val::Iface(..) => return err(line, "Object reference cannot be output"),
             Val::Mem(..) => return err(line, "Structure cannot be output (components only)"),
             Val::Table(_) => return err(line, "Internal table cannot be output"),
             Val::Int(i) => self.call_void(self.rt.write_int, &[i.into()])?,
@@ -638,15 +632,67 @@ impl<'ctx> Codegen<'ctx> {
         value: &Expr,
         line: usize,
     ) -> CResult<()> {
+        if let Some(name) = self.table_target_name(target) {
+            // Tabellenzuweisung: Zeilen der Quelle ersetzen den Inhalt des Ziels
+            let dst = self.table(&name, line)?.0;
+            let v = self.eval(value, line)?;
+            let Val::Table(src) = v else {
+                return err(
+                    line,
+                    format!("Internal table '{name}' can only be assigned a table"),
+                );
+            };
+            return self.call_void(self.rt.table_assign, &[dst.into(), src.into()]);
+        }
         let dst = self.dest(target, line)?;
         let v = self.eval(value, line)?;
         self.store(dst, v, line)
+    }
+
+    /// Name eines Schreibziels, wenn es eine interne Tabelle ist. Erzeugt keinen Code.
+    /// Suchreihenfolge wie in `data_base`: lokal, Attribut des Objekts, Programmvariable.
+    fn table_target_name(&self, target: &Target) -> Option<String> {
+        let Target::Var(name) = target else {
+            return None;
+        };
+        let ty = if let Some(v) = self.vars.get(name) {
+            v.ty
+        } else if let Some((_, c)) = self.self_ctx {
+            let layout = &self.layouts[self.classes[c].struct_idx];
+            layout.fields.iter().find(|(n, _)| n == name)?.1
+        } else {
+            self.globals.get(name)?.ty
+        };
+        matches!(ty, Ty::Table(_)).then(|| name.clone())
     }
 
     pub(super) fn store(&mut self, dst: Dest<'ctx>, v: Val<'ctx>, line: usize) -> CResult<()> {
         match dst {
             Dest::Ref(slot, c) => match v {
                 Val::Ref(obj, c2) if c == c2 => {
+                    llvm(self.builder.build_store(slot, obj))?;
+                    Ok(())
+                }
+                Val::Iface(..) => err(
+                    line,
+                    "Interface reference cannot be assigned to a class reference (CAST not supported yet)",
+                ),
+                _ => err(line, "Object reference does not match the target type"),
+            },
+            // Upcast: Objekt einer Klasse, die das Interface implementiert; Interface-Referenz nur gleichen Typs
+            Dest::Iface(slot, i) => match v {
+                Val::Ref(obj, c) if self.implements(c, i) => {
+                    llvm(self.builder.build_store(slot, obj))?;
+                    Ok(())
+                }
+                Val::Ref(_, c) => err(
+                    line,
+                    format!(
+                        "Class '{}' does not implement interface '{}'",
+                        self.classes[c].name, self.ifaces[i].name
+                    ),
+                ),
+                Val::Iface(obj, j) if i == j => {
                     llvm(self.builder.build_store(slot, obj))?;
                     Ok(())
                 }
@@ -686,7 +732,7 @@ impl<'ctx> Codegen<'ctx> {
                 _ => err(line, "Text cannot be assigned to an integer field"),
             },
             Dest::Chars(p, n) => match v {
-                Val::Ref(..) => err(
+                Val::Ref(..) | Val::Iface(..) => err(
                     line,
                     "Object reference cannot be assigned to a character field",
                 ),
@@ -700,7 +746,13 @@ impl<'ctx> Codegen<'ctx> {
                     self.rt.str_to_chars,
                     &[p.into(), self.len(n).into(), h.into()],
                 ),
-                Val::Int(_) | Val::Dec(_) => err(
+                // Ganze Zahl (FR-004): Ziffern und Vorzeichen nach der Regel aus FR-004, kein Fehler bei Überlauf
+                Val::Int(i) => self.call_void(
+                    self.rt.int_to_chars,
+                    &[p.into(), self.len(n).into(), i.into()],
+                ),
+                // Dezimalzahl -> Zeichenfeld: Regel nicht belegt, daher weiter nicht unterstützt
+                Val::Dec(_) => err(
                     line,
                     "Number cannot be assigned to a character field (not supported yet)",
                 ),
@@ -720,7 +772,7 @@ impl<'ctx> Codegen<'ctx> {
                         )
                     }
                     Val::Mem(..) => return err(line, "Structure cannot be assigned to a string"),
-                    Val::Ref(..) => {
+                    Val::Ref(..) | Val::Iface(..) => {
                         return err(line, "Object reference cannot be assigned to a string")
                     }
                     Val::Table(_) => return err(line, "Table cannot be assigned to a string"),
@@ -739,7 +791,9 @@ impl<'ctx> Codegen<'ctx> {
     ) -> CResult<()> {
         let merge = self.new_block("endif")?;
         for (cond, body) in branches {
-            let c = self.cond(cond, line)?;
+            let result = self.cond(cond, line);
+            let fallback = self.ctx.bool_type().const_zero();
+            let c = self.defer(result, fallback);
             let then = self.new_block("then")?;
             let next = self.new_block("elif")?;
             llvm(self.builder.build_conditional_branch(c, then, next))?;
@@ -767,8 +821,11 @@ impl<'ctx> Codegen<'ctx> {
             // Bedingung: subject = v1 OR subject = v2 ...
             let mut any: Option<IntValue<'ctx>> = None;
             for v in values {
-                let rhs = self.eval(v, line)?;
-                let eq = self.compare(CmpOp::Eq, subj, rhs, line)?;
+                let result = self
+                    .eval(v, line)
+                    .and_then(|rhs| self.compare(CmpOp::Eq, subj, rhs, line));
+                let fallback = self.ctx.bool_type().const_zero();
+                let eq = self.defer(result, fallback);
                 any = Some(match any {
                     None => eq,
                     Some(prev) => llvm(self.builder.build_or(prev, eq, "when_or"))?,
@@ -1149,5 +1206,97 @@ impl<'ctx> Codegen<'ctx> {
             })
             .map(|(index, _)| index as u64 + 1)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lower::parse_source;
+    use inkwell::context::Context;
+
+    /// Übersetzt bis zur Codeerzeugung und liefert die gemeldeten Fehlertexte (leer heißt Erfolg).
+    fn codegen_messages(src: &str) -> Vec<String> {
+        let ir = parse_source(src).unwrap_or_else(|e| panic!("{e:?}"));
+        let ctx = Context::create();
+        let mut cg = crate::codegen::Codegen::new(&ctx);
+        match cg.emit_program(&ir) {
+            Ok(()) => Vec::new(),
+            Err(errors) => errors.into_iter().map(|e| e.message).collect(),
+        }
+    }
+
+    #[test]
+    fn failed_call_in_if_condition_inside_case_reports_only_the_source_error() {
+        // Der Typfehler im IF-Zweig eines WHEN darf nicht zusätzlich als LLVM-Fehler (ohne Terminator) erscheinen.
+        let messages = codegen_messages(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS getp IMPORTING iv TYPE c RETURNING VALUE(rv) TYPE c LENGTH 1.\n\
+                 METHODS run.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD getp.\n\
+                 rv = iv.\n\
+               ENDMETHOD.\n\
+               METHOD run.\n\
+                 DATA ok_code TYPE sy-ucomm.\n\
+                 CASE ok_code.\n\
+                   WHEN 'SAVE'.\n\
+                     IF getp( ok_code ) = 'X'.\n\
+                       WRITE / 'x'.\n\
+                     ENDIF.\n\
+                   WHEN OTHERS.\n\
+                     WRITE / 'other'.\n\
+                 ENDCASE.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.\n\
+             DATA o TYPE REF TO worker.\n\
+             START-OF-SELECTION.\n\
+               CREATE OBJECT o.\n\
+               o->run( ).\n",
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m == "Type does not match formal parameter: 'ok_code'"),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .all(|m| !m.contains("LLVM") && !m.contains("terminator")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn valid_if_with_method_call_inside_case_translates() {
+        let messages = codegen_messages(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS get RETURNING VALUE(rv) TYPE c LENGTH 1.\n\
+                 METHODS run IMPORTING iv TYPE i.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD get.\n\
+                 rv = 'X'.\n\
+               ENDMETHOD.\n\
+               METHOD run.\n\
+                 CASE iv.\n\
+                   WHEN 2.\n\
+                     IF me->get( ) = 'X'.\n\
+                       WRITE / 'yes'.\n\
+                     ENDIF.\n\
+                   WHEN OTHERS.\n\
+                     WRITE / 'other'.\n\
+                 ENDCASE.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.\n\
+             DATA o TYPE REF TO worker.\n\
+             START-OF-SELECTION.\n\
+               CREATE OBJECT o.\n\
+               o->run( 2 ).\n",
+        );
+        assert!(messages.is_empty(), "{messages:?}");
     }
 }

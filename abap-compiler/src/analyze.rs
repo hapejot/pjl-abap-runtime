@@ -92,21 +92,21 @@ const FUNCTIONS: &[&str] = &[
     "matches",
 ];
 
-/// Parameter der Kommandozeile.
+/// Command-line parameters.
 #[derive(Debug, Args)]
 pub struct Options {
-    /// ABAP-Programm, das übersetzt und ausgewertet wird
+    /// ABAP program to translate and analyze
     pub input: PathBuf,
-    /// Vollständigen Bericht als JSON in diese Datei schreiben
+    /// Write the full report as JSON to this file
     #[arg(long, value_name = "FILE")]
     pub json: Option<PathBuf>,
-    /// Anzahl der Namen, die in der Übersicht gezeigt werden
+    /// Number of names shown in the overview
     #[arg(long, default_value_t = 15)]
     pub top: usize,
-    /// Bibliothek mit bekannten externen Objekten (JSON, wiederholbar)
+    /// Library with known external objects (JSON, repeatable)
     #[arg(long = "library", value_name = "FILE")]
     pub library: Vec<PathBuf>,
-    /// Objekte ohne Quelle in diese Bibliothek-Datei (JSON) schreiben
+    /// Write objects without source to this library file (JSON)
     #[arg(long = "unknown-out", value_name = "FILE")]
     pub unknown_out: Option<PathBuf>,
 }

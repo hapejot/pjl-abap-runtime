@@ -39,6 +39,15 @@ pub fn parse_source(src: &str) -> Result<Ir, Vec<CompileError>> {
     lower_program(&prog)
 }
 
+/// Wie `parse_source`, aber mit DDIC-Definitionen (Datenelemente, Strukturen, Konvertierungsroutinen).
+pub fn parse_source_with(src: &str, ddic: &Ddic) -> Result<Ir, Vec<CompileError>> {
+    let prog = parse_l1(src);
+    for e in prog.errors.iter() {
+        error!("L1 Error: {} {}", e.line, e.message);
+    }
+    parse_l2_program(&prog, ddic)
+}
+
 /// Übersetzt ein bereits geparstes Programm (z.B. mit aufgelösten Includes) in die IR.
 pub fn lower_program(prog: &Program) -> Result<Ir, Vec<CompileError>> {
     parse_l2_program(prog, &Ddic::default())
@@ -93,11 +102,20 @@ struct Lowerer {
     /// Methodensignaturen je Klasse (Index in `classes`), aus der Definition
     sigs: Vec<HashMap<String, MethodSig>>,
     interfaces: HashMap<String, HashMap<String, MethodSig>>,
+    /// Interfaces in Definitionsreihenfolge (siehe `Ir::interfaces`)
+    iface_defs: Vec<InterfaceDef>,
+    /// Name (klein) -> Index in `iface_defs`
+    iface_index: HashMap<String, usize>,
     interface_fields: HashMap<String, HashMap<String, Ty>>,
     constants: HashMap<String, Expr>,
     external_types: Vec<String>,
     external_type_indices: HashMap<String, usize>,
     data_types: HashMap<String, Ty>,
+    /// Konvertierungsroutinen der DDIC-Datenelemente (Element klein -> Routine groß, FR-005)
+    ddic_conversions: HashMap<String, String>,
+    /// Konvertierungsroutine je Variable (Name klein), für `WRITE` (FR-005). Nur Variablen mit
+    /// `DATA ... TYPE <Datenelement>` und einer Domäne mit Routine.
+    variable_conversions: HashMap<String, String>,
     scope: Option<String>,
     /// Externe Oberklasse je Klasse; ein nicht auflösbarer LIKE-Name ist ein Attribut dieser Oberklasse
     external_parents: HashMap<String, String>,
@@ -135,6 +153,8 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         classes: Vec::new(),
         sigs: Vec::new(),
         interfaces: HashMap::new(),
+        iface_defs: Vec::new(),
+        iface_index: HashMap::new(),
         interface_fields: HashMap::new(),
         constants: HashMap::from([
             ("abap_true".to_string(), Expr::Lit("X".into())),
@@ -143,6 +163,8 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         external_types: Vec::new(),
         external_type_indices: HashMap::new(),
         data_types: HashMap::new(),
+        ddic_conversions: HashMap::new(),
+        variable_conversions: HashMap::new(),
         scope: None,
         external_parents: HashMap::new(),
         dynamic_types: Vec::new(),
@@ -290,6 +312,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         forms,
         structs: lw.structs,
         classes: lw.classes,
+        interfaces: lw.iface_defs,
         constants: lw.constants,
         dependencies: lw.external_types,
         dynamic_types: lw.dynamic_types,
@@ -450,6 +473,9 @@ impl Lowerer {
         for (name, t) in &ddic.elements {
             self.names.insert(name.clone(), ty(t));
         }
+        for (name, routine) in &ddic.conversions {
+            self.ddic_conversions.insert(name.clone(), routine.clone());
+        }
         for (name, fields) in &ddic.structs {
             let fields: Vec<(String, Ty)> =
                 fields.iter().map(|(f, t)| (f.clone(), ty(t))).collect();
@@ -475,7 +501,7 @@ impl Lowerer {
 #[cfg(test)]
 mod tests {
     use super::parse_source;
-    use crate::lower::{ClassParent, InterfaceRef};
+    use crate::lower::{ClassParent, Elem, InterfaceRef, Ty};
 
     #[test]
     fn lowers_initialization_before_start_of_selection() {
@@ -728,6 +754,102 @@ mod tests {
     }
 
     #[test]
+    fn accepts_exporting_table_parameter_as_table_type() {
+        let ir = parse_source(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS load EXPORTING et TYPE TABLE OF i.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD load.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.",
+        )
+        .unwrap();
+
+        let param = &ir.classes[0].methods[0].params[0];
+        assert_eq!(param.name, "et");
+        assert!(matches!(param.ty, Ty::Table(Elem::Int)), "{param:?}");
+    }
+
+    #[test]
+    fn accepts_importing_table_parameter_as_table_type() {
+        let ir = parse_source(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS run IMPORTING it TYPE STANDARD TABLE OF i WITH DEFAULT KEY.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD run.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.",
+        )
+        .unwrap();
+
+        let param = &ir.classes[0].methods[0].params[0];
+        assert_eq!(param.name, "it");
+        assert!(matches!(param.ty, Ty::Table(Elem::Int)), "{param:?}");
+    }
+
+    #[test]
+    fn accepts_table_form_parameter_as_table_type() {
+        let ir = parse_source(
+            "FORM show USING it TYPE TABLE OF i.\n\
+             ENDFORM.",
+        )
+        .unwrap();
+
+        let param = &ir.forms[0].params[0];
+        assert_eq!(param.name, "it");
+        assert!(matches!(param.ty, Ty::Table(Elem::Int)), "{param:?}");
+    }
+
+    #[test]
+    fn accepts_table_return_value_as_table_type() {
+        let ir = parse_source(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS load RETURNING VALUE(rt) TYPE TABLE OF i.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD load.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.",
+        )
+        .unwrap();
+
+        let ret = ir.classes[0].methods[0].ret.as_ref().unwrap();
+        assert_eq!(ret.name, "rt");
+        assert_eq!(ret.ty, Ty::Table(Elem::Int));
+    }
+
+    #[test]
+    fn system_field_type_is_the_same_for_parameter_and_declaration() {
+        let ir = parse_source(
+            "CLASS worker DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS check IMPORTING iv TYPE sy-ucomm.\n\
+             ENDCLASS.\n\
+             CLASS worker IMPLEMENTATION.\n\
+               METHOD check.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.\n\
+             DATA ok_code TYPE sy-ucomm.",
+        )
+        .unwrap();
+
+        assert_eq!(
+            ir.classes[0].methods[0].params[0].ty,
+            crate::lower::Ty::Char(crate::dynpro::UCOMM_LENGTH)
+        );
+        assert!(ir.stmts.iter().any(|s| matches!(
+            s,
+            crate::lower::Stmt::Data { name, ty: crate::lower::Ty::Char(70), .. }
+                if name == "ok_code"
+        )));
+    }
+
+    #[test]
     fn accepts_like_parameter_as_external_type() {
         let ir = parse_source(
             "CLASS worker DEFINITION.\n\
@@ -855,6 +977,62 @@ mod tests {
             crate::lower::Stmt::Create { name, args, .. }
                 if name == "object" && args.len() == 1
         )));
+    }
+
+    #[test]
+    fn interface_methods_are_qualified_and_sorted_with_sub_interfaces() {
+        let ir = parse_source(
+            "INTERFACE if_base.\n\
+               METHODS zeta.\n\
+               METHODS alpha.\n\
+             ENDINTERFACE.\n\
+             INTERFACE if_top.\n\
+               INTERFACES if_base.\n\
+               METHODS mid.\n\
+             ENDINTERFACE.",
+        )
+        .unwrap();
+
+        let names = |i: usize| -> Vec<String> {
+            ir.interfaces[i]
+                .methods
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        };
+        assert_eq!(ir.interfaces[0].name, "if_base");
+        assert_eq!(names(0), ["if_base~alpha", "if_base~zeta"]);
+        assert_eq!(ir.interfaces[1].name, "if_top");
+        assert_eq!(names(1), ["if_base~alpha", "if_base~zeta", "if_top~mid"]);
+        assert_eq!(ir.interfaces[1].parents, vec![0]);
+    }
+
+    #[test]
+    fn lowers_create_with_type_clause_and_arguments() {
+        let ir = parse_source(
+            "CLASS item DEFINITION.\n\
+               PUBLIC SECTION.\n\
+                 METHODS constructor IMPORTING value TYPE i.\n\
+             ENDCLASS.\n\
+             CLASS item IMPLEMENTATION.\n\
+               METHOD constructor.\n\
+               ENDMETHOD.\n\
+             ENDCLASS.\n\
+             DATA object TYPE REF TO item.\n\
+             CREATE OBJECT object TYPE Item EXPORTING value = 4.\n\
+             CREATE OBJECT object.",
+        )
+        .unwrap();
+
+        let creates: Vec<(Option<String>, usize)> = ir
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                crate::lower::Stmt::Create { class, args, .. } => Some((class.clone(), args.len())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(creates, vec![(Some("item".to_string()), 1), (None, 0)]);
     }
 
     #[test]
@@ -1192,5 +1370,44 @@ INCLUDE zinc.
              ENDLOOP.",
         )
         .expect("LIKE on field symbol must be resolvable");
+    }
+
+    /// DDIC mit einem Datenelement, dessen Domäne die Routine ALPHA hat (synthetisch, FR-005).
+    fn alpha_ddic(routine: &str) -> crate::ddic::Ddic {
+        crate::ddic::Ddic {
+            structs: Vec::new(),
+            elements: vec![("zkonv_nr".into(), crate::ddic::DdicType::Char(18))],
+            conversions: vec![("zkonv_nr".into(), routine.into())],
+            skipped: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn write_of_variable_typed_by_domain_with_routine_carries_the_routine() {
+        let src = "REPORT zt.\nDATA lv TYPE zkonv_nr.\nSTART-OF-SELECTION.\n  WRITE lv.\n";
+        let ir = super::parse_source_with(src, &alpha_ddic("ALPHA")).expect("ALPHA translates");
+        assert!(format!("{:?}", ir.stmts).contains("conversion: Some(\"ALPHA\")"));
+    }
+
+    #[test]
+    fn write_of_variable_without_domain_routine_has_no_conversion() {
+        let src = "REPORT zt.\nDATA lv TYPE c LENGTH 18.\nSTART-OF-SELECTION.\n  WRITE lv.\n";
+        let ir =
+            super::parse_source_with(src, &alpha_ddic("ALPHA")).expect("plain char translates");
+        assert!(format!("{:?}", ir.stmts).contains("conversion: None"));
+    }
+
+    #[test]
+    fn unknown_conversion_routine_of_domain_is_a_translation_error() {
+        let src = "REPORT zt.\nDATA lv TYPE zkonv_nr.\n";
+        let Err(errors) = super::parse_source_with(src, &alpha_ddic("ZZUNBEKANNT")) else {
+            panic!("unknown conversion routine must not translate");
+        };
+        assert!(
+            errors.iter().any(|e| e.to_string().contains(
+                "Conversion routine 'ZZUNBEKANNT' of data element 'zkonv_nr' is not supported"
+            )),
+            "{errors:?}"
+        );
     }
 }

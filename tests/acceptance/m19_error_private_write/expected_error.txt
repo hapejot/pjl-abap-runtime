@@ -1,0 +1,1 @@
+Attribute 'mv_secret' is PRIVATE in class 'base' and not visible here

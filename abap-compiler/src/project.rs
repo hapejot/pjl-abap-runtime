@@ -292,6 +292,29 @@ mod tests {
     }
 }
 
+/// DDIC-Definitionen (TABL, DTEL, DOMA) aus einem Verzeichnis mit abapGit-XML-Dateien (`--ddic`).
+/// Nur die Dateien unmittelbar in diesem Verzeichnis, sortiert nach Dateiname.
+pub fn load_ddic_dir(dir: &Path) -> Result<Ddic, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let name = p.to_string_lossy();
+            name.ends_with(".tabl.xml")
+                || name.ends_with(".dtel.xml")
+                || name.ends_with(".doma.xml")
+        })
+        .collect();
+    paths.sort();
+    let mut files = Vec::new();
+    for path in paths {
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        files.push((path.to_string_lossy().to_string(), text));
+    }
+    Ok(ddic::from_files(&files))
+}
+
 /// DDIC-Definitionen (TABL, DTEL, DOMA) eines ZIP-Exports.
 pub fn load_ddic(zip_path: &Path) -> Result<Ddic, String> {
     let file = File::open(zip_path).map_err(|e| format!("{}: {e}", zip_path.display()))?;

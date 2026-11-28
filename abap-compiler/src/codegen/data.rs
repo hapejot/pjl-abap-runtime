@@ -116,6 +116,12 @@ impl<'ctx> Codegen<'ctx> {
             return err(line, format!("'{name}' is not an object reference"));
         };
         let obj = llvm(self.builder.build_load(self.ptrt, slot, "obj"))?.into_pointer_value();
+        self.check_bound_object(obj)?;
+        Ok((obj, c))
+    }
+
+    /// Laufzeitfehler (unbound), wenn die Objektreferenz initial ist. Sonst läuft der Code weiter.
+    pub(super) fn check_bound_object(&self, obj: PointerValue<'ctx>) -> CResult<()> {
         let is_null = llvm(self.builder.build_is_null(obj, "obj_null"))?;
         let bad = self.new_block("unbound")?;
         let ok = self.new_block("bound")?;
@@ -124,10 +130,12 @@ impl<'ctx> Codegen<'ctx> {
         self.call_void(self.rt.unbound, &[])?;
         llvm(self.builder.build_unreachable())?;
         self.builder.position_at_end(ok);
-        Ok((obj, c))
+        Ok(())
     }
 
     /// Attribut eines Objekts: Zeiger auf das Feld und dessen Typ.
+    /// `attr` darf Komponenten enthalten (`feld-komp`, auch verschachtelt). Die Sichtbarkeit gilt
+    /// für das Attribut selbst, bevor auf die Komponenten zugegriffen wird.
     pub(super) fn field_of(
         &self,
         obj: PointerValue<'ctx>,
@@ -135,27 +143,111 @@ impl<'ctx> Codegen<'ctx> {
         attr: &str,
         line: usize,
     ) -> CResult<(PointerValue<'ctx>, Ty)> {
+        let mut parts = attr.split('-');
+        let first = parts.next().unwrap_or(attr);
         let layout = self.layouts[self.classes[c].struct_idx].clone();
-        let Some(k) = layout.fields.iter().position(|(n, _)| n == attr) else {
+        let Some(k) = layout.fields.iter().position(|(n, _)| n == first) else {
             if self.classes[c].external_parent.is_some() {
                 return Ok((obj, Ty::External(0)));
             }
             return err(line, format!("Attribute '{attr}' unknown"));
         };
-        let fp = llvm(
+        self.check_attr_access(c, first, line)?;
+        let mut fp = llvm(
             self.builder
                 .build_struct_gep(layout.st, obj, k as u32, "attr"),
         )?;
-        Ok((fp, layout.fields[k].1))
+        let mut fty = layout.fields[k].1;
+        let mut owner = first;
+        for field in parts {
+            if matches!(fty, Ty::External(_)) {
+                return Ok((fp, fty));
+            }
+            let Ty::Struct(i) = fty else {
+                return err(
+                    line,
+                    format!("'{owner}' is not a structure, component '{field}' cannot be accessed"),
+                );
+            };
+            let sub = self.layouts[i].clone();
+            let Some(j) = sub.fields.iter().position(|(n, _)| n == field) else {
+                return err(line, format!("Component '{field}' unknown in '{owner}'"));
+            };
+            fp = llvm(self.builder.build_struct_gep(sub.st, fp, j as u32, "comp"))?;
+            fty = sub.fields[j].1;
+            owner = field;
+        }
+        Ok((fp, fty))
+    }
+
+    /// Sichtbarkeit eines Attributs der Klasse `c` (statischer Typ der Referenz) gegen den Ort des Zugriffs.
+    /// Festlegung (doc/sprache.md, Abschnitt 5c): PRIVATE nur in der deklarierenden Klasse. PROTECTED in der
+    /// deklarierenden Klasse und ihren Unterklassen, und nur über eine Referenz, deren Typ die zugreifende
+    /// Klasse oder eine Unterklasse davon ist. Außerhalb einer Methode gilt jeder Zugriff als fremd.
+    pub(super) fn check_attr_access(&self, c: usize, attr: &str, line: usize) -> CResult<()> {
+        let mut declaring = None;
+        let mut current = Some(c);
+        while let Some(k) = current {
+            if let Some((_, vis)) = self.classes[k]
+                .attr_visibility
+                .iter()
+                .find(|(n, _)| n == attr)
+            {
+                declaring = Some((k, *vis));
+                break;
+            }
+            current = self.classes[k].parent;
+        }
+        let Some((owner, vis)) = declaring else {
+            return Ok(());
+        };
+        use crate::inspect::abap::Visibility;
+        let label = match vis {
+            Visibility::Public => return Ok(()),
+            Visibility::Protected => "PROTECTED",
+            Visibility::Private => "PRIVATE",
+        };
+        let allowed = match (vis, self.routine_class) {
+            (_, None) => false,
+            (Visibility::Private, Some(k)) => k == owner,
+            (Visibility::Protected, Some(k)) => {
+                self.derives_from(k, owner) && self.derives_from(c, k)
+            }
+            (Visibility::Public, _) => true,
+        };
+        if allowed {
+            Ok(())
+        } else {
+            err(
+                line,
+                format!(
+                    "Attribute '{attr}' is {label} in class '{}' and not visible here",
+                    self.classes[owner].name
+                ),
+            )
+        }
+    }
+
+    /// Wahr, wenn Klasse `k` gleich `base` ist oder davon erbt.
+    pub(super) fn derives_from(&self, k: usize, base: usize) -> bool {
+        let mut current = Some(k);
+        while let Some(i) = current {
+            if i == base {
+                return true;
+            }
+            current = self.classes[i].parent;
+        }
+        false
     }
 
     /// Handle einer internen Tabelle und ihr Zeilentyp.
+    /// Der Speicherplatz des Namens enthält das Handle; Parameter und RETURNING-Werte sind Feldsymbole,
+    /// Tabellenattribute liegen im Objekt. `data_base` löst alle drei Fälle auf.
     pub(super) fn table(&self, name: &str, line: usize) -> CResult<(PointerValue<'ctx>, Elem)> {
-        let v = self.var(name, line)?;
-        match (v.ty, v.fs) {
-            (Ty::Table(e), false) => {
-                let h =
-                    llvm(self.builder.build_load(self.ptrt, v.slot, "tab"))?.into_pointer_value();
+        let (p, ty) = self.data_base(name, line)?;
+        match ty {
+            Ty::Table(e) => {
+                let h = llvm(self.builder.build_load(self.ptrt, p, "tab"))?.into_pointer_value();
                 Ok((h, e))
             }
             _ => err(line, format!("'{name}' is not an internal table")),
@@ -211,6 +303,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Table(_) => err(line, "Table cannot be assigned directly"),
             Ty::Struct(i) => Ok(Dest::Mem(p, i)),
             Ty::Ref(c) => Ok(Dest::Ref(p, c)),
+            Ty::Iface(i) => Ok(Dest::Iface(p, i)),
             Ty::External(_) => Ok(Dest::Str(p)),
         }
     }
@@ -257,6 +350,10 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Ref(c) => Ok(Val::Ref(
                 llvm(self.builder.build_load(self.ptrt, p, "ref"))?.into_pointer_value(),
                 c,
+            )),
+            Ty::Iface(i) => Ok(Val::Iface(
+                llvm(self.builder.build_load(self.ptrt, p, "iface"))?.into_pointer_value(),
+                i,
             )),
             Ty::External(_) => Ok(Val::Str(
                 llvm(self.builder.build_load(self.ptrt, p, "external"))?.into_pointer_value(),

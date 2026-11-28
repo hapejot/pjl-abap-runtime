@@ -1,0 +1,25 @@
+REPORT ztest.
+CLASS inner DEFINITION.
+  PUBLIC SECTION.
+    METHODS value RETURNING VALUE(r) TYPE i.
+ENDCLASS.
+CLASS inner IMPLEMENTATION.
+  METHOD value.
+    r = 7.
+  ENDMETHOD.
+ENDCLASS.
+CLASS outer DEFINITION.
+  PUBLIC SECTION.
+    DATA mo_inner TYPE REF TO inner.
+ENDCLASS.
+CLASS outer IMPLEMENTATION.
+ENDCLASS.
+DATA o TYPE REF TO outer.
+DATA lo_in TYPE REF TO inner.
+DATA x TYPE i.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  CREATE OBJECT lo_in.
+  o->mo_inner = lo_in.
+  x = o->mo_inner->value( ).
+  WRITE / x.

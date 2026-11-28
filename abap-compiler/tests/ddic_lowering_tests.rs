@@ -12,6 +12,7 @@ fn ddic() -> Ddic {
             ],
         )],
         elements: vec![("zmenge".to_string(), DdicType::Int)],
+        conversions: vec![],
         skipped: vec![],
     }
 }

@@ -6,6 +6,7 @@
 //! - `input.keys` und `expected_screen.txt`: Dynpro-Fälle. Eingabeskript und Gitterabzüge der Headless-Laufzeit
 //! - `db.sql`: Datenbank-Fall. Die Datenbank wird vor der Übersetzung angelegt und mit `--db-config` geprüft
 //! - `db-config.toml`: Konfiguration, die `abapc` mit `--db-config` prüft (ohne `db.sql`)
+//! - `ddic/`: DDIC-Fall. Verzeichnis mit abapGit-XML (`*.doma.xml`, `*.dtel.xml`, `*.tabl.xml`), geht an `abapc --ddic`
 //! - `zu-pruefen.txt`: Erwartung, die gegen den ABAP-Standard noch nicht belegt ist (nur Hinweis im Bericht)
 
 use std::fs;
@@ -89,6 +90,10 @@ fn run_case(dir: &Path, work: &Path) -> Result<(), String> {
         .arg(&exe)
         .arg("--emit-ir")
         .arg(&ll);
+    // DDIC-Fall: `ddic/` enthält abapGit-XML (DOMA, DTEL, TABL) als synthetische Testdaten
+    if dir.join("ddic").is_dir() {
+        compile_command.arg("--ddic").arg(dir.join("ddic"));
+    }
     if let Some(path) = &check_config {
         compile_command.arg("--db-config").arg(path);
     }

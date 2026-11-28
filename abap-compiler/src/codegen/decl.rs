@@ -108,7 +108,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Int => self.i32t.const_zero().into(),
             Ty::Char(n) => self.const_chars("", n).into(),
             Ty::Packed { bytes, .. } => self.packed_zero(bytes).into(),
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) | Ty::Dynamic => {
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::Iface(_) | Ty::External(_) | Ty::Dynamic => {
                 self.ptrt.const_null().into()
             }
             Ty::Struct(i) => self.layouts[i].st.const_zero().into(),

@@ -160,14 +160,17 @@ impl<'ctx> Codegen<'ctx> {
             None => return err(m.line, "Method not declared"),
         };
         let ret = m.ret.as_ref().map(|r| (r.name.as_str(), r.ty));
-        self.emit_routine(
+        self.routine_class = Some(ci);
+        let result = self.emit_routine(
             func,
             &m.params,
             &m.body,
             m.line,
             (!m.is_static).then_some(ci),
             ret,
-        )
+        );
+        self.routine_class = None;
+        result
     }
 
     /// PERFORM: Aktualparameter per Referenz übergeben; Literale werden in Temporäre kopiert.
@@ -225,12 +228,34 @@ impl<'ctx> Codegen<'ctx> {
                     .cloned()
                     .map(|method| (method, class_idx))
             });
+        // Interface-Referenz: Aufruf über die Methodentabelle des Objekts
+        if static_call.is_none() {
+            if let Some((obj, i)) = self.iface_object(recv, line)? {
+                return self.emit_iface_call(obj, i, method, args, line);
+            }
+        }
         let (object, c, inherited) = if let Some((method, class_idx)) = &static_call {
             (None, *class_idx, Some(method.clone()))
         } else {
             let (object, class_idx) = self.object(recv, line)?;
             (Some(object), class_idx, None)
         };
+        self.emit_call_on(object, c, inherited, method, args, line)
+    }
+
+    /// Methodenaufruf auf einem aufgelösten Ziel: Objektzeiger (None bei statischen Aufrufen),
+    /// Klassenindex des Ziels und, bei statischen Aufrufen, die gefundene Methode.
+    /// Eine Methode mit `inherited` ist statisch, sonst Instanzmethode.
+    pub(super) fn emit_call_on(
+        &mut self,
+        object: Option<PointerValue<'ctx>>,
+        c: usize,
+        inherited: Option<MethodInfo<'ctx>>,
+        method: &str,
+        args: &[NamedArg],
+        line: usize,
+    ) -> CResult<Option<Val<'ctx>>> {
+        let is_static = inherited.is_some();
         let resolved_method = self.classes[c]
             .aliases
             .get(method)
@@ -240,9 +265,11 @@ impl<'ctx> Codegen<'ctx> {
         let mut class = Some(c);
         let mut mi = inherited;
         while let Some(class_idx) = class {
-            if let Some(found) = self.classes[class_idx].methods.iter().find(|candidate| {
-                candidate.name == method && candidate.is_static == static_call.is_some()
-            }) {
+            if let Some(found) = self.classes[class_idx]
+                .methods
+                .iter()
+                .find(|candidate| candidate.name == method && candidate.is_static == is_static)
+            {
                 mi = Some(found.clone());
                 break;
             }
@@ -255,7 +282,7 @@ impl<'ctx> Codegen<'ctx> {
             Some(object) => vec![object.into()],
             None => Vec::new(),
         };
-        ptrs.extend(self.bind_method_args(&mi, args, method, line)?);
+        ptrs.extend(self.bind_method_args(&mi.pnames, &mi.params, method, args, line)?);
         match mi.ret {
             None => {
                 self.call_void(mi.f, &ptrs)?;
@@ -275,12 +302,13 @@ impl<'ctx> Codegen<'ctx> {
     /// Nicht belegte Parameter erhalten ihren Initialwert.
     pub(super) fn bind_method_args(
         &mut self,
-        mi: &MethodInfo<'ctx>,
-        args: &[NamedArg],
+        pnames: &[String],
+        params: &[(Ty, bool)],
         method: &str,
+        args: &[NamedArg],
         line: usize,
     ) -> CResult<Vec<BasicMetadataValueEnum<'ctx>>> {
-        let n = mi.params.len();
+        let n = params.len();
         let mut slots: Vec<Option<(Expr, Option<bool>)>> = vec![None; n];
 
         let has_named = args.iter().any(|a| a.name.is_some());
@@ -292,7 +320,7 @@ impl<'ctx> Codegen<'ctx> {
             );
         }
         if has_positional {
-            if args.len() > 1 || n != 1 || mi.params[0].1 {
+            if args.len() > 1 || n != 1 || params[0].1 {
                 return err(
                     line,
                     format!("'{method}': parameters must be named (name = value)"),
@@ -302,7 +330,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         for a in args.iter().filter(|a| a.name.is_some()) {
             let pname = a.name.as_deref().unwrap_or("");
-            let Some(i) = mi.pnames.iter().position(|x| x == pname) else {
+            let Some(i) = pnames.iter().position(|x| x == pname) else {
                 return err(line, format!("'{method}': parameter '{pname}' unknown"));
             };
             if slots[i].is_some() {
@@ -315,14 +343,14 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         let mut ptrs = Vec::new();
-        for (i, (ty, changing)) in mi.params.iter().enumerate() {
+        for (i, (ty, changing)) in params.iter().enumerate() {
             match slots[i].clone() {
                 Some((e, kw)) => {
                     if let Some(k) = kw {
                         if k != *changing {
                             return err(
                                 line,
-                                format!("'{method}': EXPORTING/CHANGING does not match the declaration of '{}'", mi.pnames[i]),
+                                format!("'{method}': EXPORTING/CHANGING does not match the declaration of '{}'", pnames[i]),
                             );
                         }
                     }
@@ -366,7 +394,10 @@ impl<'ctx> Codegen<'ctx> {
                     return Ok(tmp);
                 }
                 let (p, t) = self.data(n, line)?;
-                if t != ty {
+                // Klassenreferenz an einen Interface-Parameter (Upcast). Bei CHANGING gilt Typgleichheit.
+                let upcast = !changing
+                    && matches!((ty, t), (Ty::Iface(i), Ty::Ref(c)) if self.implements(c, i));
+                if t != ty && !upcast {
                     return err(line, format!("Type does not match formal parameter: '{n}'"));
                 }
                 Ok(p)
@@ -374,6 +405,13 @@ impl<'ctx> Codegen<'ctx> {
             other => {
                 if changing {
                     return err(line, "CHANGING expects a variable");
+                }
+                // Tabellen werden nur als Variable übergeben: nur so ist der Zeilentyp prüfbar
+                if matches!(ty, Ty::Table(_)) {
+                    return err(
+                        line,
+                        "Internal table argument must be a variable (not supported yet)",
+                    );
                 }
                 let tmp = llvm(self.builder.build_alloca(self.temp_type(ty), "arg_tmp"))?;
                 let v = self.eval(other, line)?;

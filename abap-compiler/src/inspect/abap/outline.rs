@@ -72,7 +72,7 @@ pub fn outline(prog: &Program) -> String {
                     dump_items(&mut out, &m.body, 2);
                 }
                 if !c.other.is_empty() {
-                    out.push_str("  (sonstiges)\n");
+                    out.push_str("  (other)\n");
                     dump_items(&mut out, &c.other, 2);
                 }
             }

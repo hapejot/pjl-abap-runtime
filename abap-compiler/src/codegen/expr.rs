@@ -18,7 +18,8 @@ impl<'ctx> Codegen<'ctx> {
             }
             Cond::Assigned(value) => self.is_assigned(value, line),
             Cond::Bound(value) => {
-                let Val::Ref(pointer, _) = self.eval(value, line)? else {
+                let (Val::Ref(pointer, _) | Val::Iface(pointer, _)) = self.eval(value, line)?
+                else {
                     return err(line, "IS BOUND expects an object reference");
                 };
                 let is_null = llvm(self.builder.build_is_null(pointer, "bound_null"))?;
@@ -236,7 +237,7 @@ impl<'ctx> Codegen<'ctx> {
             Val::Chars(p, n) => self.call_ptr(self.rt.str_new, &[p.into(), self.len(n).into()]),
             Val::Int(_) | Val::Dec(_) => err(line, format!("Number cannot be {what} (text only)")),
             Val::Mem(..) => err(line, format!("Structure cannot be {what} (text only)")),
-            Val::Ref(..) => err(
+            Val::Ref(..) | Val::Iface(..) => err(
                 line,
                 format!("Object reference cannot be {what} (text only)"),
             ),
@@ -301,7 +302,66 @@ impl<'ctx> Codegen<'ctx> {
                     self.builder.build_int_truncate(count, self.i32t, "lines"),
                 )?))
             }
-            Expr::Chain { .. } => err(line, "Chained method calls are not translated yet"),
+            // Jeder Schritt arbeitet auf dem Ergebnis des vorigen: Zwischenwerte müssen Objektreferenzen sein
+            Expr::Chain { base, steps } => {
+                let mut current = self.eval(base, line)?;
+                for step in steps {
+                    // Interface-Referenz: nur Methodenaufrufe, über die Methodentabelle
+                    if let Val::Iface(obj, i) = current {
+                        let Some(args) = &step.args else {
+                            return err(
+                                line,
+                                "Interface attributes through a reference are not supported yet",
+                            );
+                        };
+                        self.check_bound_object(obj)?;
+                        current = match self.emit_iface_call(obj, i, &step.method, args, line)? {
+                            Some(v) => v,
+                            None => {
+                                return err(
+                                    line,
+                                    format!(
+                                        "Method '{}' returns no value (RETURNING missing)",
+                                        step.method
+                                    ),
+                                )
+                            }
+                        };
+                        continue;
+                    }
+                    let Val::Ref(obj, c) = current else {
+                        return err(
+                            line,
+                            format!(
+                                "'{}' is applied to a value that is not an object reference",
+                                step.method
+                            ),
+                        );
+                    };
+                    self.check_bound_object(obj)?;
+                    current = match &step.args {
+                        Some(args) => {
+                            match self.emit_call_on(Some(obj), c, None, &step.method, args, line)? {
+                                Some(v) => v,
+                                None => {
+                                    return err(
+                                        line,
+                                        format!(
+                                            "Method '{}' returns no value (RETURNING missing)",
+                                            step.method
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                        None => {
+                            let (fp, fty) = self.field_of(obj, c, &step.method, line)?;
+                            self.load_val(fp, fty, line)?
+                        }
+                    };
+                }
+                Ok(current)
+            }
             Expr::Bool(condition) => {
                 let value = self.cond(condition, line)?;
                 let true_value =
@@ -519,7 +579,9 @@ impl<'ctx> Codegen<'ctx> {
                     "is_initial_table",
                 ))
             }
-            Val::Ref(pointer, _) => llvm(self.builder.build_is_null(pointer, "is_initial_ref")),
+            Val::Ref(pointer, _) | Val::Iface(pointer, _) => {
+                llvm(self.builder.build_is_null(pointer, "is_initial_ref"))
+            }
             Val::Mem(pointer, structure) => {
                 let layout = self.layouts[structure].clone();
                 let mut result = self.i32t.const_int(1, false);

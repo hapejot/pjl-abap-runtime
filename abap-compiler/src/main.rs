@@ -9,7 +9,7 @@ use abap_compiler::{
     ast::CompileError,
     codegen::Codegen,
     dynpro, inspect, library,
-    lower::{lower_program_with, parse_source, Ir},
+    lower::{lower_program_with, parse_source, parse_source_with, Ir},
     project, sqlcheck,
 };
 use abap_rt::sql::adapter::Capabilities;
@@ -30,46 +30,50 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 struct Cli {
     #[command(subcommand)]
     command: Option<Sub>,
-    /// Eingabe-ABAP-Datei (Übersetzung)
+    /// ABAP input file (translation)
     input: Option<PathBuf>,
-    /// Ausgabedatei
+    /// Output file
     #[clap(short = 'o', long = "output")]
     output: Option<PathBuf>,
-    /// Optional: IR-Datei ausgeben
+    /// Optional: write the IR file
     #[clap(long = "emit-ir")]
     emit_ir: Option<PathBuf>,
-    /// Optional: Laufzeitbibliothek
+    /// Optional: runtime library
     #[clap(long = "runtime")]
     runtime: Option<PathBuf>,
-    /// Bei ZIP-Eingabe: Hauptprogramm aus dem Export (sonst das einzige Programm mit REPORT)
+    /// For ZIP input: main program from the export (otherwise the only program with REPORT)
     #[clap(long = "program")]
     program: Option<String>,
-    /// Dynpro-Beschreibung (.dynp). Ohne Angabe wird <name>.dynp neben <name>.abap gesucht.
+    /// Dynpro description (.dynp). Without this option, <name>.dynp next to <name>.abap is searched for.
     #[clap(long = "dynp")]
     dynp: Option<PathBuf>,
-    /// Nur übersetzen bis zur SQL-IR: gibt die SQL-Anfragen als JSON-Liste auf stdout aus (kein Codegen)
+    /// Translate only up to the SQL IR: prints the SQL requests as a JSON list to stdout (no codegen)
     #[clap(long = "dump-sql")]
     dump_sql: Option<PathBuf>,
-    /// Datenbank-Konfiguration (TOML): prüft die SQL-Anweisungen zur Übersetzungszeit gegen Tabellen,
-    /// Verbindungen und Fähigkeiten. Ohne Angabe findet keine Prüfung statt.
+    /// Database configuration (TOML): checks the SQL statements at translation time against tables,
+    /// connections and capabilities. Without this option no check takes place.
     #[clap(long = "db-config")]
     db_config: Option<PathBuf>,
+    /// DDIC directory with abapGit XML files (*.doma.xml, *.dtel.xml, *.tabl.xml) for a single ABAP file.
+    /// Not used with a ZIP export, which carries its own DDIC.
+    #[clap(long = "ddic")]
+    ddic: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Sub {
-    /// abapGit-Export untersuchen: Objekte, Abhängigkeiten, externe Anforderungen, TUI
+    /// Inspect an abapGit export: objects, dependencies, external requirements, TUI
     Inspect(inspect::cli::Options),
-    /// Übersetzungsfehler auswerten: unbekannte Namen, vermutete Art, Compiler-Lücken
+    /// Analyze translation errors: unknown names, presumed kind, compiler gaps
     Analyze(analyze::Options),
-    /// Externe Bibliotheken verwalten
+    /// Manage external libraries
     #[command(subcommand)]
     Library(LibraryCmd),
 }
 
 #[derive(Debug, Subcommand)]
 enum LibraryCmd {
-    /// Bibliothek aus Quelltext (Ordner oder ZIP) als JSON erzeugen
+    /// Build a library from source (folder or ZIP) as JSON
     Build(library::BuildOptions),
 }
 
@@ -82,6 +86,7 @@ struct Args {
     program: Option<String>,
     dynp: Option<PathBuf>,
     db_config: Option<PathBuf>,
+    ddic: Option<PathBuf>,
 }
 
 /// Prüft die SQL-Anfragen des Programms gegen die Datenbank-Konfiguration (`--db-config`). Fehler gehen nach
@@ -240,7 +245,10 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
 }
 
 /// Übersetzt die Eingabe bis zur IR: Hauptprogramm aus einem ZIP-Export mit DDIC, sonst eine ABAP-Datei.
-fn lower_input(input: &Path, is_zip: bool, program: Option<&str>) -> Ir {
+fn lower_input(input: &Path, is_zip: bool, program: Option<&str>, ddic: Option<&Path>) -> Ir {
+    if is_zip && ddic.is_some() {
+        fail("--ddic is not used with a ZIP export (the export carries its own DDIC)");
+    }
     if is_zip {
         // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
         let mut programs = project::load_programs(input).unwrap_or_else(|e| fail(e));
@@ -260,7 +268,17 @@ fn lower_input(input: &Path, is_zip: bool, program: Option<&str>) -> Ir {
     } else {
         let src = std::fs::read_to_string(input)
             .unwrap_or_else(|e| fail(format!("{}: {e}", input.display())));
-        match parse_source(&src) {
+        let result = match ddic {
+            Some(dir) => {
+                let ddic = project::load_ddic_dir(dir).unwrap_or_else(|e| fail(e));
+                for skipped in &ddic.skipped {
+                    eprintln!("abapc: note: DDIC object skipped: {skipped}");
+                }
+                parse_source_with(&src, &ddic)
+            }
+            None => parse_source(&src),
+        };
+        match result {
             Ok(ir) => ir,
             Err(errors) => fail_all(errors),
         }
@@ -274,7 +292,7 @@ fn main() {
         let is_zip = path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
-        let ir = lower_input(path, is_zip, cli.program.as_deref());
+        let ir = lower_input(path, is_zip, cli.program.as_deref(), cli.ddic.as_deref());
         let json = serde_json::to_string_pretty(&ir.sql_requests).unwrap_or_else(|e| fail(e));
         println!("{json}");
         return;
@@ -310,6 +328,7 @@ fn main() {
         program: cli.program,
         dynp: cli.dynp,
         db_config: cli.db_config,
+        ddic: cli.ddic,
     };
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -321,7 +340,12 @@ fn main() {
         args.input.display(),
         args.output.display()
     );
-    let mut ir = lower_input(&args.input, is_zip, args.program.as_deref());
+    let mut ir = lower_input(
+        &args.input,
+        is_zip,
+        args.program.as_deref(),
+        args.ddic.as_deref(),
+    );
 
     if let Some(path) = &args.db_config {
         check_database(&ir, path);

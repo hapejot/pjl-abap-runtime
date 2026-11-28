@@ -21,12 +21,19 @@ pub enum DdicType {
     Packed { bytes: usize, scale: usize },
 }
 
+/// Konvertierungsroutinen, die `abapc` und `abap-rt` kennen (FR-005 Stufe 1). Eine andere Routine in einer
+/// Domäne ist ein Übersetzungsfehler, wenn ein Feld mit dem Datenelement deklariert wird.
+pub const SUPPORTED_CONVERSION_ROUTINES: &[&str] = &["ALPHA"];
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ddic {
     /// Strukturen (Name in Kleinbuchstaben) mit ihren Feldern in Reihenfolge
     pub structs: Vec<(String, Vec<(String, DdicType)>)>,
     /// Elementare Typen (Datenelemente) in Kleinbuchstaben
     pub elements: Vec<(String, DdicType)>,
+    /// Konvertierungsroutinen (CONVEXIT der Domäne, FR-005): Datenelement in Kleinbuchstaben, Routine in
+    /// Großbuchstaben, z. B. `("zkonv_nr", "ALPHA")`. Nur Elemente mit einer Domäne, die eine Routine hat.
+    pub conversions: Vec<(String, String)>,
     /// Übersprungene Objekte mit Grund
     pub skipped: Vec<String>,
 }
@@ -65,10 +72,12 @@ fn leng(block: &str) -> usize {
 /// Baut das DDIC aus den XML-Dateien eines Exports: `(Pfad, Inhalt)`.
 pub fn from_files(files: &[(String, String)]) -> Ddic {
     let mut domains: BTreeMap<String, DdicType> = BTreeMap::new();
+    let mut domain_exits: BTreeMap<String, String> = BTreeMap::new();
     let mut elements: BTreeMap<String, DdicType> = BTreeMap::new();
+    let mut conversions: BTreeMap<String, String> = BTreeMap::new();
     let mut skipped = Vec::new();
 
-    // Domänen: Datentyp und Länge
+    // Domänen: Datentyp, Länge und Konvertierungsroutine (CONVEXIT, z. B. ALPHA)
     for (path, xml) in files.iter().filter(|(p, _)| p.ends_with(".doma.xml")) {
         let Some(block) = xml_blocks(xml, "DD01V").first().copied() else {
             continue;
@@ -77,6 +86,9 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
             .unwrap_or_default()
             .to_lowercase();
         let datatype = xml_value(block, "DATATYPE").unwrap_or_default();
+        if let Some(exit) = xml_value(block, "CONVEXIT").filter(|e| !e.trim().is_empty()) {
+            domain_exits.insert(name.clone(), exit.trim().to_uppercase());
+        }
         match base_type(block, &datatype) {
             Some(t) => {
                 domains.insert(name, t);
@@ -96,10 +108,13 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
             .unwrap_or_default()
             .to_lowercase();
         let datatype = xml_value(block, "DATATYPE").unwrap_or_default();
+        let dom = xml_value(block, "DOMNAME")
+            .unwrap_or_default()
+            .to_lowercase();
+        if let Some(exit) = domain_exits.get(&dom) {
+            conversions.insert(name.clone(), exit.clone());
+        }
         let ty = if datatype.is_empty() {
-            let dom = xml_value(block, "DOMNAME")
-                .unwrap_or_default()
-                .to_lowercase();
             domains.get(&dom).cloned()
         } else {
             base_type(block, &datatype)
@@ -158,6 +173,7 @@ pub fn from_files(files: &[(String, String)]) -> Ddic {
     Ddic {
         structs,
         elements: elements.into_iter().collect(),
+        conversions: conversions.into_iter().collect(),
         skipped,
     }
 }
@@ -246,5 +262,59 @@ mod tests {
         ];
         let d = from_files(&files);
         assert_eq!(d.elements, vec![("zel".to_string(), DdicType::Char(2))]);
+    }
+
+    #[test]
+    fn element_carries_conversion_routine_of_its_domain() {
+        let files = vec![
+            (
+                "zdom.doma.xml".into(),
+                "<DD01V><DOMNAME>ZDOM</DOMNAME><DATATYPE>CHAR</DATATYPE><LENG>000018</LENG>\
+<CONVEXIT>ALPHA</CONVEXIT></DD01V>"
+                    .into(),
+            ),
+            (
+                "zel.dtel.xml".into(),
+                "<DD04V><ROLLNAME>ZEL</ROLLNAME><DOMNAME>ZDOM</DOMNAME></DD04V>".into(),
+            ),
+        ];
+        let d = from_files(&files);
+        assert!(d.skipped.is_empty(), "{:?}", d.skipped);
+        assert_eq!(d.elements, vec![("zel".to_string(), DdicType::Char(18))]);
+        assert_eq!(
+            d.conversions,
+            vec![("zel".to_string(), "ALPHA".to_string())]
+        );
+    }
+
+    #[test]
+    fn domain_without_conversion_routine_gives_no_conversion() {
+        let files = vec![
+            (
+                "zdom.doma.xml".into(),
+                "<DD01V><DOMNAME>ZDOM</DOMNAME><DATATYPE>CHAR</DATATYPE><LENG>000018</LENG>\
+<CONVEXIT></CONVEXIT></DD01V>"
+                    .into(),
+            ),
+            (
+                "zel.dtel.xml".into(),
+                "<DD04V><ROLLNAME>ZEL</ROLLNAME><DOMNAME>ZDOM</DOMNAME></DD04V>".into(),
+            ),
+        ];
+        let d = from_files(&files);
+        assert_eq!(d.elements.len(), 1);
+        assert!(d.conversions.is_empty());
+    }
+
+    #[test]
+    fn element_with_direct_type_has_no_conversion() {
+        let files = vec![(
+            "zc.dtel.xml".into(),
+            "<DD04V><ROLLNAME>ZC</ROLLNAME><DATATYPE>CHAR</DATATYPE><LENG>000018</LENG></DD04V>"
+                .into(),
+        )];
+        let d = from_files(&files);
+        assert_eq!(d.elements, vec![("zc".to_string(), DdicType::Char(18))]);
+        assert!(d.conversions.is_empty());
     }
 }

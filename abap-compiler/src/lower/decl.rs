@@ -66,6 +66,7 @@ impl Lowerer {
             _ => Vec::new(),
         };
         let mut static_fields = Vec::new();
+        let mut attr_visibility = Vec::new();
         let mut sigs: HashMap<String, MethodSig> = HashMap::new();
         let mut interfaces = Vec::new();
         let mut aliases = Vec::new();
@@ -89,6 +90,7 @@ impl Lowerer {
                         line: st.line,
                         message: format!("Inline structure '{name}' not defined"),
                     })?;
+                attr_visibility.push((name.clone(), m.visibility));
                 fields.push((name, ty));
                 in_data_structure = true;
                 continue;
@@ -100,7 +102,11 @@ impl Lowerer {
                 continue;
             }
             match &m.kind {
-                MemberKind::Data if st.keyword() == "DATA" => fields.push(self.field(st)?),
+                MemberKind::Data if st.keyword() == "DATA" => {
+                    let (field_name, ty) = self.field(st)?;
+                    attr_visibility.push((field_name.clone(), m.visibility));
+                    fields.push((field_name, ty));
+                }
                 MemberKind::Data if st.keyword() == "CLASS-DATA" => {
                     static_fields.push(self.field(st)?)
                 }
@@ -185,6 +191,7 @@ impl Lowerer {
             aliases,
             is_abstract: c.head.has("ABSTRACT"),
             static_fields,
+            attr_visibility,
             methods: Vec::new(),
         });
         self.sigs.push(sigs);
@@ -265,6 +272,7 @@ impl Lowerer {
         }
         let mut methods = HashMap::new();
         let mut interface_fields = HashMap::new();
+        let mut parents = Vec::new();
         self.scope = Some(name.clone());
         self.define_local_type_aliases(&c.members)?;
         self.define_local_data_types(&c.members)?;
@@ -293,6 +301,9 @@ impl Lowerer {
                 }
                 MemberKind::Interfaces => {
                     let parent = member.statement.tokens[1].text.to_lowercase();
+                    if let Some(&index) = self.iface_index.get(&parent) {
+                        parents.push(index);
+                    }
                     if let Some(parent_methods) = self.interfaces.get(&parent).cloned() {
                         for (method, signature) in parent_methods {
                             methods.insert(
@@ -309,6 +320,27 @@ impl Lowerer {
                 _ => {}
             }
         }
+        // Methodentabelle der Codegen-Schicht: qualifizierte Namen, feste Reihenfolge
+        let mut list: Vec<InterfaceMethod> = methods
+            .iter()
+            .map(|(method, sig)| InterfaceMethod {
+                name: if method.contains('~') {
+                    method.clone()
+                } else {
+                    format!("{name}~{method}")
+                },
+                is_static: sig.is_static,
+                params: sig.params.clone(),
+                ret: sig.ret.clone(),
+            })
+            .collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        self.iface_index.insert(name.clone(), self.iface_defs.len());
+        self.iface_defs.push(InterfaceDef {
+            name: name.clone(),
+            methods: list,
+            parents,
+        });
         self.interfaces.insert(name, methods);
         self.interface_fields
             .insert(c.name.to_lowercase(), interface_fields);
@@ -362,6 +394,12 @@ impl Lowerer {
             }
             result?;
             self.scope = None;
+            if let Some((param, line)) = importing_write(&sig.params, &body) {
+                return err(
+                    line,
+                    format!("Importing parameter '{param}' is read-only and cannot be changed"),
+                );
+            }
             self.classes[idx].methods.push(ClassMethod {
                 name: mname,
                 is_static: sig.is_static,
@@ -484,11 +522,8 @@ impl Lowerer {
                 index += 4;
                 continue;
             }
-            let mut token = before[index].clone();
-            if token.is_word("IMPORTING") || token.is_word("EXPORTING") {
-                token.text = "USING".into();
-            }
-            mapped.push(token);
+            // IMPORTING und EXPORTING bleiben erhalten; `parse_params` kennt beide Abschnitte
+            mapped.push(before[index].clone());
             index += 1;
         }
         let params = self.parse_params(&mapped, line)?;
@@ -854,6 +889,9 @@ impl Lowerer {
         }
         if toks.len() >= 3 && toks[0].is_word("REF") && toks[1].is_word("TO") {
             let referenced = word(&toks[2]);
+            if let Some(&index) = self.iface_index.get(&referenced) {
+                return Ok(Ty::Iface(index));
+            }
             let qualified = self.qualified_type(&referenced);
             return Ok(
                 match self
@@ -899,6 +937,10 @@ impl Lowerer {
         }
         if let [token] = toks {
             let name = word(token);
+            // Systemfelder haben festen Typ, auch als `TYPE sy-ucomm` (sonst passt der Formalparameter nicht)
+            if let Some(ty) = system_field_type(&name) {
+                return Ok(ty);
+            }
             let qualified = self.qualified_type(&name);
             if let Some(ty) = self
                 .names
@@ -1007,18 +1049,8 @@ impl Lowerer {
         if let [name] = toks {
             let qualified = self.qualified_type(&word(name));
             // Systemfelder mit festem Typ
-            // Typ der Systemfelder (SAP-Standard, ABAP-Schlüsselwort-Felder)
-            match word(name).as_str() {
-                "sy-subrc" | "sy-tabix" | "sy-index" | "sy-dbcnt" | "sy-cucol" | "sy-curow"
-                | "sy-fdpos" | "sy-tfill" => {
-                    return Ok(Ty::Int);
-                }
-                "sy-repid" => return Ok(Ty::Char(40)),
-                "sy-uname" => return Ok(Ty::Char(12)),
-                "sy-ucomm" => return Ok(Ty::Char(70)),
-                "sy-dynnr" => return Ok(Ty::Char(4)),
-                "sy-langu" | "sy-msgty" => return Ok(Ty::Char(1)),
-                _ => {}
+            if let Some(ty) = system_field_type(&word(name)) {
+                return Ok(ty);
             }
             // Attribut der eigenen Klasse (auch geerbt)
             if let Some(ty) = self.class_attribute_type(&word(name)) {
@@ -1176,7 +1208,7 @@ impl Lowerer {
                     line,
                     format!("Table '{}' cannot be an element of a table", t.text),
                 ),
-                Some(Ty::Ref(_)) => err(
+                Some(Ty::Ref(_) | Ty::Iface(_)) => err(
                     line,
                     "Object references as table elements not supported yet",
                 ),
@@ -1207,7 +1239,7 @@ impl Lowerer {
                             line,
                             format!("Table '{}' cannot be an element of a table", t.text),
                         ),
-                        Some(Ty::Ref(_)) => err(
+                        Some(Ty::Ref(_) | Ty::Iface(_)) => err(
                             line,
                             "Object references as table elements not supported yet",
                         ),
@@ -1233,7 +1265,7 @@ impl Lowerer {
                 line,
                 format!("Table '{name}' cannot be an element of a table"),
             ),
-            Some(Ty::Ref(_)) => err(
+            Some(Ty::Ref(_) | Ty::Iface(_)) => err(
                 line,
                 "Object references as table elements not supported yet",
             ),
@@ -1255,16 +1287,19 @@ impl Lowerer {
     ) -> Result<Vec<Param>, CompileError> {
         let mut out: Vec<Param> = Vec::new();
         let mut changing = false;
+        let mut importing = false;
         let mut i = 0;
         while i < toks.len() {
             let t = &toks[i];
-            if t.is_word("USING") {
+            if t.is_word("USING") || t.is_word("IMPORTING") || t.is_word("EXPORTING") {
                 changing = false;
+                importing = t.is_word("IMPORTING");
                 i += 1;
                 continue;
             }
             if t.is_word("CHANGING") {
                 changing = true;
+                importing = false;
                 i += 1;
                 continue;
             }
@@ -1335,6 +1370,8 @@ impl Lowerer {
                 let is_switch = matches!(
                     x.text.to_uppercase().as_str(),
                     "USING"
+                        | "IMPORTING"
+                        | "EXPORTING"
                         | "CHANGING"
                         | "OPTIONAL"
                         | "DEFAULT"
@@ -1364,10 +1401,30 @@ impl Lowerer {
             if out.iter().any(|p| p.name == name) {
                 return err(line, format!("Parameter '{name}' declared twice"));
             }
-            out.push(Param { name, ty, changing });
+            out.push(Param {
+                name,
+                ty,
+                changing,
+                importing,
+            });
             i = end;
         }
         Ok(out)
+    }
+}
+
+/// Fester Typ der Systemfelder (SAP-Standard), wenn ein Typname `sy-...` ist. Deklaration (`DATA`),
+/// Formalparameter (`IMPORTING`) und `LIKE` verwenden dieselbe Tabelle, damit die Typen übereinstimmen.
+fn system_field_type(name: &str) -> Option<Ty> {
+    match name {
+        "sy-subrc" | "sy-tabix" | "sy-index" | "sy-dbcnt" | "sy-cucol" | "sy-curow"
+        | "sy-fdpos" | "sy-tfill" => Some(Ty::Int),
+        "sy-repid" => Some(Ty::Char(40)),
+        "sy-uname" => Some(Ty::Char(12)),
+        "sy-ucomm" => Some(Ty::Char(crate::dynpro::UCOMM_LENGTH)),
+        "sy-dynnr" => Some(Ty::Char(4)),
+        "sy-langu" | "sy-msgty" => Some(Ty::Char(1)),
+        _ => None,
     }
 }
 
@@ -1397,6 +1454,109 @@ fn collect_interface_components(items: &[Item], out: &mut Vec<String>) {
                 out.push(format!("{}~{}", word(&tokens[0]), word(&tokens[2])));
             }
         }
+    }
+}
+
+/// Erster Schreibzugriff im Rumpf auf einen IMPORTING-Parameter: Name und Zeile.
+/// Erkannt werden Zuweisungen, Löschen, Anfügen, Zeilen- und Ergebnisziele, Aufrufe mit CHANGING und
+/// SQL-Ziele. Komponenten `s-feld` gehören zum Parameter `s`. Nicht erkannt: Schreiben über ein
+/// Feldsymbol, das auf den Parameter zeigt (`LOOP ... ASSIGNING`).
+fn importing_write(params: &[Param], body: &[Stmt]) -> Option<(String, usize)> {
+    let names: Vec<&str> = params
+        .iter()
+        .filter(|p| p.importing)
+        .map(|p| p.name.as_str())
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    body_write(body, &names)
+}
+
+/// Name des geschriebenen Ziels; Attribute `obj->attr` gehören nicht zu einem Parameter.
+fn target_base(target: &Target) -> Option<&str> {
+    match target {
+        Target::Var(name) => Some(name.as_str()),
+        Target::Slice { name, .. } => Some(name.as_str()),
+        Target::Attr { .. } => None,
+    }
+}
+
+fn body_write(body: &[Stmt], names: &[&str]) -> Option<(String, usize)> {
+    body.iter().find_map(|s| written_in(s, names))
+}
+
+fn written_in(stmt: &Stmt, names: &[&str]) -> Option<(String, usize)> {
+    let hit = |name: &str, line: usize| -> Option<(String, usize)> {
+        let base = name.split('-').next().unwrap_or(name);
+        names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(base))
+            .then(|| (base.to_string(), line))
+    };
+    match stmt {
+        Stmt::Assign { target, line, .. } | Stmt::Clear { target, line } => {
+            target_base(target).and_then(|n| hit(n, *line))
+        }
+        Stmt::AssignComponent { target, line, .. }
+        | Stmt::ReadTable { target, line, .. }
+        | Stmt::Describe { target, line, .. }
+        | Stmt::Sql { target, line, .. }
+        | Stmt::Create {
+            name: target, line, ..
+        } => hit(target, *line),
+        Stmt::Append { table, line, .. } => hit(table, *line),
+        Stmt::Loop {
+            target: LoopTarget::Into(name),
+            body,
+            line,
+            ..
+        } => hit(name, *line).or_else(|| body_write(body, names)),
+        Stmt::Loop { body, .. } => body_write(body, names),
+        Stmt::SqlLoop {
+            target, body, line, ..
+        } => hit(target, *line).or_else(|| body_write(body, names)),
+        Stmt::MethodCall {
+            args,
+            receiving,
+            line,
+            ..
+        } => receiving
+            .as_ref()
+            .and_then(target_base)
+            .and_then(|n| hit(n, *line))
+            .or_else(|| {
+                args.iter().find_map(|a| match &a.expr {
+                    Expr::Var(n) if a.changing == Some(true) => hit(n, *line),
+                    _ => None,
+                })
+            }),
+        Stmt::Perform { args, line, .. } => args.iter().find_map(|a| match &a.expr {
+            Expr::Var(n) if a.changing => hit(n, *line),
+            _ => None,
+        }),
+        Stmt::If {
+            branches,
+            otherwise,
+            ..
+        } => branches
+            .iter()
+            .find_map(|(_, b)| body_write(b, names))
+            .or_else(|| body_write(otherwise, names)),
+        Stmt::Case { whens, other, .. } => whens
+            .iter()
+            .find_map(|(_, b)| body_write(b, names))
+            .or_else(|| body_write(other, names)),
+        Stmt::Do { body, .. } | Stmt::While { body, .. } => body_write(body, names),
+        Stmt::Try {
+            body,
+            catches,
+            cleanup,
+            ..
+        } => body_write(body, names)
+            .or_else(|| catches.iter().find_map(|c| body_write(&c.body, names)))
+            .or_else(|| body_write(cleanup, names)),
+        _ => None,
     }
 }
 

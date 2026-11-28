@@ -17,6 +17,9 @@ pub enum Ty {
     Struct(usize),
     /// Objektreferenz (`TYPE REF TO`), Index in `Ir::classes`
     Ref(usize),
+    /// Interface-Referenz (`TYPE REF TO <interface>`), Index in `Ir::interfaces`. Zeigt auf ein Objekt,
+    /// dessen Klasse das Interface implementiert.
+    Iface(usize),
     /// Externer SAP-/DDIC-Typ, Index in `Ir::external_types`
     External(usize),
     /// Zur Übersetzungszeit unbekannt: untypisiertes oder `TYPE any` Feldsymbol, Typ erst zur Laufzeit
@@ -114,10 +117,12 @@ pub enum Stmt {
         target: Target,
         line: usize,
     },
-    /// WRITE [/] [wert]. `newline`: `/` vor dem Wert beendet die aktuelle Zeile.
+    /// WRITE [/] [wert]. `newline`: `/` vor dem Wert beendet die aktuelle Zeile. `conversion`: Konvertierungs-
+    /// routine der Domäne des Feldes (FR-005), wenn der Wert eine solche Variable ist.
     Write {
         newline: bool,
         value: Option<Expr>,
+        conversion: Option<String>,
         line: usize,
     },
     If {
@@ -193,9 +198,11 @@ pub enum Stmt {
     Return {
         line: usize,
     },
-    /// CREATE OBJECT name [EXPORTING ...]
+    /// CREATE OBJECT name [TYPE klasse] [EXPORTING ...]. `class` ist der Klassenname in Kleinschreibung,
+    /// Pflicht bei einer Interface-Referenz.
     Create {
         name: String,
+        class: Option<String>,
         args: Vec<NamedArg>,
         line: usize,
     },
@@ -374,7 +381,32 @@ pub struct ClassDef {
     pub aliases: Vec<(String, String)>,
     pub is_abstract: bool,
     pub static_fields: Vec<(String, Ty)>,
+    /// Sichtbarkeit der in dieser Klasse deklarierten Instanzattribute (kleingeschrieben).
+    /// Attribute ohne Eintrag gelten als öffentlich, auch Interface-Attribute.
+    pub attr_visibility: Vec<(String, crate::inspect::abap::Visibility)>,
     pub methods: Vec<ClassMethod>,
+}
+
+/// Interface im Programm. Die Reihenfolge in `Ir::interfaces` bestimmt die Offsets in den Methodentabellen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceDef {
+    /// Name in Kleinschreibung
+    pub name: String,
+    /// Alle Methoden einschließlich der aus Unter-Interfaces übernommenen, Name qualifiziert (`iface~methode`),
+    /// sortiert nach dem qualifizierten Namen. Die Position ist der Index in der Methodentabelle.
+    pub methods: Vec<InterfaceMethod>,
+    /// Index der mit `INTERFACES` eingebundenen Interfaces (in `Ir::interfaces`)
+    pub parents: Vec<usize>,
+}
+
+/// Methode eines Interface (Signatur wie in der Interface-Definition).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceMethod {
+    /// Qualifizierter Name, z. B. `lif_calc~run`
+    pub name: String,
+    pub is_static: bool,
+    pub params: Vec<Param>,
+    pub ret: Option<RetParam>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,6 +427,8 @@ pub struct Param {
     pub name: String,
     pub ty: Ty,
     pub changing: bool,
+    /// `IMPORTING`-Parameter einer Methode: schreibgeschützt, Zuweisung im Rumpf ist ein Fehler.
+    pub importing: bool,
 }
 
 /// Aktualparameter eines PERFORM.
@@ -427,6 +461,8 @@ pub struct Ir {
     pub forms: Vec<Form>,
     pub structs: Vec<StructDef>,
     pub classes: Vec<ClassDef>,
+    /// Interfaces des Programms in Definitionsreihenfolge
+    pub interfaces: Vec<InterfaceDef>,
     pub constants: HashMap<String, Expr>,
     pub dependencies: Vec<String>,
     /// Feste Typen, die in dynamische Feldsymbole zugewiesen werden (für Prüfungen zur Laufzeit)

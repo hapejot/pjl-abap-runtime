@@ -235,10 +235,12 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Zieladresse: Tabellen-Handle für `INTO TABLE`, sonst der Zeiger auf den Arbeitsbereich bzw. das Feld.
     fn sql_target(&self, target: &str, line: usize) -> CResult<PointerValue<'ctx>> {
-        match self.var(target, line) {
-            Ok(v) if !v.fs && matches!(v.ty, Ty::Table(_)) => Ok(self.table(target, line)?.0),
-            _ => Ok(self.data(target, line)?.0),
+        let (p, ty) = self.data(target, line)?;
+        // Tabellenziel: das Handle der Tabelle, auch für Tabellenparameter (Feldsymbole)
+        if matches!(ty, Ty::Table(_)) {
+            return Ok(self.table(target, line)?.0);
         }
+        Ok(p)
     }
 
     fn sy_slot(&self, name: &str) -> CResult<PointerValue<'ctx>> {

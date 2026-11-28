@@ -1,0 +1,1 @@
+Conversion routine 'ZTKV_UNBEKANNT' of data element 'ztkv_nr' is not supported

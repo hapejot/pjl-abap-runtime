@@ -1,0 +1,26 @@
+REPORT ztest.
+CLASS inner DEFINITION.
+  PUBLIC SECTION.
+    METHODS value RETURNING VALUE(r) TYPE i.
+ENDCLASS.
+CLASS inner IMPLEMENTATION.
+  METHOD value.
+    r = 42.
+  ENDMETHOD.
+ENDCLASS.
+CLASS outer DEFINITION.
+  PUBLIC SECTION.
+    METHODS get_inner RETURNING VALUE(r) TYPE REF TO inner.
+ENDCLASS.
+CLASS outer IMPLEMENTATION.
+  METHOD get_inner.
+    CREATE OBJECT r.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO outer.
+DATA x TYPE i.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  o->get_inner( )->value( ).
+  x = o->get_inner( )->value( ).
+  WRITE / x.

@@ -1,0 +1,17 @@
+REPORT ztest.
+CLASS base DEFINITION.
+  PROTECTED SECTION.
+    DATA mv_secret TYPE i.
+  PUBLIC SECTION.
+    METHODS show.
+ENDCLASS.
+CLASS base IMPLEMENTATION.
+  METHOD show.
+    WRITE / mv_secret.
+  ENDMETHOD.
+ENDCLASS.
+DATA o TYPE REF TO base.
+DATA x TYPE i.
+START-OF-SELECTION.
+  CREATE OBJECT o.
+  x = o->mv_secret.

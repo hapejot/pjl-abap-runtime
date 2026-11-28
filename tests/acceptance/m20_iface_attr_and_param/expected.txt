@@ -1,0 +1,2 @@
+param ok
+attr ok

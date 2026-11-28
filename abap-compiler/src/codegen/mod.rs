@@ -13,6 +13,7 @@ mod data;
 mod decl;
 mod emit;
 mod expr;
+mod iface;
 mod layout;
 mod packed;
 mod routines;
@@ -31,7 +32,8 @@ use inkwell::context::Context;
 use inkwell::module::{Linkage, Module};
 use inkwell::types::{ArrayType, BasicMetadataTypeEnum, IntType, PointerType};
 use inkwell::values::{
-    ArrayValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+    ArrayValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, GlobalValue, IntValue,
+    PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -77,6 +79,11 @@ struct ClassInfo<'ctx> {
     external_parent: Option<String>,
     methods: Vec<MethodInfo<'ctx>>,
     aliases: HashMap<String, String>,
+    /// Sichtbarkeit der eigenen Instanzattribute (kleingeschrieben); fehlende Einträge sind öffentlich
+    attr_visibility: Vec<(String, crate::inspect::abap::Visibility)>,
+    is_abstract: bool,
+    /// Indizes aller Interfaces, die die Klasse implementiert (auch geerbt und über Unter-Interfaces)
+    implements: Vec<usize>,
 }
 
 /// Ausgewerteter Ausdruck.
@@ -84,6 +91,8 @@ struct ClassInfo<'ctx> {
 enum Val<'ctx> {
     /// Objektreferenz: Zeiger auf das Objekt und Klassenindex
     Ref(PointerValue<'ctx>, usize),
+    /// Interface-Referenz: Zeiger auf das Objekt und Index des Interface
+    Iface(PointerValue<'ctx>, usize),
     Table(PointerValue<'ctx>),
     /// Struktur: Zeiger auf den Speicher und Index des Strukturtyps
     Mem(PointerValue<'ctx>, usize),
@@ -101,6 +110,8 @@ enum Val<'ctx> {
 enum Dest<'ctx> {
     /// Objektreferenz-Speicherplatz und Klassenindex
     Ref(PointerValue<'ctx>, usize),
+    /// Interface-Referenz-Speicherplatz und Index des Interface
+    Iface(PointerValue<'ctx>, usize),
     Mem(PointerValue<'ctx>, usize),
     Int(PointerValue<'ctx>),
     /// Gepackte Zahl: Speicherplatz, Bytezahl, Nachkommastellen
@@ -155,11 +166,14 @@ struct Rt<'ctx> {
     dec_to_int: FunctionValue<'ctx>,
     dec_write: FunctionValue<'ctx>,
     write_chars: FunctionValue<'ctx>,
+    /// WRITE eines Zeichenfelds mit Konvertierungsroutine ALPHA (FR-005)
+    write_convexit_alpha: FunctionValue<'ctx>,
     write_str: FunctionValue<'ctx>,
     newline: FunctionValue<'ctx>,
     newfield: FunctionValue<'ctx>,
     finish: FunctionValue<'ctx>,
     chars_move: FunctionValue<'ctx>,
+    int_to_chars: FunctionValue<'ctx>,
     chars_cmp: FunctionValue<'ctx>,
     str_new: FunctionValue<'ctx>,
     str_from_chars: FunctionValue<'ctx>,
@@ -172,6 +186,7 @@ struct Rt<'ctx> {
     table_count: FunctionValue<'ctx>,
     table_row: FunctionValue<'ctx>,
     table_clear: FunctionValue<'ctx>,
+    table_assign: FunctionValue<'ctx>,
     fs_unassigned: FunctionValue<'ctx>,
     type_mismatch: FunctionValue<'ctx>,
     obj_new: FunctionValue<'ctx>,
@@ -259,9 +274,17 @@ pub struct Codegen<'ctx> {
     forms: HashMap<String, FormSig<'ctx>>,
     layouts: Vec<Layout<'ctx>>,
     classes: Vec<ClassInfo<'ctx>>,
+    /// Interfaces des Programms (Index wie in `Ty::Iface`)
+    ifaces: Vec<crate::lower::InterfaceDef>,
+    /// Offset jedes Interface in der Methodentabelle einer Klasse (Index wie in `ifaces`)
+    iface_offsets: Vec<usize>,
+    /// Methodentabelle je Klasse (Index wie in `classes`): Zeiger auf die Funktionen je Slot
+    vtables: Vec<GlobalValue<'ctx>>,
     constants: HashMap<String, Expr>,
     /// Im Methodenrumpf: Speicherplatz des Objektzeigers (`me`) und Klassenindex
     self_ctx: Option<(PointerValue<'ctx>, usize)>,
+    /// Klasse des gerade übersetzten Methodenrumpfs, auch für statische Methoden (für die Sichtbarkeit)
+    routine_class: Option<usize>,
     loops: Vec<LoopCtx<'ctx>>,
     /// Marken der gerade übersetzten Anweisungen (innen zuletzt): Grundlage für die Freigabe bei Sprüngen.
     stmt_marks: Vec<IntValue<'ctx>>,
@@ -342,6 +365,10 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_write_chars",
                 void.fn_type(&[ptrt.into(), i64t.into()], false),
             ),
+            write_convexit_alpha: f(
+                "abap_rt_write_convexit_alpha",
+                void.fn_type(&[ptrt.into(), i64t.into()], false),
+            ),
             write_str: f("abap_rt_write_str", void.fn_type(&[ptrt.into()], false)),
             newline: f("abap_rt_newline", void.fn_type(&[], false)),
             newfield: f("abap_rt_newfield", void.fn_type(&[], false)),
@@ -349,6 +376,10 @@ impl<'ctx> Codegen<'ctx> {
             chars_move: f(
                 "abap_rt_chars_move",
                 void.fn_type(&[ptrt.into(), i64t.into(), ptrt.into(), i64t.into()], false),
+            ),
+            int_to_chars: f(
+                "abap_rt_int_to_chars",
+                void.fn_type(&[ptrt.into(), i64t.into(), i32t.into()], false),
             ),
             chars_cmp: f(
                 "abap_rt_chars_cmp",
@@ -386,6 +417,10 @@ impl<'ctx> Codegen<'ctx> {
                 ptrt.fn_type(&[ptrt.into(), i64t.into()], false),
             ),
             table_clear: f("abap_rt_table_clear", void.fn_type(&[ptrt.into()], false)),
+            table_assign: f(
+                "abap_rt_table_assign",
+                void.fn_type(&[ptrt.into(), ptrt.into()], false),
+            ),
             fs_unassigned: f("abap_rt_fs_unassigned", void.fn_type(&[], false)),
             type_mismatch: f("abap_rt_type_mismatch", void.fn_type(&[], false)),
             obj_new: f("abap_rt_obj_new", ptrt.fn_type(&[i64t.into()], false)),
@@ -663,8 +698,12 @@ impl<'ctx> Codegen<'ctx> {
             forms: HashMap::new(),
             layouts: Vec::new(),
             classes: Vec::new(),
+            ifaces: Vec::new(),
+            iface_offsets: Vec::new(),
+            vtables: Vec::new(),
             constants: HashMap::new(),
             self_ctx: None,
+            routine_class: None,
             loops: Vec::new(),
             stmt_marks: Vec::new(),
             exception_target: None,
@@ -752,8 +791,13 @@ impl<'ctx> Codegen<'ctx> {
                 external_parent,
                 methods,
                 aliases: c.aliases.iter().cloned().collect(),
+                attr_visibility: c.attr_visibility.clone(),
+                is_abstract: c.is_abstract,
+                implements: Vec::new(),
             });
         }
+        // Methodentabellen (Interfaces): Offsets je Interface und Tabelle je Klasse
+        self.build_vtables(ir)?;
         // Formen zuerst deklarieren, damit PERFORM auch vorwärts aufrufen kann
         for f in &ir.forms {
             if self.forms.contains_key(&f.name) {
@@ -880,6 +924,11 @@ impl<'ctx> Codegen<'ctx> {
                 self.collect(result);
             }
         }
-        llvm(self.module.verify().map_err(|e| e.to_string()))
+        // Mit gemeldeten Fehlern ist der Kontrollfluss unvollständig; der Prüfer würde nur Folgefehler melden.
+        if self.errors.is_empty() {
+            llvm(self.module.verify().map_err(|e| e.to_string()))
+        } else {
+            Ok(())
+        }
     }
 }

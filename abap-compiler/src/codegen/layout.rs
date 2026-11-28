@@ -23,7 +23,9 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Int => self.i32t.into(),
             Ty::Char(n) => self.char_array(n).into(),
             Ty::Packed { bytes, .. } => self.ctx.i8_type().array_type(bytes as u32).into(),
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => self.ptrt.into(),
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::Iface(_) | Ty::External(_) => {
+                self.ptrt.into()
+            }
             Ty::Struct(i) => self.layouts[i].st.into(),
         }
     }
@@ -45,7 +47,7 @@ impl<'ctx> Codegen<'ctx> {
             Ty::Int => 4,
             Ty::Char(n) => 2 * n as u64,
             Ty::Packed { bytes, .. } => bytes as u64,
-            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::External(_) => 8,
+            Ty::Str | Ty::Table(_) | Ty::Ref(_) | Ty::Iface(_) | Ty::External(_) => 8,
             Ty::Struct(i) => self.layouts[i]
                 .fields
                 .iter()
@@ -103,7 +105,7 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 llvm(b.build_store(slot, t))?;
             }
-            Ty::Ref(_) | Ty::External(_) => {
+            Ty::Ref(_) | Ty::Iface(_) | Ty::External(_) => {
                 llvm(b.build_store(slot, self.ptrt.const_null()))?;
             }
             Ty::Struct(i) => {

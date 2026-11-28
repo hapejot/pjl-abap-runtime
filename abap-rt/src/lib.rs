@@ -6,6 +6,7 @@
 //! Zeichenfelder (`TYPE c`) sind Puffer fester Länge, der Compiler kennt die Länge.
 //! Strings (`TYPE string`) sind Handles auf `RtStr`. Sie werden nicht freigegeben (kein GC).
 
+pub mod convexit;
 pub mod decimal;
 pub mod packed;
 pub mod screen;
@@ -266,6 +267,53 @@ pub extern "C" fn abap_rt_int_to_str(value: i32) -> *mut RtStr {
     }))
 }
 
+/// Zeichenfolge für die Zuweisung einer ganzen Zahl (`TYPE i`) an ein Zeichenfeld der Länge `len` (FR-004).
+///
+/// Regel aus `doc/feature-requests/FR-004-zahl-in-zeichenfeld.md`, Abschnitt "Beobachtetes Verhalten"
+/// (SAP-Testlauf S/4HANA 2025, Kernel 916). `d` ist die Anzahl der Ziffern von |value|; 0 hat eine Ziffer.
+/// - positiv oder 0, d < L: Ziffern rechtsbündig in L-1 Stellen, letzte Stelle Leerzeichen
+/// - positiv, d = L: nur die Ziffern, keine Vorzeichenstelle
+/// - positiv, d > L: `*` vorne, danach die rechten L-1 Ziffern
+/// - negativ, d < L: Ziffern rechtsbündig in L-1 Stellen, letzte Stelle `-`
+/// - negativ, d >= L: `*` vorne, danach die rechten L-2 Ziffern, letzte Stelle `-`; bei L = 1 nur `*`
+///
+/// Kein Fehler und kein Abbruch bei Überlauf. Die Umwandlung ist keine Ausgabe mit `WRITE`.
+/// Das Ergebnis hat immer genau `len` Zeichen (bei `len` = 0 ist es leer).
+fn int_to_char_field(value: i32, len: usize) -> Vec<u16> {
+    if len == 0 {
+        return Vec::new();
+    }
+    let digits = value.unsigned_abs().to_string();
+    let d = digits.len();
+    let text = if value >= 0 {
+        if d < len {
+            format!("{digits:>width$} ", width = len - 1)
+        } else if d == len {
+            digits
+        } else {
+            format!("*{}", &digits[d - (len - 1)..])
+        }
+    } else if d < len {
+        format!("{digits:>width$}-", width = len - 1)
+    } else if len == 1 {
+        "*".to_string()
+    } else {
+        format!("*{}-", &digits[d - (len - 2)..])
+    };
+    text.encode_utf16().collect()
+}
+
+/// Zuweisung einer ganzen Zahl (`TYPE i`) an ein Zeichenfeld fester Länge `dlen` (FR-004).
+/// Der Zielpuffer wird vollständig beschrieben: Ergebnis genau `dlen` Zeichen.
+///
+/// # Safety
+/// `dst` muss auf `dlen` gültige UTF-16-Einheiten zeigen oder null sein (dann geschieht nichts).
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_int_to_chars(dst: *mut u16, dlen: u64, value: i32) {
+    let text = int_to_char_field(value, dlen as usize);
+    move_into(dst, dlen, &text);
+}
+
 /// WRITE für Zeichenfelder: gibt die vollen `len` Zeichen aus (inkl. Auffüllung), als UTF-8.
 ///
 /// # Safety
@@ -465,6 +513,22 @@ pub unsafe extern "C" fn abap_rt_table_clear(t: *mut RtTable) {
     }
 }
 
+/// Tabellenzuweisung `dst = src`: der Inhalt des Ziels wird durch alle Zeilen der Quelle ersetzt.
+/// Zuweisung an sich selbst lässt den Inhalt unverändert.
+///
+/// # Safety
+/// Beide Handles müssen gültige Tabellen aus diesem Crate sein.
+#[no_mangle]
+pub unsafe extern "C" fn abap_rt_table_assign(dst: *mut RtTable, src: *const RtTable) {
+    let (Some(d), Some(s)) = (dst.as_mut(), src.as_ref()) else {
+        return;
+    };
+    if std::ptr::eq(d, s) {
+        return;
+    }
+    d.rows = s.rows.clone();
+}
+
 /// Laufzeitfehler: Feldsymbol ist nicht zugewiesen. Beendet das Programm mit Status 1.
 #[no_mangle]
 pub extern "C" fn abap_rt_fs_unassigned() -> ! {
@@ -506,4 +570,195 @@ pub extern "C" fn abap_rt_arith_error(kind: i32) -> ! {
         _ => eprintln!("Runtime error: division by 0"),
     }
     std::process::exit(1)
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    /// Liest alle Zeilen als Bytes, damit der Inhalt ohne Kenntnis der Zeilenstruktur verglichen werden kann.
+    unsafe fn rows_of(t: *const RtTable) -> Vec<u8> {
+        let count = abap_rt_table_count(t);
+        let mut out = Vec::new();
+        for idx in 0..count {
+            let row = abap_rt_table_row(t as *mut RtTable, idx);
+            out.extend_from_slice(std::slice::from_raw_parts(row, 1));
+        }
+        out
+    }
+
+    unsafe fn append_byte(t: *mut RtTable, value: u8) {
+        abap_rt_table_append(t, &value as *const u8, 1);
+    }
+
+    #[test]
+    fn table_assign_replaces_target_rows_with_copy_of_source() {
+        unsafe {
+            let dst = abap_rt_table_new(1);
+            let src = abap_rt_table_new(1);
+            append_byte(dst, 9);
+            append_byte(src, 1);
+            append_byte(src, 2);
+
+            abap_rt_table_assign(dst, src);
+
+            assert_eq!(rows_of(dst), vec![1, 2]);
+            assert_eq!(rows_of(src), vec![1, 2], "source keeps its rows");
+            append_byte(src, 3);
+            assert_eq!(
+                rows_of(dst),
+                vec![1, 2],
+                "later changes of the source do not reach the copy"
+            );
+        }
+    }
+
+    #[test]
+    fn table_assign_from_empty_source_empties_target() {
+        unsafe {
+            let dst = abap_rt_table_new(1);
+            let src = abap_rt_table_new(1);
+            append_byte(dst, 7);
+
+            abap_rt_table_assign(dst, src);
+
+            assert_eq!(abap_rt_table_count(dst), 0);
+        }
+    }
+
+    #[test]
+    fn table_assign_to_itself_keeps_rows() {
+        unsafe {
+            let t = abap_rt_table_new(1);
+            append_byte(t, 4);
+            append_byte(t, 5);
+
+            abap_rt_table_assign(t, t);
+
+            assert_eq!(rows_of(t), vec![4, 5]);
+        }
+    }
+
+    #[test]
+    fn table_assign_with_null_handle_does_nothing() {
+        unsafe {
+            let t = abap_rt_table_new(1);
+            append_byte(t, 6);
+
+            abap_rt_table_assign(t, std::ptr::null());
+            abap_rt_table_assign(std::ptr::null_mut(), t);
+
+            assert_eq!(rows_of(t), vec![6]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn field(value: i32, len: usize) -> String {
+        String::from_utf16(&int_to_char_field(value, len)).expect("valid UTF-16")
+    }
+
+    fn blanks(n: usize) -> String {
+        " ".repeat(n)
+    }
+
+    #[test]
+    fn positive_with_fewer_digits_is_right_aligned_with_blank_at_the_end() {
+        assert_eq!(field(42, 15), format!("{}42 ", blanks(12)));
+        assert_eq!(field(0, 5), format!("{}0 ", blanks(3)));
+        assert_eq!(field(1234, 5), "1234 ");
+        assert_eq!(field(12345678, 9), "12345678 ");
+    }
+
+    #[test]
+    fn zero_in_length_one_is_the_digit_without_sign_place() {
+        assert_eq!(field(0, 1), "0");
+    }
+
+    #[test]
+    fn positive_with_exactly_length_digits_fills_the_field() {
+        assert_eq!(field(12345, 5), "12345");
+        assert_eq!(field(123456789, 9), "123456789");
+    }
+
+    #[test]
+    fn positive_overflow_marks_star_and_keeps_the_last_length_minus_one_digits() {
+        assert_eq!(field(123456, 5), "*3456");
+        assert_eq!(field(1234567, 2), "*7");
+    }
+
+    #[test]
+    fn negative_with_fewer_digits_is_right_aligned_with_minus_at_the_end() {
+        assert_eq!(field(-42, 15), format!("{}42-", blanks(12)));
+        assert_eq!(field(-42, 10), format!("{}42-", blanks(7)));
+        assert_eq!(field(-42, 3), "42-");
+    }
+
+    #[test]
+    fn negative_with_digits_reaching_length_marks_star_and_keeps_last_length_minus_two_digits() {
+        assert_eq!(field(-12345, 5), "*345-");
+        assert_eq!(field(-123456, 5), "*456-");
+        assert_eq!(field(-123, 3), "*3-");
+        assert_eq!(field(-42, 2), "*-");
+    }
+
+    #[test]
+    fn length_one_keeps_only_the_star_for_negative_and_overflow_values() {
+        assert_eq!(field(-5, 1), "*");
+        assert_eq!(field(12, 1), "*");
+    }
+
+    #[test]
+    fn i32_limits_are_formatted_without_overflow_panic() {
+        assert_eq!(field(i32::MAX, 10), "2147483647");
+        assert_eq!(field(i32::MIN, 11), "2147483648-");
+        assert_eq!(field(i32::MIN, 10), "*47483648-");
+    }
+
+    #[test]
+    fn zero_length_field_receives_no_characters() {
+        assert_eq!(field(5, 0), "");
+        assert_eq!(field(-5, 0), "");
+    }
+
+    #[test]
+    fn result_always_has_exactly_the_field_length() {
+        let values = [
+            0,
+            1,
+            -1,
+            42,
+            -42,
+            12345,
+            -12345,
+            123456789,
+            i32::MAX,
+            i32::MIN,
+        ];
+        for len in 1..=12 {
+            for value in values {
+                assert_eq!(
+                    int_to_char_field(value, len).len(),
+                    len,
+                    "value {value} in length {len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn c_function_fills_the_whole_buffer_and_ignores_null() {
+        let mut buf = vec![b'x' as u16; 15];
+        unsafe {
+            abap_rt_int_to_chars(buf.as_mut_ptr(), 15, -42);
+            assert_eq!(
+                String::from_utf16(&buf).unwrap(),
+                format!("{}42-", blanks(12))
+            );
+            abap_rt_int_to_chars(std::ptr::null_mut(), 15, 42);
+        }
+    }
 }

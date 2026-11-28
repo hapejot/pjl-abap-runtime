@@ -511,21 +511,21 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-/// Argumente von `abapc library build`.
+/// Arguments of `abapc library build`.
 #[derive(Debug, Args)]
 pub struct BuildOptions {
-    /// Ordner mit `.abap`-Dateien oder abapGit-ZIP
+    /// Folder with `.abap` files or abapGit ZIP
     pub input: PathBuf,
-    /// Name der Bibliothek
+    /// Name of the library
     #[arg(long)]
     pub name: String,
-    /// Systemkennung, z.B. H25
+    /// System ID, e.g. H25
     #[arg(long)]
     pub system: String,
-    /// Release des Systems
+    /// Release of the system
     #[arg(long, default_value = "unbekannt")]
     pub release: String,
-    /// Ausgabedatei (JSON)
+    /// Output file (JSON)
     #[arg(short = 'o', long)]
     pub output: PathBuf,
 }

@@ -133,6 +133,23 @@ impl Lowerer {
                     self.ty_of(&toks[3..], line)?
                 };
                 self.data_types.insert(name.clone(), ty);
+                // Konvertierungsroutine der Domäne des Datenelements (FR-005, Stufe 1). Eine unbekannte
+                // Routine ist ein Fehler, kein stiller Fallback.
+                self.variable_conversions.remove(&name);
+                if toks.len() >= 4 && toks[2].is_word("TYPE") && toks[3].kind == Kind::Word {
+                    let element = word(&toks[3]);
+                    if let Some(routine) = self.ddic_conversions.get(&element).cloned() {
+                        if !crate::ddic::SUPPORTED_CONVERSION_ROUTINES.contains(&routine.as_str()) {
+                            return err(
+                                line,
+                                format!(
+                                    "Conversion routine '{routine}' of data element '{element}' is not supported"
+                                ),
+                            );
+                        }
+                        self.variable_conversions.insert(name.clone(), routine);
+                    }
+                }
                 // Der Dynpro-Typ (c, n, d, t, i, p) geht im IR verloren, daher wird er hier festgehalten
                 let field_type = if toks[2].is_word("TYPE") {
                     super::screen::field_type_of(&toks[3..])
@@ -432,9 +449,15 @@ impl Lowerer {
                 } else {
                     Some(parse_expr(rest, line)?)
                 };
+                // Konvertierungsroutine nur bei einer einzelnen Variable mit Domäne (FR-005)
+                let conversion = match rest {
+                    [t] if t.kind == Kind::Word => self.variable_conversions.get(&word(t)).cloned(),
+                    _ => None,
+                };
                 out.push(Stmt::Write {
                     newline,
                     value,
+                    conversion,
                     line,
                 });
                 Ok(())
@@ -607,17 +630,27 @@ impl Lowerer {
                 if toks.len() < 3 || !toks[1].is_word("OBJECT") || toks[2].kind != Kind::Word {
                     return err(line, "CREATE OBJECT expects an object name");
                 }
-                let end = toks[3..]
+                // Optional: TYPE <klasse> nach dem Namen
+                let (class, start) = if toks.get(3).is_some_and(|token| token.is_word("TYPE")) {
+                    let Some(class) = toks.get(4).filter(|token| token.kind == Kind::Word) else {
+                        return err(line, "CREATE OBJECT TYPE expects a class name");
+                    };
+                    (Some(word(class).to_lowercase()), 5)
+                } else {
+                    (None, 3)
+                };
+                let end = toks[start..]
                     .iter()
                     .position(|token| token.is_punct("#"))
-                    .map(|offset| 3 + offset)
+                    .map(|offset| start + offset)
                     .unwrap_or(toks.len());
-                let (args, receiving) = parse_call_args(&toks[3..end], line)?;
+                let (args, receiving) = parse_call_args(&toks[start..end], line)?;
                 if receiving.is_some() {
                     return err(line, "CREATE OBJECT does not support RECEIVING");
                 }
                 out.push(Stmt::Create {
                     name: word(&toks[2]),
+                    class,
                     args,
                     line,
                 });

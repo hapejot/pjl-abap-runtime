@@ -95,6 +95,19 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
+    /// Fehler einer Teilauswertung (Bedingung, Vergleich) merken und mit `fallback` weiter übersetzen. Ohne das
+    /// blieben Blöcke des Kontrollflusses (etwa `endif`) unabgeschlossen, und der LLVM-Prüfer meldete einen
+    /// zweiten, irreführenden Fehler.
+    pub(super) fn defer<T>(&mut self, result: CResult<T>, fallback: T) -> T {
+        match result {
+            Ok(value) => value,
+            Err(e) => {
+                self.errors.push(e);
+                fallback
+            }
+        }
+    }
+
     pub(super) fn current_open(&self) -> bool {
         self.builder
             .get_insert_block()

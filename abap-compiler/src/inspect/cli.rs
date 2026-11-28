@@ -28,49 +28,49 @@ fn read_entry(archive: &mut ZipArchive<File>, path: &str) -> String {
         .unwrap_or(text)
 }
 
-/// Untersucht ZIP-Exporte aus abapGit.
+/// Inspects ZIP exports from abapGit.
 #[derive(Args, Debug)]
 pub struct Options {
-    /// ZIP-Datei aus abapGit
+    /// ZIP file from abapGit
     pub zip_path: String,
 
-    /// Alle Dateien im ZIP mit Groesse auflisten
+    /// List all files in the ZIP with size
     #[arg(long)]
     pub files: bool,
 
-    /// Nur Objekte dieses Typs (z.B. CLAS, DTEL, DOMA, DEVC)
+    /// Only objects of this type (e.g. CLAS, DTEL, DOMA, DEVC)
     #[arg(long = "type", value_name = "TYPE")]
     pub type_filter: Option<String>,
 
-    /// Inhalt einer Datei im ZIP ausgeben (Pfad wie in --files)
+    /// Print the content of a file in the ZIP (path as in --files)
     #[arg(long, value_name = "PATH")]
     pub show: Option<String>,
 
-    /// ABAP-Datei aus dem ZIP parsen und Gliederung ausgeben
+    /// Parse an ABAP file from the ZIP and print its outline
     #[arg(long, value_name = "PATH")]
     pub ast: Option<String>,
 
-    /// Alle .abap-Dateien parsen und Fehler melden
+    /// Parse all .abap files and report errors
     #[arg(long)]
     pub check: bool,
 
-    /// Top-Level-Deklarationen je Entwicklungsobjekt ausgeben
+    /// Print top-level declarations per development object
     #[arg(long)]
     pub objects: bool,
 
-    /// ABAP-, SQL-/DDIC-Modell und Abhängigkeiten aus dem ZIP als JSON ausgeben
+    /// Print the ABAP, SQL/DDIC model and dependencies from the ZIP as JSON
     #[arg(long)]
     pub model: bool,
 
-    /// Verwendungen als Kanten (Aufrufe, Vererbung, Typen je Member mit Datei und Zeile) als JSON ausgeben
+    /// Print usages as edges (calls, inheritance, types per member with file and line) as JSON
     #[arg(long)]
     pub deps: bool,
 
-    /// Extern benötigte Klassen und Interfaces, aggregiert je Typ, als JSON ausgeben
+    /// Print the externally required classes and interfaces, aggregated per type, as JSON
     #[arg(long)]
     pub external: bool,
 
-    /// Interaktive Oberflaeche: Objektliste mit Filter und Quelltext
+    /// Interactive UI: object list with filter and source text
     #[arg(long)]
     pub tui: bool,
 }
