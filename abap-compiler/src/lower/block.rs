@@ -310,14 +310,7 @@ impl Lowerer {
                 });
                 Ok(())
             }
-            "SELECT" => {
-                out.push(Stmt::ExternalOperation {
-                    name: "select_loop".into(),
-                    line,
-                });
-                self.lower_nodes(&nodes(body), out)?;
-                Ok(())
-            }
+            "SELECT" => self.lower_select_loop(head, body, out),
             other => err(line, format!("Unsupported block statement: {other}")),
         }
     }

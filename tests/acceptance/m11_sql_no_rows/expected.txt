@@ -1,0 +1,3 @@
+single: 4
+loop: 4
+table: 4

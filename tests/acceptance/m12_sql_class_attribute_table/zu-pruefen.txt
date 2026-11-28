@@ -1,0 +1,1 @@
+Offen: Der Fall prüft nur, dass MODIFY und DELETE auf einem Klassenattribut als interne Form übersetzt werden (keine DDIC-Tabelle). Die Methode wird nicht aufgerufen, weil die interne Form ein ExternalOperation ist und die Laufzeit sie nicht ausführt. Ob `MODIFY itab FROM wa` ohne INDEX/Schlüssel in ABAP gültig ist, ist nicht geprüft.

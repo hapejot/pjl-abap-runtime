@@ -80,12 +80,9 @@ impl Lowerer {
                     toks.get(1).map(word).unwrap_or_default()
                 ),
             ),
-            "SELECT" | "UPDATE" | "MODIFY" => {
-                out.push(Stmt::ExternalOperation {
-                    name: kw.to_lowercase(),
-                    line,
-                });
-                Ok(())
+            "SELECT" => self.lower_select(s, out),
+            "UPDATE" | "MODIFY" | "INSERT" | "DELETE" | "COMMIT" | "ROLLBACK" => {
+                self.lower_write(s, &kw, out)
             }
             "CONSTANTS" => {
                 let Some(value_index) = toks.iter().rposition(|token| token.is_word("VALUE"))
@@ -682,14 +679,7 @@ impl Lowerer {
                 });
                 Ok(())
             }
-            "DELETE" => {
-                out.push(Stmt::ExternalOperation {
-                    name: "delete_table_range".into(),
-                    line,
-                });
-                Ok(())
-            }
-            "INSERT" | "COLLECT" => {
+            "COLLECT" => {
                 out.push(Stmt::ExternalOperation {
                     name: kw.to_lowercase(),
                     line,
@@ -706,13 +696,6 @@ impl Lowerer {
             "CONVERT" => {
                 out.push(Stmt::ExternalOperation {
                     name: "convert_timestamp".into(),
-                    line,
-                });
-                Ok(())
-            }
-            "COMMIT" | "ROLLBACK" => {
-                out.push(Stmt::ExternalOperation {
-                    name: kw.to_lowercase(),
                     line,
                 });
                 Ok(())

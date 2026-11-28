@@ -1,0 +1,10 @@
+Projektentscheidungen ohne Beleg im ABAP-Standard (Umsatzanteil, Phasenregel, Datumsprüfung, Anzeige nach F4, Tastenbelegung, Nummernvergabe).
+
+Nicht aus dem ABAP-Standard belegt, daher hier geprüft:
+- Umsatzanteil je Kunde: Formel (gewonnen * 100) DIV Summe gewonnen. DIV schneidet ab (Doku Abschnitt 4); die Prozentzahl ist eine Projektfestlegung. Erwartung: 7 % und 92 %, Kunde 4 mit 0 %.
+- Berichtszeile mit Kundennamen: String-Template entfernt nachgestellte Leerzeichen aus c-Feldern. Im Ablauf ist das angenommen, nicht gegen SAP belegt.
+- Zinfo nach F4: Die Wertehilfe zeichnet nur das F4-Feld neu (Spec 12b). Der Hinweis "Gueltige Werte" erscheint deshalb erst beim nächsten PBO. Gesetzt im Modul, im Gitterabzug nicht sichtbar.
+- Phasenregel: Eine abgeschlossene Chance (gewonnen, verloren) wird nicht wieder offen. Abschlussdatum ist Pflicht bei Abschluss. Datum nur auf 8 Ziffern geprüft, keine Kalenderprüfung. Eigene Festlegung.
+- Fehler per MESSAGE TYPE 'E' im PAI: Dynpro bleibt, PBO läuft erneut (Spec 6.5). Die Anweisung steht am Ende des Moduls.
+- Löschen mit Bestätigung: F5 Ja, F12 Nein (CANCEL). Der Rollback-Zweig in f_delete_kunde (Kunde nicht gefunden) ist in diesem Fall nicht ausgelöst.
+- Nummernvergabe: höchste vorhandene Nummer plus 1, nicht ein Nummernkreis. Eine bereits vergebene Nummer führt zu einer Meldung.

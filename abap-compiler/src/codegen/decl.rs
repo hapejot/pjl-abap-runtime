@@ -35,8 +35,21 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     self.hoist(other)?;
                 }
-                Stmt::Do { body, .. } | Stmt::While { body, .. } | Stmt::Loop { body, .. } => {
-                    self.hoist(body)?
+                Stmt::Do { body, .. }
+                | Stmt::While { body, .. }
+                | Stmt::Loop { body, .. }
+                | Stmt::SqlLoop { body, .. } => self.hoist(body)?,
+                Stmt::Try {
+                    body,
+                    catches,
+                    cleanup,
+                    ..
+                } => {
+                    self.hoist(body)?;
+                    for catch in catches {
+                        self.hoist(&catch.body)?;
+                    }
+                    self.hoist(cleanup)?;
                 }
                 _ => {}
             }

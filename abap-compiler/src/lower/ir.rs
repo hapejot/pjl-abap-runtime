@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::dynpro::{DynproFile, FieldType, Phase};
+use abap_sql_ir::SqlRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ty {
@@ -215,6 +216,36 @@ pub enum Stmt {
         name: String,
         line: usize,
     },
+    /// SQL-Anweisung ohne Cursor (`SELECT SINGLE`, `INTO TABLE`, `APPENDING TABLE`). `id` ist der Index in
+    /// `Ir::sql_requests`, `params` die Hostvariablen in der Reihenfolge `SelectOp::params`, `target` das Ziel.
+    Sql {
+        id: u32,
+        params: Vec<String>,
+        target: String,
+        line: usize,
+    },
+    /// `SELECT ... ENDSELECT`: Cursor, der Körper läuft je Zeile (siehe `Stmt::Sql` für die übrigen Felder)
+    SqlLoop {
+        id: u32,
+        params: Vec<String>,
+        target: String,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    /// Schreibende Open-SQL-Anweisung (`INSERT`, `UPDATE`, `DELETE`, `MODIFY`). `id` ist der Index in
+    /// `Ir::sql_requests`, `params` die Hostvariablen der Anweisung in der Reihenfolge `params` der Anfrage.
+    /// `target` ist der Arbeitsbereich bzw. die interne Tabelle der Zeilenquelle; leer heißt ohne Zeilenquelle.
+    SqlWrite {
+        id: u32,
+        params: Vec<String>,
+        target: String,
+        line: usize,
+    },
+    /// `COMMIT WORK [AND WAIT]` (`rollback` false) bzw. `ROLLBACK WORK` (`rollback` true). `SY-SUBRC` wird gesetzt.
+    SqlCommit {
+        rollback: bool,
+        line: usize,
+    },
     /// Ausdrucksanweisung ohne Zuweisung, z.B. `a->m( )->n( x = 1 ).`
     ExprStmt {
         expr: Expr,
@@ -411,4 +442,6 @@ pub struct Ir {
     pub screen_refs: Vec<ScreenRef>,
     /// Inhalt der `.dynp`-Datei; `None`, wenn keine Datei gehört. Wird nach der Prüfung gesetzt.
     pub screens: Option<DynproFile>,
+    /// SQL-Anweisungen des Programms (Phase 1). Der Index ist die `id` in `Stmt::Sql` und `Stmt::SqlLoop`.
+    pub sql_requests: Vec<SqlRequest>,
 }

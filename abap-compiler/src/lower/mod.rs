@@ -5,6 +5,7 @@ mod block;
 mod decl;
 mod ir;
 mod screen;
+mod sql;
 mod stmt;
 mod tokens;
 
@@ -108,6 +109,8 @@ struct Lowerer {
     modules: Vec<ModuleDef>,
     /// Verweise auf Dynpros und GUI-Status aus den Anweisungen
     screen_refs: Vec<ScreenRef>,
+    /// SQL-Anweisungen (Phase 1); der Index ist die `id` der `Stmt::Sql`-Anweisungen
+    sql_requests: Vec<abap_sql_ir::SqlRequest>,
 }
 
 /// Signatur einer Methode aus der Klassendefinition.
@@ -125,6 +128,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         struct_field_types: HashMap::new(),
         modules: Vec::new(),
         screen_refs: Vec::new(),
+        sql_requests: Vec::new(),
         errors: Vec::new(),
         structs: Vec::new(),
         names: HashMap::new(),
@@ -253,9 +257,20 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
                 continue;
             }
         };
+        // Parameter der FORM sind im Rumpf als Variablen bekannt (Typ für Hostvariablen in SELECT)
+        let saved: Vec<(String, Option<Ty>)> = params
+            .iter()
+            .map(|p| (p.name.clone(), lw.data_types.insert(p.name.clone(), p.ty)))
+            .collect();
         let mut fbody = Vec::new();
         if let Err(e) = lw.lower_nodes(&nodes(body), &mut fbody) {
             lw.errors.push(e);
+        }
+        for (param, previous) in saved {
+            match previous {
+                Some(ty) => lw.data_types.insert(param, ty),
+                None => lw.data_types.remove(&param),
+            };
         }
         forms.push(Form {
             name: head.tokens.get(1).map(word).unwrap_or_default(),
@@ -283,6 +298,7 @@ fn parse_l2_program(prog: &Program, ddic: &Ddic) -> Result<Ir, Vec<CompileError>
         struct_field_types: lw.struct_field_types,
         screen_refs: lw.screen_refs,
         screens: None,
+        sql_requests: lw.sql_requests,
     })
 }
 

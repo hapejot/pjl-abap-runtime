@@ -1,0 +1,1 @@
+Offen: Eine Komponente des Ziels ohne Spalte bleibt bei INTO CORRESPONDING FIELDS OF unverändert ("extra kept"). Das folgt dem ABAP-Standard nur in der Form, die die Projektannahme beschreibt; die genaue Regel ist nicht gegen die SAP-Doku belegt (Abschnitt 17).

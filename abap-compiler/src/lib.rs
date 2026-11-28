@@ -9,4 +9,5 @@ pub mod inspect;
 pub mod library;
 pub mod lower;
 pub mod project;
+pub mod sqlcheck;
 pub mod symbols;

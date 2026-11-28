@@ -1,0 +1,118 @@
+' CRM-Demo: Ablauf per Tastatur. Startzustand: Kunde 1 aus db.sql.
+SNAPSHOT
+' Kunde per Nummer wählen: 3 eingeben, Enter
+FIELD ZKUNNR
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+TYPE '3'
+KEY ENTER
+SNAPSHOT
+' Blättern zurück: Kunde 2 (F7)
+KEY F7
+SNAPSHOT
+' Neuanlage: Kunde 4. Die Nummer vergibt das Programm.
+KEY F9
+FIELD ZNAME
+TYPE 'Testfirma Sued'
+FIELD ZORT
+TYPE 'Stuttgart'
+FIELD ZBRANCHE
+TYPE 'Software'
+KEY F11
+SNAPSHOT
+' Zurück zu Kunde 2 (F7 zweimal), Ort ändern
+KEY F7
+KEY F7
+FIELD ZORT
+TYPE 'Koeln-Deutz'
+KEY F11
+SNAPSHOT
+' Kontakte und Verkaufschancen von Kunde 2 (F5)
+KEY F5
+SNAPSHOT
+' Kontakt 3 ändern: Telefon
+FIELD ZTELEFON
+TYPE '0221 9876999'
+KEY F11
+SNAPSHOT
+' Verkaufschance 3 ändern: Titel
+FIELD ZTITEL
+TYPE 'Maschinenpark Ost'
+KEY F11
+SNAPSHOT
+' Neuer Kontakt mit ungültiger E-Mail: Fehler über TRY/CATCH, dann korrigiert
+KEY F9
+FIELD ZVORNAME
+TYPE 'Max'
+FIELD ZNACHNAME
+TYPE 'Keller'
+FIELD ZEMAIL
+TYPE 'kein-at'
+KEY F11
+SNAPSHOT
+FIELD ZEMAIL
+TYPE 'max.keller@rheinbau.example'
+KEY F11
+SNAPSHOT
+' Neue Verkaufschance: Wert 0 wird abgewiesen, dann F4 auf Phase, dann fehlt das Abschlussdatum
+KEY F10
+FIELD ZTITEL
+TYPE 'Pumpenlieferung'
+KEY F11
+SNAPSHOT
+FIELD ZWERT
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+KEY DELETE
+TYPE '15000'
+FIELD ZPHASE
+KEY F4
+SNAPSHOT
+KEY F11
+SNAPSHOT
+FIELD ZABSCHLUSS
+TYPE '20261120'
+KEY F11
+SNAPSHOT
+' Verkaufschance 4 (verloren) wählen. Löschen mit Nein (F12), dann mit Ja (F5).
+KEY F5
+SNAPSHOT
+KEY SHIFT-F3
+SNAPSHOT
+KEY F12
+SNAPSHOT
+KEY SHIFT-F3
+KEY F5
+SNAPSHOT
+' Kontakt 5 löschen (Ja)
+KEY SHIFT-F2
+SNAPSHOT
+KEY F5
+SNAPSHOT
+' Zurück zum Kunden: Kontakte 1, Verkaufschancen 2
+KEY F3
+SNAPSHOT
+' Kunde 2 samt Kontakten und Verkaufschancen löschen (Bestätigung mit F5)
+KEY SHIFT-F2
+SNAPSHOT
+KEY F5
+SNAPSHOT
+' Zurück: Bericht
+KEY F3

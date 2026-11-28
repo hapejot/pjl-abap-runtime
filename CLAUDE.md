@@ -24,6 +24,7 @@ Zu klären:
   - Dynpro-Beschreibung (`.dynp`): Parser und Prüfung im Compiler, Übersetzung in `abap_rt_screen_*`-Aufrufe im Codegen.
 - `tests/acceptance/<fall>/`: ABAP-Akzeptanzfälle. Runner: `abap-compiler/tests/acceptance.rs`.
 - `abapgit-inspect/`: jq-Skripte und JSON-Auswertungen. Kein Rust-Crate.
+- `abap-sql-ir`: SQL-Zwischenstruktur (IR) für Open-SQL-Anweisungen (`doc/sql-spezifikation.md`, Abschnitt 5).
 
 ## Befehle
 

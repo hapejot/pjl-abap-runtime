@@ -1,0 +1,1 @@
+adapter postgres is not implemented in this version

@@ -1,0 +1,1 @@
+Offen (Entscheidung des Auftraggebers): SY-SUBRC bleibt nach COMMIT WORK und ROLLBACK WORK unverändert. Der Standard sieht dafür keinen Wert vor; nicht gegen die SAP-Doku belegt.

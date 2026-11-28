@@ -1,0 +1,13 @@
+CRM-Bericht
+Offene Verkaufschancen
+  Chance 1, Kunde 1: Lagerhalle Ausbau 50000 EUR
+  Chance 6, Kunde 3: Schulungen 8000 EUR
+  Anzahl 2, Summe 58000 EUR
+Gewonnene Verkaufschancen
+  Chance 2, Kunde 1: Software-Wartung 12000 EUR
+  Chance 5, Kunde 3: Werkserweiterung 150000 EUR
+  Anzahl 2, Summe 162000 EUR
+Umsatzanteil je Kunde (gewonnene Chancen)
+  Kunde 1 Nordlicht Handel: 12000 EUR, 7 %
+  Kunde 3 Alpenwerk KG: 150000 EUR, 92 %
+  Kunde 4 Testfirma Sued: 0 EUR, 0 %

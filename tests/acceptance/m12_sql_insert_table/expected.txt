@@ -1,0 +1,11 @@
+inserted
+three rows
+0400
+0401
+0402
+duplicate skipped
+one new row
+0400
+0401
+0402
+0403

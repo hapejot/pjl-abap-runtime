@@ -1,0 +1,3 @@
+two rows read
+no rows
+empty loop dbcnt zero

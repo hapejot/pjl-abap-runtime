@@ -10,8 +10,10 @@ use abap_compiler::{
     codegen::Codegen,
     dynpro, inspect, library,
     lower::{lower_program_with, parse_source, Ir},
-    project,
+    project, sqlcheck,
 };
+use abap_rt::sql::adapter::Capabilities;
+use abap_rt::sql::config::Config;
 use clap::{Parser, Subcommand};
 use inkwell::context::Context;
 use inkwell::targets::{
@@ -45,6 +47,13 @@ struct Cli {
     /// Dynpro-Beschreibung (.dynp). Ohne Angabe wird <name>.dynp neben <name>.abap gesucht.
     #[clap(long = "dynp")]
     dynp: Option<PathBuf>,
+    /// Nur übersetzen bis zur SQL-IR: gibt die SQL-Anfragen als JSON-Liste auf stdout aus (kein Codegen)
+    #[clap(long = "dump-sql")]
+    dump_sql: Option<PathBuf>,
+    /// Datenbank-Konfiguration (TOML): prüft die SQL-Anweisungen zur Übersetzungszeit gegen Tabellen,
+    /// Verbindungen und Fähigkeiten. Ohne Angabe findet keine Prüfung statt.
+    #[clap(long = "db-config")]
+    db_config: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -72,6 +81,17 @@ struct Args {
     runtime: Option<PathBuf>,
     program: Option<String>,
     dynp: Option<PathBuf>,
+    db_config: Option<PathBuf>,
+}
+
+/// Prüft die SQL-Anfragen des Programms gegen die Datenbank-Konfiguration (`--db-config`). Fehler gehen nach
+/// Zeile sortiert nach stderr; ein Fehler beendet den Lauf.
+fn check_database(ir: &Ir, path: &Path) {
+    let config = Config::from_file(path).unwrap_or_else(|e| fail(e));
+    let errors = sqlcheck::check_requests(&config, &ir.sql_requests, &Capabilities::sqlite());
+    if !errors.is_empty() {
+        fail_all(errors);
+    }
 }
 
 /// Liest die Dynpro-Datei (`--dynp` oder `<name>.dynp` neben dem Programm), prüft sie gegen das Programm und
@@ -219,8 +239,46 @@ fn link(obj: &Path, runtime: &Path, exe: &Path) -> Result<(), String> {
     }
 }
 
+/// Übersetzt die Eingabe bis zur IR: Hauptprogramm aus einem ZIP-Export mit DDIC, sonst eine ABAP-Datei.
+fn lower_input(input: &Path, is_zip: bool, program: Option<&str>) -> Ir {
+    if is_zip {
+        // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
+        let mut programs = project::load_programs(input).unwrap_or_else(|e| fail(e));
+        let name = project::main_program(&programs, program).unwrap_or_else(|e| fail(e));
+        let mut prog = programs
+            .remove(&name)
+            .expect("main program is present in the export");
+        project::expand_includes(&mut prog, &programs);
+        let ddic = project::load_ddic(input).unwrap_or_else(|e| fail(e));
+        for skipped in &ddic.skipped {
+            eprintln!("abapc: note: DDIC object skipped: {skipped}");
+        }
+        match lower_program_with(&prog, &ddic) {
+            Ok(ir) => ir,
+            Err(errors) => fail_all(errors),
+        }
+    } else {
+        let src = std::fs::read_to_string(input)
+            .unwrap_or_else(|e| fail(format!("{}: {e}", input.display())));
+        match parse_source(&src) {
+            Ok(ir) => ir,
+            Err(errors) => fail_all(errors),
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+    if let Some(path) = &cli.dump_sql {
+        // Nur bis zur IR übersetzen und die SQL-Anfragen als JSON ausgeben (kein Codegen, kein Linken)
+        let is_zip = path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+        let ir = lower_input(path, is_zip, cli.program.as_deref());
+        let json = serde_json::to_string_pretty(&ir.sql_requests).unwrap_or_else(|e| fail(e));
+        println!("{json}");
+        return;
+    }
     match cli.command {
         Some(Sub::Inspect(opts)) => {
             inspect::cli::run(opts);
@@ -251,6 +309,7 @@ fn main() {
         runtime: cli.runtime,
         program: cli.program,
         dynp: cli.dynp,
+        db_config: cli.db_config,
     };
     tracing_subscriber::registry()
         .with(fmt::layer())
@@ -262,32 +321,11 @@ fn main() {
         args.input.display(),
         args.output.display()
     );
-    let mut ir = if is_zip {
-        // Hauptprogramm aus dem Export, INCLUDEs aus demselben Export aufgelöst
-        let mut programs = project::load_programs(&args.input).unwrap_or_else(|e| fail(e));
-        let name =
-            project::main_program(&programs, args.program.as_deref()).unwrap_or_else(|e| fail(e));
-        let mut prog = programs
-            .remove(&name)
-            .expect("main program is present in the export");
-        project::expand_includes(&mut prog, &programs);
-        let ddic = project::load_ddic(&args.input).unwrap_or_else(|e| fail(e));
-        for skipped in &ddic.skipped {
-            eprintln!("abapc: note: DDIC object skipped: {skipped}");
-        }
-        match lower_program_with(&prog, &ddic) {
-            Ok(ir) => ir,
-            Err(errors) => fail_all(errors),
-        }
-    } else {
-        let src = std::fs::read_to_string(&args.input)
-            .unwrap_or_else(|e| fail(format!("{}: {e}", args.input.display())));
-        match parse_source(&src) {
-            Ok(ir) => ir,
-            Err(errors) => fail_all(errors),
-        }
-    };
+    let mut ir = lower_input(&args.input, is_zip, args.program.as_deref());
 
+    if let Some(path) = &args.db_config {
+        check_database(&ir, path);
+    }
     attach_dynpro(&mut ir, &args.input, args.dynp.as_deref(), is_zip);
 
     let ctx = Context::create();

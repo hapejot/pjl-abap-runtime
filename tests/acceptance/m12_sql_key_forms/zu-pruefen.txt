@@ -1,0 +1,1 @@
+SY-DBCNT bei UPDATE FROM wa und DELETE FROM wa (1 bei Erfolg): Annahme des Compilers, im Belegbericht nicht belegt (Abschnitt 17). Die übrigen Prüfungen (SY-SUBRC) folgen der Doku.

@@ -1,0 +1,1 @@
+type mismatch in WHERE: column carrid (CHAR) compared with numeric value

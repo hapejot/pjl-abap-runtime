@@ -17,6 +17,11 @@ regex = "1"
 inkwell = { version = "0.9", default-features = false, features = ["llvm21-1", "target-x86"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+abap-sql-ir = { path = "../abap-sql-ir" }
+abap-rt = { path = "../abap-rt" }
+
+[dev-dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(target_env = "msvc")'.dependencies]
 cc = "1.11.2"

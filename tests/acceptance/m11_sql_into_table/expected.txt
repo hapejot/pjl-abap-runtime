@@ -1,0 +1,7 @@
+found
+lines ok
+0400
+0401
+0402
+empty
+cleared

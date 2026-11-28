@@ -10,7 +10,42 @@ impl<'ctx> Codegen<'ctx> {
         for s in stmts {
             let result = self.emit_stmt(s);
             self.collect(result);
+            if self.try_nested_check {
+                let check = self.check_pending_in_try();
+                self.collect(check);
+            }
         }
+        Ok(())
+    }
+
+    /// Nach einer Anweisung in einem verschachtelten Block des TRY-Körpers: liegt eine Ausnahme vor (aus einem
+    /// Methodenaufruf etwa), werden die Cursor der Schleifen innerhalb des TRY-Blocks geschlossen und der Ablauf
+    /// springt zur Behandlung. Die Anweisungen danach laufen nicht weiter (Spezifikation, Abschnitt 6.2 und 10).
+    fn check_pending_in_try(&mut self) -> CResult<()> {
+        let Some(dispatch) = self.exception_target else {
+            return Ok(());
+        };
+        if !self.current_open() {
+            return Ok(());
+        }
+        let raised = self.new_block("try_nested_raised")?;
+        let next = self.new_block("try_nested_next")?;
+        let pending = self.call_int(self.rt.exception_pending, &[])?;
+        let condition = llvm(self.builder.build_int_compare(
+            IntPredicate::NE,
+            pending,
+            self.i32t.const_zero(),
+            "exception_pending_nested",
+        ))?;
+        llvm(
+            self.builder
+                .build_conditional_branch(condition, raised, next),
+        )?;
+        self.builder.position_at_end(raised);
+        let depth = self.exception_loop_depth;
+        self.close_cursors(depth)?;
+        llvm(self.builder.build_unconditional_branch(dispatch))?;
+        self.builder.position_at_end(next);
         Ok(())
     }
 
@@ -40,7 +75,7 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     /// Marke der innersten Anweisung, die gerade übersetzt wird.
-    fn innermost_mark(&self) -> Option<IntValue<'ctx>> {
+    pub(super) fn innermost_mark(&self) -> Option<IntValue<'ctx>> {
         self.stmt_marks.last().copied()
     }
 
@@ -235,6 +270,9 @@ impl<'ctx> Codegen<'ctx> {
                 let Some(target) = self.exception_target.or(self.exit_fn) else {
                     return err(*line, "RAISE EXCEPTION without jump target");
                 };
+                // Cursor der Schleifen innerhalb des TRY-Blocks schließen, bevor die Ausnahme springt
+                let depth = self.exception_loop_depth;
+                self.close_cursors(depth)?;
                 llvm(self.builder.build_unconditional_branch(target))?;
                 self.open_dead_block()
             }
@@ -248,6 +286,8 @@ impl<'ctx> Codegen<'ctx> {
                 let Some(exit) = self.exit_fn else {
                     return err(0, "RETURN without routine");
                 };
+                // Offene Cursor aller Schleifen der Routine schließen (innerste zuerst)
+                self.close_cursors(0)?;
                 llvm(self.builder.build_unconditional_branch(exit))?;
                 self.open_dead_block()
             }
@@ -516,6 +556,26 @@ impl<'ctx> Codegen<'ctx> {
                 llvm(self.builder.build_store(p, n32))?;
                 Ok(())
             }
+            Stmt::Sql {
+                id,
+                params,
+                target,
+                line,
+            } => self.emit_sql_select(*id, params, target, *line),
+            Stmt::SqlLoop {
+                id,
+                params,
+                target,
+                body,
+                line,
+            } => self.emit_sql_loop(*id, params, target, body, *line),
+            Stmt::SqlWrite {
+                id,
+                params,
+                target,
+                line,
+            } => self.emit_sql_write(*id, params, target, *line),
+            Stmt::SqlCommit { rollback, line } => self.emit_sql_commit(*rollback, *line),
             Stmt::Screen { op, line } => self.emit_screen_op(op, *line),
             Stmt::NotSupported { tokens } => {
                 let keyword = tokens
@@ -776,7 +836,11 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         self.builder.position_at_end(bodyb);
-        self.loops.push(LoopCtx { exit, next: latch });
+        self.loops.push(LoopCtx {
+            exit,
+            next: latch,
+            cursor: None,
+        });
         self.emit_block(body)?;
         self.loops.pop();
         self.br_if_open(latch)?;
@@ -814,7 +878,11 @@ impl<'ctx> Codegen<'ctx> {
         llvm(self.builder.build_conditional_branch(c, bodyb, exit))?;
 
         self.builder.position_at_end(bodyb);
-        self.loops.push(LoopCtx { exit, next: head });
+        self.loops.push(LoopCtx {
+            exit,
+            next: head,
+            cursor: None,
+        });
         self.emit_block(body)?;
         self.loops.pop();
         self.br_if_open(head)?;
@@ -916,7 +984,11 @@ impl<'ctx> Codegen<'ctx> {
             )?;
             self.builder.position_at_end(filtered_body);
         }
-        self.loops.push(LoopCtx { exit, next: latch });
+        self.loops.push(LoopCtx {
+            exit,
+            next: latch,
+            cursor: None,
+        });
         self.emit_block(body)?;
         self.loops.pop();
         self.br_if_open(latch)?;
@@ -947,8 +1019,12 @@ impl<'ctx> Codegen<'ctx> {
         let dispatch = self.new_block("exception_dispatch")?;
         let continuation = self.new_block("try_done")?;
         let outer_target = self.exception_target;
+        let outer_depth = self.exception_loop_depth;
         self.exception_target = Some(dispatch);
+        self.exception_loop_depth = self.loops.len();
         let try_mark = self.innermost_mark();
+        let outer_nested = self.try_nested_check;
+        self.try_nested_check = true;
 
         for statement in body {
             self.emit_stmt(statement)?;
@@ -969,6 +1045,10 @@ impl<'ctx> Codegen<'ctx> {
             )?;
             self.builder.position_at_end(next);
         }
+        // Ab hier gilt der Körper nicht mehr: CATCH und CLEANUP springen zum äußeren Ziel
+        self.try_nested_check = outer_nested;
+        self.exception_target = outer_target;
+        self.exception_loop_depth = outer_depth;
         self.br_if_open(continuation)?;
         self.builder.position_at_end(dispatch);
         // Ausnahme: Zwischenwerte der auslösenden Anweisungen im TRY-Block freigeben
@@ -1039,12 +1119,13 @@ impl<'ctx> Codegen<'ctx> {
         } else {
             self.builder.position_at_end(next_test);
         }
-        self.exception_target = outer_target;
         self.emit_block(cleanup)?;
         let target = outer_target.or(self.exit_fn).ok_or_else(|| CompileError {
             line,
             message: "Unhandled exception without jump target".into(),
         })?;
+        // Cursor der Schleifen, die außerhalb des TRY-Blocks liegen und verlassen werden
+        self.close_cursors(outer_depth)?;
         self.br_if_open(target)?;
         self.builder.position_at_end(continuation);
         Ok(())

@@ -1,0 +1,1 @@
+Offen: Die Zuweisungsregel (NUMC 0400 nach n(6) ergibt 000400, CHAR LH nach c(5) ergibt LH mit drei Leerzeichen) ist belegt (Abschnitt 17). Die Anwendung über INTO CORRESPONDING FIELDS OF mit unterschiedlichen Feldlängen ist nur teilweise gegen die SAP-Doku belegt.

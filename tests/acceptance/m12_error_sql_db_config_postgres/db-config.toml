@@ -1,0 +1,11 @@
+[connections.DEFAULT]
+adapter = "postgres"
+host = "db.example.internal"
+port = 5432
+database = "archiv"
+user = "abapc"
+password_env = "ABAPC_ARCHIV_PASSWORD"
+
+[tables.ZFLUG]
+connection = "DEFAULT"
+target = "flug"

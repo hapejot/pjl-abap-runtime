@@ -675,6 +675,8 @@ pub extern "C" fn abap_rt_leave_to_screen(no: u32) {
 pub extern "C" fn abap_rt_leave_program() {
     term::restore();
     crate::abap_rt_finish();
+    // Offene LUWs zurückrollen, bevor der Prozess endet (Spezifikation 12)
+    crate::sql::abap_rt_sql_finish();
     let _ = io::stdout().flush();
     std::process::exit(0);
 }

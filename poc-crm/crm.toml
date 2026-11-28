@@ -1,0 +1,18 @@
+[connections.DEFAULT]
+adapter = "sqlite"
+path = 'crm.sqlite'
+
+[tables.ZKUNDE]
+connection = "DEFAULT"
+target = "zkunde"
+key = ["KUNNR"]
+
+[tables.ZKONTAKT]
+connection = "DEFAULT"
+target = "zkontakt"
+key = ["KNR"]
+
+[tables.ZCHANCE]
+connection = "DEFAULT"
+target = "zchance"
+key = ["CNR"]

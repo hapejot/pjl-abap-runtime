@@ -9,6 +9,7 @@
 pub mod decimal;
 pub mod packed;
 pub mod screen;
+pub mod sql;
 
 use std::io::{self, Write};
 use std::sync::atomic::AtomicU64;

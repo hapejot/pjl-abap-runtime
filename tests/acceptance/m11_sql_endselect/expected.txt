@@ -1,0 +1,8 @@
+first
+0400
+0401
+0402
+after loop
+0400
+exit ok
+checked

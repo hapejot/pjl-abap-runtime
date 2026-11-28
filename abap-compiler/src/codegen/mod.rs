@@ -17,6 +17,7 @@ mod layout;
 mod packed;
 mod routines;
 mod screen;
+mod sql;
 mod stmt;
 
 use std::collections::HashMap;
@@ -131,6 +132,8 @@ struct Var<'ctx> {
 struct LoopCtx<'ctx> {
     exit: BasicBlock<'ctx>,
     next: BasicBlock<'ctx>,
+    /// Speicherplatz des Cursor-Handles bei `SELECT ... ENDSELECT`; beim Verlassen ohne `exit` zu schließen
+    cursor: Option<PointerValue<'ctx>>,
 }
 
 /// Deklarierte Runtime-Funktionen.
@@ -215,6 +218,22 @@ struct Rt<'ctx> {
     leave_program: FunctionValue<'ctx>,
     set_pf_status: FunctionValue<'ctx>,
     message: FunctionValue<'ctx>,
+    /// `abap_rt_sql_select(id, ir, len, params, n, target, dbcnt) -> SY-SUBRC`
+    sql_select: FunctionValue<'ctx>,
+    /// `abap_rt_sql_cursor_open(id, ir, len, params, n) -> Cursor`
+    sql_cursor_open: FunctionValue<'ctx>,
+    /// `abap_rt_sql_cursor_fetch(cursor, target, dbcnt) -> 1 (Zeile) | 0 (Ende)`
+    sql_cursor_fetch: FunctionValue<'ctx>,
+    /// `abap_rt_sql_cursor_close(cursor) -> SY-SUBRC`
+    sql_cursor_close: FunctionValue<'ctx>,
+    /// `abap_rt_sql_execute(id, ir, len, params, n, target, dbcnt) -> SY-SUBRC` (INSERT, UPDATE, DELETE, MODIFY)
+    sql_execute: FunctionValue<'ctx>,
+    /// `abap_rt_sql_commit() -> 0`: `COMMIT WORK`
+    sql_commit: FunctionValue<'ctx>,
+    /// `abap_rt_sql_rollback() -> 0`: `ROLLBACK WORK`
+    sql_rollback: FunctionValue<'ctx>,
+    /// `abap_rt_sql_finish()`: Programmende, rollt offene LUWs zurück
+    sql_finish: FunctionValue<'ctx>,
 }
 
 pub struct Codegen<'ctx> {
@@ -255,6 +274,13 @@ pub struct Codegen<'ctx> {
     errors: Vec<CompileError>,
     /// MODULE-Funktionen je Phase und Name (Kleinschreibung), für `abap_rt_screen_module`
     module_fns: HashMap<(Phase, String), FunctionValue<'ctx>>,
+    /// JSON-Text je SQL-Anfrage; der Index ist die `id` in `Stmt::Sql` und `Stmt::SqlLoop`
+    sql_texts: Vec<String>,
+    /// Schleifentiefe am Beginn des umgebenden TRY-Blocks (0 ohne TRY). RAISE schließt Cursor ab dieser Tiefe.
+    exception_loop_depth: usize,
+    /// Im Körper eines TRY-Blocks (nicht in CATCH): nach jeder Anweisung verschachtelter Blöcke auf eine
+    /// anstehende Ausnahme prüfen, damit der Rest des Blocks nicht weiterläuft.
+    try_nested_check: bool,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -566,6 +592,60 @@ impl<'ctx> Codegen<'ctx> {
                 "abap_rt_message",
                 void.fn_type(&[i32t.into(), ptrt.into(), i64t.into()], false),
             ),
+            sql_select: f(
+                "abap_rt_sql_select",
+                i32t.fn_type(
+                    &[
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        ptrt.into(),
+                    ],
+                    false,
+                ),
+            ),
+            sql_cursor_open: f(
+                "abap_rt_sql_cursor_open",
+                ptrt.fn_type(
+                    &[
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                    ],
+                    false,
+                ),
+            ),
+            sql_cursor_fetch: f(
+                "abap_rt_sql_cursor_fetch",
+                i32t.fn_type(&[ptrt.into(), ptrt.into(), ptrt.into()], false),
+            ),
+            sql_cursor_close: f(
+                "abap_rt_sql_cursor_close",
+                i32t.fn_type(&[ptrt.into()], false),
+            ),
+            sql_execute: f(
+                "abap_rt_sql_execute",
+                i32t.fn_type(
+                    &[
+                        i32t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        i64t.into(),
+                        ptrt.into(),
+                        ptrt.into(),
+                    ],
+                    false,
+                ),
+            ),
+            sql_commit: f("abap_rt_sql_commit", i32t.fn_type(&[], false)),
+            sql_rollback: f("abap_rt_sql_rollback", i32t.fn_type(&[], false)),
+            sql_finish: f("abap_rt_sql_finish", void.fn_type(&[], false)),
         };
 
         Codegen {
@@ -595,6 +675,9 @@ impl<'ctx> Codegen<'ctx> {
             dynamic_types: Vec::new(),
             fs_override: HashMap::new(),
             module_fns: HashMap::new(),
+            sql_texts: Vec::new(),
+            exception_loop_depth: 0,
+            try_nested_check: false,
         }
     }
 
@@ -620,6 +703,7 @@ impl<'ctx> Codegen<'ctx> {
     fn emit_program_body(&mut self, ir: &Ir) -> CResult<()> {
         self.constants = ir.constants.clone();
         self.dynamic_types = ir.dynamic_types.clone();
+        self.sql_texts = ir.sql_requests.iter().map(abap_sql_ir::encode).collect();
         self.build_layouts(&ir.structs);
         // Klassen: Methoden als Funktionen deklarieren (Objektzeiger als erster Parameter)
         let void = self.ctx.void_type();
@@ -723,9 +807,12 @@ impl<'ctx> Codegen<'ctx> {
 
         self.alloca.position_at_end(entry);
         // SY-Felder für Dynpros: Programmvariablen, die der Prolog der Laufzeit meldet (Spec 8.2)
+        // SY-SUBRC und SY-DBCNT setzt die Laufzeit nach SQL-Anweisungen (Startwert 0)
         for (name, ty) in [
             ("sy-ucomm", Ty::Char(UCOMM_LENGTH)),
             ("sy-dynnr", Ty::Char(4)),
+            ("sy-subrc", Ty::Int),
+            ("sy-dbcnt", Ty::Int),
         ] {
             let slot = self.global_slot(name, ty);
             self.pending_init.push((slot, ty));
@@ -770,6 +857,10 @@ impl<'ctx> Codegen<'ctx> {
         self.br_if_open(exit)?;
 
         self.builder.position_at_end(exit);
+        // Offene LUWs zurückrollen. Ohne SQL-Anfrage kann keine LUW offen sein; dann bleibt das Programm unverändert.
+        if !ir.sql_requests.is_empty() {
+            self.call_void(self.rt.sql_finish, &[])?;
+        }
         self.call_void(self.rt.finish, &[])?;
         llvm(self.builder.build_return(Some(&self.i32t.const_zero())))?;
         llvm(self.alloca.build_unconditional_branch(body))?;

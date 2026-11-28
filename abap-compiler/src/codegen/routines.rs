@@ -41,6 +41,7 @@ impl<'ctx> Codegen<'ctx> {
         self.vars.clear();
         self.loops.clear();
         self.exception_target = None;
+        self.exception_loop_depth = 0;
         self.in_form = false;
         self.body = Some(body);
         self.exit_fn = Some(exit);
@@ -79,11 +80,11 @@ impl<'ctx> Codegen<'ctx> {
         self.vars.clear();
         self.loops.clear();
         self.exception_target = None;
+        self.exception_loop_depth = 0;
         self.in_form = true;
         self.body = Some(body);
         self.exit_fn = Some(exit);
         self.self_ctx = None;
-        self.exception_target = None;
 
         self.alloca.position_at_end(entry);
         let mut offset = 0u32;

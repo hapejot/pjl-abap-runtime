@@ -336,15 +336,12 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(Val::Str(sliced))
             }
             Expr::Var(name) => {
-                // sy-ucomm und sy-dynnr sind Globals (Dynpro); die übrigen SY-Felder haben feste Werte
+                // sy-ucomm, sy-dynnr, sy-subrc und sy-dbcnt sind Globals; die übrigen SY-Felder haben feste Werte
                 if let Some(component) = name
                     .strip_prefix("sy-")
                     .filter(|_| !self.globals.contains_key(name))
                 {
-                    if matches!(
-                        component,
-                        "subrc" | "index" | "tabix" | "fdpos" | "dbcnt" | "dynnr"
-                    ) {
+                    if matches!(component, "index" | "tabix" | "fdpos" | "dynnr") {
                         return Ok(Val::Int(self.i32t.const_zero()));
                     }
                     return Ok(Val::Chars(self.lit(""), 0));

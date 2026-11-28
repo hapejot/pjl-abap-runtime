@@ -6,6 +6,7 @@ target
 sample*
 .cargo
 zabapgit_standalone.prog.abap
+*.exe
 
 # Aus SAP-Systemen abgeleitete Metadaten: nicht einchecken (systemabhängig, lizenzrechtlich ungeklärt)
 libraries/

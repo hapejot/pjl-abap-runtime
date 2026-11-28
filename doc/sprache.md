@@ -71,12 +71,11 @@ Ob ein Schlüsselwort ausführbar ist, hängt vom Fall ab. Unbekannte Anweisunge
 
 **Erkannt, Verhalten nur teilweise belegt oder als Platzhalter:**
 
-- `SELECT`, `UPDATE`, `MODIFY`: werden als externe Operation markiert. Eine Datenbank gibt es nicht.
-  Ein Aufruf eines externen Funktionsbausteins endet mit Exit-Code 78 und der Meldung
+- `CALL FUNCTION`-Aufrufe: Ein Aufruf eines externen Funktionsbausteins endet mit Exit-Code 78 und der Meldung
   `externen Funktionsbaustein ... nicht implementiert` (`abap-rt/src/lib.rs`, `abap_rt_external_call`).
-- `CALL FUNCTION`, `SUBMIT`, `EXPORT`/`IMPORT`, `RECEIVE`, `WAIT`, `COMMIT`/`ROLLBACK`,
+- `CALL FUNCTION`, `SUBMIT`, `EXPORT`/`IMPORT`, `RECEIVE`, `WAIT`,
   `AUTHORITY-CHECK`, `MESSAGE`, `CONVERT`, `FIND`/`SEARCH`/`SHIFT`/`SPLIT`/`CONDENSE`/`TRANSLATE`/`OVERLAY`,
-  `REPLACE`, `DELETE`, `INSERT`/`COLLECT`, `DESCRIBE` (weitere Formen), `GET`: im Code erkannt, aber ohne
+  `REPLACE`, `COLLECT`, `DESCRIBE` (weitere Formen), `GET`: im Code erkannt, aber ohne
   Akzeptanzfall. Ihre Semantik ist daher nicht festgelegt.
 
 **Ignoriert (kein Laufzeitverhalten):**
@@ -85,6 +84,56 @@ Ob ein Schlüsselwort ausführbar ist, hängt vom Fall ab. Unbekannte Anweisunge
   `INTERFACE ... DEFERRED`.
 - `INCLUDE ... IF FOUND`, wenn die Datei fehlt. Ein `INCLUDE` ohne `IF FOUND` mit fehlender Datei ist
   ein Fehler (`m5_include_unresolved`).
+
+## 5a. Datenbankzugriff (Open SQL)
+
+Die Datenbank ist eine Laufzeit-Schnittstelle mit austauschbaren Adaptern (SQLite, externer Prozess).
+Der Compiler erzeugt pro Anweisung eine Zwischenstruktur (SQL-IR, JSON). Die Laufzeit führt sie aus. Die
+Spezifikation steht in [sql-spezifikation.md](sql-spezifikation.md).
+
+**Phase 1 (umgesetzt, Akzeptanzfälle `m11_*`):**
+
+- `SELECT [SINGLE] <* | Spalten> FROM <tab> [WHERE …] [ORDER BY …] [UP TO n ROWS] INTO <ziel>` aus einer Tabelle,
+  mit Zielen Arbeitsbereich, `@DATA(…)`, `INTO TABLE`, `APPENDING TABLE`.
+- `SELECT … ENDSELECT` als Cursor. `SY-DBCNT` zählt die gelesenen Zeilen, `SY-SUBRC` ist 0 bei mindestens
+  einer Zeile, sonst 4.
+- WHERE mit `=`, `<>`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `IN (…)`, `LIKE`, `AND`, `OR`, `NOT`, Klammern.
+  Hostvariablen mit `@x` oder `:x`.
+- Prüfung zur Übersetzungszeit: unbekannte Tabelle oder Spalte, Typkonflikt bei Vergleichen. Meldungen englisch,
+  mit Zeile. `abapc --dump-sql <datei>` zeigt die IR.
+
+**Phase 2 (umgesetzt, Akzeptanzfälle `m12_*`):**
+
+- `INSERT` als Einzelsatz (`VALUES`, `FROM wa`) und `INSERT … FROM TABLE` (mit `ACCEPTING DUPLICATE KEYS`).
+- `UPDATE … SET … WHERE …` und `UPDATE … FROM wa` (Zeile nach Schlüssel).
+- `DELETE FROM … WHERE …`, `DELETE … FROM wa`, `DELETE FROM TABLE itab`.
+- `MODIFY … FROM wa` und `MODIFY … FROM TABLE itab` (Upsert nach Schlüssel).
+- `COMMIT WORK [AND WAIT]`, `ROLLBACK WORK`.
+- `CORRESPONDING FIELDS OF` bei `SELECT`.
+- `SY-DBCNT` zählt betroffene Zeilen. `SY-SUBRC` ist 4, wenn keine Zeile betroffen ist.
+
+Dublette bei einem Einzelsatz-`INSERT`: `SY-SUBRC` 4, keine Ausnahme. Bei `INSERT FROM TABLE` ohne
+`ACCEPTING DUPLICATE KEYS` bricht das Programm mit einem Laufzeitfehler ab (`duplicate key`) und die offene
+LUW wird zurückgerollt. Eine Ausnahmeklasse `CX_SY_OPEN_SQL_DB` ist noch nicht umgesetzt.
+
+Transaktionen: Eine LUW je Verbindung beginnt beim ersten schreibenden Zugriff. Offene LUWs werden am
+Programmende und bei `LEAVE PROGRAM` zurückgerollt.
+
+`LIKE` ist case-sensitiv wie in ABAP. Ein `ESCAPE` wird abgelehnt.
+
+Übersetzung mit `abapc --db-config <datei>`: Der Compiler prüft die Fähigkeiten der Verbindungen zur
+Übersetzungszeit. Verbindungen vom Typ `postgres` und `odata` sind in dieser Version nicht verfügbar und
+führen zu einem Übersetzungsfehler. Verbindungen vom Typ `extern` werden erst zur Laufzeit geprüft.
+
+Trace: Mit der Umgebungsvariablen `ABAPC_TRACE_SQL` gibt das Programm Dialekttext und Parameternamen auf
+stderr aus, keine Feldwerte.
+
+**Nicht unterstützt (Übersetzungsfehler):** Joins, Aliase mit `~`, `DISTINCT`, `OFFSET`, Aggregate,
+`GROUP BY`, `HAVING`, `FOR ALL ENTRIES`, `CONNECTION`, `IS NULL`, Unterabfragen, `ESCAPE`, `STRING`-Spalten,
+`INSERT` mit Spaltenliste, `UPDATE … FROM TABLE`.
+
+Konfiguration: `<NAME>.toml` neben der EXE oder im Arbeitsverzeichnis, oder `ABAPC_DB_CONFIG`. Die Datei
+enthält keine Geheimnisse, nur Namen von Umgebungsvariablen (Spezifikation, Abschnitt 9).
 
 ## 6. Ausgabe
 
@@ -108,9 +157,9 @@ Ob ein Schlüsselwort ausführbar ist, hängt vom Fall ab. Unbekannte Anweisunge
 3. **Ganzzahl-Überlauf und Division durch 0**: Der Compiler bricht mit Exit-Code 1 ab und schreibt eine
    Meldung auf stderr (`m10_int_overflow`, `m10b_int_division_zero`). ABAP würde hier einen Laufzeitfehler
    mit Ausnahmeklasse auslösen. Die Meldung ist eine Vereinfachung und keine Nachbildung des Dumps.
-4. Dynpros sind nicht implementiert. Ziel ist eine Crossterm-Simulation (siehe `CLAUDE.md` und
-  `.claude/agents/dynpro-specialist.md`). Die Entscheidung, `crossterm` in die Laufzeit `abap-rt`
-  aufzunehmen, ist offen.
+4. Dynpros sind umgesetzt: `.dynp`-Layout, PBO/PAI, Wertehilfe `PROCESS ON VALUE-REQUEST`, Modalfenster
+  (Akzeptanzfälle `m11_dynpro_*` bis `m15_dynpro_*`). Die Terminal-Simulation läuft mit `crossterm` in
+  `abap-rt`. Die Spezifikation steht in `doc/dynpro-spezifikation.md`.
 
 **Lücken:**
 

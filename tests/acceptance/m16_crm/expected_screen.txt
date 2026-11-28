@@ -1,0 +1,575 @@
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   1                                               
+                                                                                
+ Name                  Nordlicht Handel                                         
+                                                                                
+ Ort                   Hamburg                                                  
+                                                                                
+ Branche               Handel                                                   
+                                                                                
+ Kontakte                       2                                               
+                                                                                
+ Verkaufschancen                2                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   3                                               
+                                                                                
+ Name                  Alpenwerk KG                                             
+                                                                                
+ Ort                   Muenchen                                                 
+                                                                                
+ Branche               Industrie                                                
+                                                                                
+ Kontakte                       1                                               
+                                                                                
+ Verkaufschancen                2                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   2                                               
+                                                                                
+ Name                  Rheinbau AG                                              
+                                                                                
+ Ort                   Koeln                                                    
+                                                                                
+ Branche               Bau                                                      
+                                                                                
+ Kontakte                       1                                               
+                                                                                
+ Verkaufschancen                2                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   4                                               
+                                                                                
+ Name                  Testfirma Sued                                           
+                                                                                
+ Ort                   Stuttgart                                                
+                                                                                
+ Branche               Software                                                 
+                                                                                
+ Kontakte                       0                                               
+                                                                                
+ Verkaufschancen                0                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Kunde angelegt.                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   2                                               
+                                                                                
+ Name                  Rheinbau AG                                              
+                                                                                
+ Ort                   Koeln-Deutz                                              
+                                                                                
+ Branche               Bau                                                      
+                                                                                
+ Kontakte                       1                                               
+                                                                                
+ Verkaufschancen                2                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Kunde gespeichert.                                                             
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  3                                               
+ Vorname               Lena                                                     
+ Nachname              Vogel                                                    
+ E-Mail                lena.vogel@rheinbau.example                              
+ Telefon               0221 987600                                              
+ Position              1 von 1                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark                                            
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  3                                               
+ Vorname               Lena                                                     
+ Nachname              Vogel                                                    
+ E-Mail                lena.vogel@rheinbau.example                              
+ Telefon               0221 9876999                                             
+ Position              1 von 1                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark                                            
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Gespeichert.                                                                   
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  3                                               
+ Vorname               Lena                                                     
+ Nachname              Vogel                                                    
+ E-Mail                lena.vogel@rheinbau.example                              
+ Telefon               0221 9876999                                             
+ Position              1 von 1                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark Ost                                        
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Gespeichert.                                                                   
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  0                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                kein-at                                                  
+ Telefon                                                                        
+ Position              neu                                                      
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark Ost                                        
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ E-Mail muss ein @ enthalten.                                                   
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+Eingabe prüfen                                                                  
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark Ost                                        
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Gespeichert.                                                                   
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  0                                               
+ Titel                 Pumpenlieferung                                          
+ Wert (EUR)                     0                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              neu                                                      
+                                                                                
+ Wert muss groesser 0 sein.                                                     
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+Eingabe prüfen                                                                  
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  0                                               
+ Titel                 Pumpenlieferung                                          
+ Wert (EUR)            15000                                                    
+ Phase                 gewonnen                                                 
+ Abschluss JJJJMMTT                                                             
+ Position              neu                                                      
+                                                                                
+ Wert muss groesser 0 sein.                                                     
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+Eingabe prüfen                                                                  
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  0                                               
+ Titel                 Pumpenlieferung                                          
+ Wert (EUR)                 15000                                               
+ Phase                 gewonnen                                                 
+ Abschluss JJJJMMTT                                                             
+ Position              neu                                                      
+                                                                                
+ Abschlussdatum fehlt.                                                          
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+Eingabe prüfen                                                                  
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  7                                               
+ Titel                 Pumpenlieferung                                          
+ Wert (EUR)                 15000                                               
+ Phase                 gewonnen                                                 
+ Abschluss JJJJMMTT    20261120                                                 
+ Position              3 von 3                                                  
+                                                                                
+ Gespeichert.                                                                   
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  4                                               
+ Titel                 Gabelstapler                                             
+ Wert (EUR)                 25000                                               
+ Phase                 verloren                                                 
+ Abschluss JJJJMMTT    20260201                                                 
+ Position              2 von 3                                                  
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail  +Löschen bestätigen------------------------------------------+         
+ Telefon |                                                            |         
+ Position| Verkaufschance wirklich löschen?                           |         
+         |                                                            |         
+ VERKAUFS| F5 = Ja     F12 = Nein                                     |         
+ Chancenn|                                                            |         
+ Titel   +------------------------------------------------------------+         
+ Wert (EUR)                 25000                                               
+ Phase                 verloren                                                 
+ Abschluss JJJJMMTT    20260201                                                 
+ Position              2 von 3                                                  
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  4                                               
+ Titel                 Gabelstapler                                             
+ Wert (EUR)                 25000                                               
+ Phase                 verloren                                                 
+ Abschluss JJJJMMTT    20260201                                                 
+ Position              2 von 3                                                  
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail                max.keller@rheinbau.example                              
+ Telefon                                                                        
+ Position              2 von 2                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark Ost                                        
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Verkaufschance gelöscht.                                                       
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  5                                               
+ Vorname               Max                                                      
+ Nachname              Keller                                                   
+ E-Mail  +Löschen bestätigen------------------------------------------+         
+ Telefon |                                                            |         
+ Position| Kontakt wirklich löschen?                                  |         
+         |                                                            |         
+ VERKAUFS| F5 = Ja     F12 = Nein                                     |         
+ Chancenn|                                                            |         
+ Titel   +------------------------------------------------------------+         
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Verkaufschance gelöscht.                                                       
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+Kontakte und Verkaufschancen                                                    
+ Kunde                 Rheinbau AG                                              
+                                                                                
+ KONTAKT                                                                        
+ Kontaktnummer                  3                                               
+ Vorname               Lena                                                     
+ Nachname              Vogel                                                    
+ E-Mail                lena.vogel@rheinbau.example                              
+ Telefon               0221 9876999                                             
+ Position              1 von 1                                                  
+                                                                                
+ VERKAUFSCHANCE                                                                 
+ Chancennummer                  3                                               
+ Titel                 Maschinenpark Ost                                        
+ Wert (EUR)                 80000                                               
+ Phase                 offen                                                    
+ Abschluss JJJJMMTT                                                             
+ Position              1 von 2                                                  
+                                                                                
+ Kontakt gelöscht.                                                              
+                                                                                
+F3 Zurück  F5 <Chance  F6 Chance>  F7 <Kontakt  F8 Kontakt>  F9 KNeu  F10 CNeu  
+F11 Sichern  F12 Abbruch  F14 KLöschen  F15 CLöschen                            
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   2                                               
+                                                                                
+ Name                  Rheinbau AG                                              
+                                                                                
+ Ort                   Koeln-Deutz                                              
+                                                                                
+ Branche               Bau                                                      
+                                                                                
+ Kontakte                       1                                               
+                                                                                
+ Verkaufschancen                2                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   2                                               
+                                                                                
+ Name                  Rheinbau AG                                              
+                                                                                
+ Ort                   Koeln-Deutz                                              
+         +Löschen bestätigen------------------------------------------+         
+ Branche |                                                            |         
+         | Kunde samt Kontakten und Chancen löschen?                  |         
+ Kontakte|                                                            |         
+         | F5 = Ja     F12 = Nein                                     |         
+ Verkaufs|                                                            |         
+         +------------------------------------------------------------+         
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----
+CRM: Kunde                                                                      
+                                                                                
+ Kundennummer                   0                                               
+                                                                                
+ Name                                                                           
+                                                                                
+ Ort                                                                            
+                                                                                
+ Branche                                                                        
+                                                                                
+ Kontakte                       0                                               
+                                                                                
+ Verkaufschancen                0                                               
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+ Kunde mit Kontakten und Verkaufschancen gelöscht.                              
+                                                                                
+                                                                                
+                                                                                
+F3 Zurück  F5 Kontakte  F7 <Kunde  F8 Kunde>  F9 Neu  F11 Sichern  F12 Abbruch  
+F14 Löschen                                                                     
+                                                                                
+----

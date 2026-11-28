@@ -1,0 +1,1 @@
+unknown column 'xyz' in table ZFLUG

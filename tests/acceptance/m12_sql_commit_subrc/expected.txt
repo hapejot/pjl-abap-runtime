@@ -1,0 +1,2 @@
+subrc kept after commit
+subrc kept after rollback

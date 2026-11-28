@@ -943,7 +943,7 @@ impl Lowerer {
 
     /// Typ eines Attributs der laufenden Klasse, auch Komponente (`attr-komp`). Die Struktur der Klasse
     /// enthält die Attribute samt geerbter Felder.
-    fn class_attribute_type(&self, name: &str) -> Option<Ty> {
+    pub(super) fn class_attribute_type(&self, name: &str) -> Option<Ty> {
         let scope = self.scope.as_ref()?;
         let Some(Ty::Ref(index)) = self.names.get(scope) else {
             return None;
