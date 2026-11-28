@@ -11,7 +11,7 @@ Stand der Umsetzung:
   (`LOOP ... ASSIGNING`) wird nicht erkannt.
 - Offen: Tabellenargument nur als Variable (kein Ausdruck wie `obj->get( )`), Tabellenart (STANDARD, SORTED, HASHED) wird nicht geprüft.
 Beispiel: poc-crm (Akzeptanzfall `m16_crm`)
-Stelle im Beispiel: alle DAO-Klassen und der Service. Kommentar `WORKAROUND FR-002` am DAO Kunde (`poc-crm/prog.abap:147`).
+Stelle im Beispiel: Interfaces, DAO-Implementierungen und Service sind auf Listen umgestellt. Der Marker `WORKAROUND FR-002` ist entfernt.
 
 ## Problem
 Die Schichten sollen Listen über Schnittstellen zurückgeben (`EXPORTING et_kunden TYPE TABLE OF zkunde`).

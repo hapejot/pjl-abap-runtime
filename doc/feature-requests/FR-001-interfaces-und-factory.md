@@ -1,8 +1,8 @@
 # FR-001: Interfaces als Referenztyp und Factory für DAOs
 
-Status: umgesetzt (Stufe 1, Compiler). Stufe 2 (Factory im Beispiel) offen, poc-crm unverändert.
+Status: umgesetzt (Stufe 1, Compiler). Stufe 2 umgesetzt (Factory im Beispiel, poc-crm umgestellt).
 Beispiel: poc-crm (Akzeptanzfall `m16_crm`)
-Stelle im Beispiel: `prog.abap`, Kommentare `WORKAROUND FR-001` an den DAO-Klassen und in `START-OF-SELECTION`
+Stelle im Beispiel: `poc-crm/prog.abap`, Interfaces `lif_dao_*`, Implementierungen `lcl_dao_*_sql`, Factory `lcl_dao_factory`. Die Workaround-Marker sind entfernt.
 
 ## Problem
 Die DAOs sollen über ein Interface angesprochen werden (`lif_dao_kunde`), damit Services im Unit-Test
@@ -55,8 +55,8 @@ Festgelegt vom Nutzer (2026-11-28): **eine Methodentabelle pro Klasse**. Das ist
   (Kopie der Tabelle, eigene Implementierungen überschreiben), Objektkopf mit 8 Byte, Signaturprüfung.
 
 ## Offen
-- Stufe 2: Factory `lcl_dao_factory` im Beispiel und Entfernen der `WORKAROUND FR-001`-Stellen. Das
-  entscheidet der Nutzer. poc-crm ist nicht geändert.
+- Stufe 2 (Factory `lcl_dao_factory` im Beispiel, Entfernen der Workarounds) ist umgesetzt. poc-crm ist
+  auf Interfaces und Factory umgestellt, die Workaround-Marker sind entfernt.
 - Überschreiben von Interface-Methoden in Unterklassen (`REDEFINITION`): ohne Akzeptanzfall, Syntax nicht geprüft.
 - CAST, statische Interface-Methoden und Interface-Attribute über eine Referenz.
 - Die Fehlerklasse der Implementierungspflicht (Syntax oder Laufzeit) ist in ABAP nicht belegt.

@@ -141,44 +141,89 @@ CLASS lcl_validator IMPLEMENTATION.
 ENDCLASS.
 
 * ---------------------------------------------------------------
-* DAO Kunde: einziger Ort mit SQL fuer zkunde. Liefert immer einzelne Saetze (keine Tabellen-Parameter).
-* Kein COMMIT WORK hier (das macht der Service).
-* WORKAROUND FR-001: Interface lif_dao_kunde und Factory fehlen. Services erhalten diese konkrete Klasse.
-* WORKAROUND FR-002: Tabellen als Parameter sind nicht unterstuetzt. Listen entstehen im Service durch Schleifen.
+* Vertrag der DAOs: je Tabelle ein Interface. Services und View-Model kennen nur diese Interfaces.
+* Listen kommen als Tabellenparameter, sortiert nach dem Schluessel (aufsteigend).
+* Kein COMMIT WORK in den DAOs (das macht der Service).
 * ---------------------------------------------------------------
-CLASS lcl_dao_kunde DEFINITION.
+INTERFACE lif_dao_kunde.
+  METHODS read
+    IMPORTING iv_kunnr TYPE i
+    EXPORTING es_kunde TYPE zkunde
+              ev_found TYPE c.
+  METHODS read_all
+    EXPORTING et_kunden TYPE TABLE OF zkunde.
+  METHODS read_last
+    EXPORTING es_kunde TYPE zkunde
+              ev_found TYPE c.
+  METHODS insert
+    IMPORTING is_kunde TYPE zkunde
+    EXPORTING ev_ok TYPE c.
+  METHODS update
+    IMPORTING is_kunde TYPE zkunde
+    EXPORTING ev_ok TYPE c.
+  METHODS delete
+    IMPORTING iv_kunnr TYPE i
+    EXPORTING ev_ok TYPE c.
+ENDINTERFACE.
+
+INTERFACE lif_dao_kontakt.
+  METHODS read
+    IMPORTING iv_knr TYPE i
+    EXPORTING es_kontakt TYPE zkontakt
+              ev_found TYPE c.
+  METHODS read_last
+    EXPORTING es_kontakt TYPE zkontakt
+              ev_found TYPE c.
+  METHODS read_all_for
+    IMPORTING iv_kunnr TYPE i
+    EXPORTING et_kontakte TYPE TABLE OF zkontakt.
+  METHODS insert
+    IMPORTING is_kontakt TYPE zkontakt
+    EXPORTING ev_ok TYPE c.
+  METHODS update
+    IMPORTING is_kontakt TYPE zkontakt
+    EXPORTING ev_ok TYPE c.
+  METHODS delete
+    IMPORTING iv_knr TYPE i.
+  METHODS delete_for_kunde
+    IMPORTING iv_kunnr TYPE i.
+ENDINTERFACE.
+
+INTERFACE lif_dao_chance.
+  METHODS read
+    IMPORTING iv_cnr TYPE i
+    EXPORTING es_chance TYPE zchance
+              ev_found TYPE c.
+  METHODS read_all
+    EXPORTING et_chancen TYPE TABLE OF zchance.
+  METHODS read_last
+    EXPORTING es_chance TYPE zchance
+              ev_found TYPE c.
+  METHODS read_all_for
+    IMPORTING iv_kunnr TYPE i
+    EXPORTING et_chancen TYPE TABLE OF zchance.
+  METHODS insert
+    IMPORTING is_chance TYPE zchance
+    EXPORTING ev_ok TYPE c.
+  METHODS update
+    IMPORTING is_chance TYPE zchance
+    EXPORTING ev_ok TYPE c.
+  METHODS delete
+    IMPORTING iv_cnr TYPE i.
+  METHODS delete_for_kunde
+    IMPORTING iv_kunnr TYPE i.
+ENDINTERFACE.
+
+* ---------------------------------------------------------------
+* DAO-Implementierungen: das einzige SQL. Jede implementiert ein Interface.
+* ---------------------------------------------------------------
+CLASS lcl_dao_kunde_sql DEFINITION.
   PUBLIC SECTION.
-    METHODS select_one
-      IMPORTING iv_kunnr TYPE i
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS select_first
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS select_next
-      IMPORTING iv_after TYPE i
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS select_prev
-      IMPORTING iv_before TYPE i
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS select_last
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS insert_one
-      IMPORTING is_kunde TYPE zkunde
-      EXPORTING ev_ok TYPE c.
-    METHODS update_one
-      IMPORTING is_kunde TYPE zkunde
-      EXPORTING ev_ok TYPE c.
-    METHODS delete_one
-      IMPORTING iv_kunnr TYPE i
-      EXPORTING ev_ok TYPE c.
+    INTERFACES lif_dao_kunde.
 ENDCLASS.
 
-CLASS lcl_dao_kunde IMPLEMENTATION.
-  METHOD select_one.
+CLASS lcl_dao_kunde_sql IMPLEMENTATION.
+  METHOD lif_dao_kunde~read.
     SELECT SINGLE * FROM zkunde INTO es_kunde WHERE kunnr = @iv_kunnr.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -187,34 +232,11 @@ CLASS lcl_dao_kunde IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD select_first.
-    SELECT SINGLE * FROM zkunde INTO es_kunde ORDER BY kunnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
+  METHOD lif_dao_kunde~read_all.
+    SELECT * FROM zkunde INTO TABLE et_kunden ORDER BY kunnr.
   ENDMETHOD.
 
-  METHOD select_next.
-    SELECT SINGLE * FROM zkunde INTO es_kunde WHERE kunnr > @iv_after ORDER BY kunnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_prev.
-    SELECT SINGLE * FROM zkunde INTO es_kunde WHERE kunnr < @iv_before ORDER BY kunnr DESCENDING.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_last.
+  METHOD lif_dao_kunde~read_last.
     SELECT SINGLE * FROM zkunde INTO es_kunde ORDER BY kunnr DESCENDING.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -223,7 +245,7 @@ CLASS lcl_dao_kunde IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD insert_one.
+  METHOD lif_dao_kunde~insert.
     INSERT zkunde FROM is_kunde.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -232,7 +254,7 @@ CLASS lcl_dao_kunde IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD update_one.
+  METHOD lif_dao_kunde~update.
     UPDATE zkunde FROM is_kunde.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -241,7 +263,7 @@ CLASS lcl_dao_kunde IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD delete_one.
+  METHOD lif_dao_kunde~delete.
     DELETE FROM zkunde WHERE kunnr = @iv_kunnr.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -251,47 +273,13 @@ CLASS lcl_dao_kunde IMPLEMENTATION.
   ENDMETHOD.
 ENDCLASS.
 
-* ---------------------------------------------------------------
-* DAO Kontakt: einziger Ort mit SQL fuer zkontakt.
-* WORKAROUND FR-001: siehe lcl_dao_kunde.
-* ---------------------------------------------------------------
-CLASS lcl_dao_kontakt DEFINITION.
+CLASS lcl_dao_kontakt_sql DEFINITION.
   PUBLIC SECTION.
-    METHODS select_one
-      IMPORTING iv_knr TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS select_first_for_kunde
-      IMPORTING iv_kunnr TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS select_next_for_kunde
-      IMPORTING iv_kunnr TYPE i
-                iv_after TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS select_prev_for_kunde
-      IMPORTING iv_kunnr TYPE i
-                iv_before TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS select_last
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS insert_one
-      IMPORTING is_kontakt TYPE zkontakt
-      EXPORTING ev_ok TYPE c.
-    METHODS update_one
-      IMPORTING is_kontakt TYPE zkontakt
-      EXPORTING ev_ok TYPE c.
-    METHODS delete_one
-      IMPORTING iv_knr TYPE i.
-    METHODS delete_for_kunde
-      IMPORTING iv_kunnr TYPE i.
+    INTERFACES lif_dao_kontakt.
 ENDCLASS.
 
-CLASS lcl_dao_kontakt IMPLEMENTATION.
-  METHOD select_one.
+CLASS lcl_dao_kontakt_sql IMPLEMENTATION.
+  METHOD lif_dao_kontakt~read.
     SELECT SINGLE * FROM zkontakt INTO es_kontakt WHERE knr = @iv_knr.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -300,34 +288,7 @@ CLASS lcl_dao_kontakt IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD select_first_for_kunde.
-    SELECT SINGLE * FROM zkontakt INTO es_kontakt WHERE kunnr = @iv_kunnr ORDER BY knr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_next_for_kunde.
-    SELECT SINGLE * FROM zkontakt INTO es_kontakt WHERE kunnr = @iv_kunnr AND knr > @iv_after ORDER BY knr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_prev_for_kunde.
-    SELECT SINGLE * FROM zkontakt INTO es_kontakt WHERE kunnr = @iv_kunnr AND knr < @iv_before ORDER BY knr DESCENDING.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_last.
+  METHOD lif_dao_kontakt~read_last.
     SELECT SINGLE * FROM zkontakt INTO es_kontakt ORDER BY knr DESCENDING.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -336,7 +297,11 @@ CLASS lcl_dao_kontakt IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD insert_one.
+  METHOD lif_dao_kontakt~read_all_for.
+    SELECT * FROM zkontakt INTO TABLE et_kontakte WHERE kunnr = @iv_kunnr ORDER BY knr.
+  ENDMETHOD.
+
+  METHOD lif_dao_kontakt~insert.
     INSERT zkontakt FROM is_kontakt.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -345,7 +310,7 @@ CLASS lcl_dao_kontakt IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD update_one.
+  METHOD lif_dao_kontakt~update.
     UPDATE zkontakt FROM is_kontakt.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -354,63 +319,22 @@ CLASS lcl_dao_kontakt IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD delete_one.
+  METHOD lif_dao_kontakt~delete.
     DELETE FROM zkontakt WHERE knr = @iv_knr.
   ENDMETHOD.
 
-  METHOD delete_for_kunde.
+  METHOD lif_dao_kontakt~delete_for_kunde.
     DELETE FROM zkontakt WHERE kunnr = @iv_kunnr.
   ENDMETHOD.
 ENDCLASS.
 
-* ---------------------------------------------------------------
-* DAO Verkaufschance: einziger Ort mit SQL fuer zchance.
-* WORKAROUND FR-001: siehe lcl_dao_kunde.
-* ---------------------------------------------------------------
-CLASS lcl_dao_chance DEFINITION.
+CLASS lcl_dao_chance_sql DEFINITION.
   PUBLIC SECTION.
-    METHODS select_one
-      IMPORTING iv_cnr TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_first_for_kunde
-      IMPORTING iv_kunnr TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_next_for_kunde
-      IMPORTING iv_kunnr TYPE i
-                iv_after TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_prev_for_kunde
-      IMPORTING iv_kunnr TYPE i
-                iv_before TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_first
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_next
-      IMPORTING iv_after TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS select_last
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS insert_one
-      IMPORTING is_chance TYPE zchance
-      EXPORTING ev_ok TYPE c.
-    METHODS update_one
-      IMPORTING is_chance TYPE zchance
-      EXPORTING ev_ok TYPE c.
-    METHODS delete_one
-      IMPORTING iv_cnr TYPE i.
-    METHODS delete_for_kunde
-      IMPORTING iv_kunnr TYPE i.
+    INTERFACES lif_dao_chance.
 ENDCLASS.
 
-CLASS lcl_dao_chance IMPLEMENTATION.
-  METHOD select_one.
+CLASS lcl_dao_chance_sql IMPLEMENTATION.
+  METHOD lif_dao_chance~read.
     SELECT SINGLE * FROM zchance INTO es_chance WHERE cnr = @iv_cnr.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -419,52 +343,11 @@ CLASS lcl_dao_chance IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD select_first_for_kunde.
-    SELECT SINGLE * FROM zchance INTO es_chance WHERE kunnr = @iv_kunnr ORDER BY cnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
+  METHOD lif_dao_chance~read_all.
+    SELECT * FROM zchance INTO TABLE et_chancen ORDER BY cnr.
   ENDMETHOD.
 
-  METHOD select_next_for_kunde.
-    SELECT SINGLE * FROM zchance INTO es_chance WHERE kunnr = @iv_kunnr AND cnr > @iv_after ORDER BY cnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_prev_for_kunde.
-    SELECT SINGLE * FROM zchance INTO es_chance WHERE kunnr = @iv_kunnr AND cnr < @iv_before ORDER BY cnr DESCENDING.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_first.
-    SELECT SINGLE * FROM zchance INTO es_chance ORDER BY cnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_next.
-    SELECT SINGLE * FROM zchance INTO es_chance WHERE cnr > @iv_after ORDER BY cnr.
-    IF sy-subrc = 0.
-      ev_found = 'X'.
-    ELSE.
-      ev_found = ' '.
-    ENDIF.
-  ENDMETHOD.
-
-  METHOD select_last.
+  METHOD lif_dao_chance~read_last.
     SELECT SINGLE * FROM zchance INTO es_chance ORDER BY cnr DESCENDING.
     IF sy-subrc = 0.
       ev_found = 'X'.
@@ -473,7 +356,11 @@ CLASS lcl_dao_chance IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD insert_one.
+  METHOD lif_dao_chance~read_all_for.
+    SELECT * FROM zchance INTO TABLE et_chancen WHERE kunnr = @iv_kunnr ORDER BY cnr.
+  ENDMETHOD.
+
+  METHOD lif_dao_chance~insert.
     INSERT zchance FROM is_chance.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -482,7 +369,7 @@ CLASS lcl_dao_chance IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD update_one.
+  METHOD lif_dao_chance~update.
     UPDATE zchance FROM is_chance.
     IF sy-subrc = 0.
       ev_ok = 'X'.
@@ -491,44 +378,59 @@ CLASS lcl_dao_chance IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD delete_one.
+  METHOD lif_dao_chance~delete.
     DELETE FROM zchance WHERE cnr = @iv_cnr.
   ENDMETHOD.
 
-  METHOD delete_for_kunde.
+  METHOD lif_dao_chance~delete_for_kunde.
     DELETE FROM zchance WHERE kunnr = @iv_kunnr.
   ENDMETHOD.
 ENDCLASS.
 
 * ---------------------------------------------------------------
+* Factory: liefert die DAOs als Interface-Referenz. Das Hauptprogramm holt sie hierüber.
+* ---------------------------------------------------------------
+CLASS lcl_dao_factory DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS get_kunde_dao
+      RETURNING VALUE(ro_dao) TYPE REF TO lif_dao_kunde.
+    CLASS-METHODS get_kontakt_dao
+      RETURNING VALUE(ro_dao) TYPE REF TO lif_dao_kontakt.
+    CLASS-METHODS get_chance_dao
+      RETURNING VALUE(ro_dao) TYPE REF TO lif_dao_chance.
+ENDCLASS.
+
+CLASS lcl_dao_factory IMPLEMENTATION.
+  METHOD get_kunde_dao.
+    CREATE OBJECT ro_dao TYPE lcl_dao_kunde_sql.
+  ENDMETHOD.
+
+  METHOD get_kontakt_dao.
+    CREATE OBJECT ro_dao TYPE lcl_dao_kontakt_sql.
+  ENDMETHOD.
+
+  METHOD get_chance_dao.
+    CREATE OBJECT ro_dao TYPE lcl_dao_chance_sql.
+  ENDMETHOD.
+ENDCLASS.
+
+* ---------------------------------------------------------------
 * Service: Anwendungsfaelle und Transaktionsgrenzen (LUW). Kein Dynpro, keine Anzeigetexte.
-* Listen entstehen hier durch Schleifen ueber Einzelsaetze der DAOs.
+* Listen kommen je Aufruf vom DAO. Blaettern und Zaehlen macht das View-Model auf diesen Listen.
 * Status-Codes beim Speichern: 'O' = ok, 'U' = Satz fehlt beim Aendern, 'I' = Schluessel ist schon vergeben.
 * ---------------------------------------------------------------
 CLASS lcl_crm_service DEFINITION.
   PUBLIC SECTION.
-    DATA mo_kunde TYPE REF TO lcl_dao_kunde.
-    DATA mo_kontakt TYPE REF TO lcl_dao_kontakt.
-    DATA mo_chance TYPE REF TO lcl_dao_chance.
     METHODS constructor
-      IMPORTING io_kunde TYPE REF TO lcl_dao_kunde
-                io_kontakt TYPE REF TO lcl_dao_kontakt
-                io_chance TYPE REF TO lcl_dao_chance.
+      IMPORTING io_kunde_dao TYPE REF TO lif_dao_kunde
+                io_kontakt_dao TYPE REF TO lif_dao_kontakt
+                io_chance_dao TYPE REF TO lif_dao_chance.
     METHODS read_kunde
       IMPORTING iv_kunnr TYPE i
       EXPORTING es_kunde TYPE zkunde
                 ev_found TYPE c.
-    METHODS first_kunde
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS next_kunde
-      IMPORTING iv_after TYPE i
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
-    METHODS prev_kunde
-      IMPORTING iv_before TYPE i
-      EXPORTING es_kunde TYPE zkunde
-                ev_found TYPE c.
+    METHODS list_kunden
+      EXPORTING et_kunden TYPE TABLE OF zkunde.
     METHODS next_kunnr
       RETURNING VALUE(rv_next) TYPE i.
     METHODS save_kunde
@@ -542,27 +444,12 @@ CLASS lcl_crm_service DEFINITION.
       IMPORTING iv_knr TYPE i
       EXPORTING es_kontakt TYPE zkontakt
                 ev_found TYPE c.
-    METHODS first_kontakt
+    METHODS list_kontakte
       IMPORTING iv_kunnr TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS next_kontakt
-      IMPORTING iv_kunnr TYPE i
-                iv_after TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
-    METHODS prev_kontakt
-      IMPORTING iv_kunnr TYPE i
-                iv_before TYPE i
-      EXPORTING es_kontakt TYPE zkontakt
-                ev_found TYPE c.
+      EXPORTING et_kontakte TYPE TABLE OF zkontakt.
     METHODS count_kontakte
       IMPORTING iv_kunnr TYPE i
       RETURNING VALUE(rv_n) TYPE i.
-    METHODS position_kontakt
-      IMPORTING iv_kunnr TYPE i
-                iv_knr TYPE i
-      RETURNING VALUE(rv_pos) TYPE i.
     METHODS next_knr
       RETURNING VALUE(rv_next) TYPE i.
     METHODS save_kontakt
@@ -575,27 +462,14 @@ CLASS lcl_crm_service DEFINITION.
       IMPORTING iv_cnr TYPE i
       EXPORTING es_chance TYPE zchance
                 ev_found TYPE c.
-    METHODS first_chance
+    METHODS list_chancen
       IMPORTING iv_kunnr TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS next_chance
-      IMPORTING iv_kunnr TYPE i
-                iv_after TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS prev_chance
-      IMPORTING iv_kunnr TYPE i
-                iv_before TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
+      EXPORTING et_chancen TYPE TABLE OF zchance.
+    METHODS list_chancen_all
+      EXPORTING et_chancen TYPE TABLE OF zchance.
     METHODS count_chancen
       IMPORTING iv_kunnr TYPE i
       RETURNING VALUE(rv_n) TYPE i.
-    METHODS position_chance
-      IMPORTING iv_kunnr TYPE i
-                iv_cnr TYPE i
-      RETURNING VALUE(rv_pos) TYPE i.
     METHODS next_cnr
       RETURNING VALUE(rv_next) TYPE i.
     METHODS save_chance
@@ -604,45 +478,34 @@ CLASS lcl_crm_service DEFINITION.
       EXPORTING ev_status TYPE c.
     METHODS delete_chance
       IMPORTING iv_cnr TYPE i.
-    METHODS first_chance_any
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
-    METHODS next_chance_any
-      IMPORTING iv_after TYPE i
-      EXPORTING es_chance TYPE zchance
-                ev_found TYPE c.
     METHODS sum_won_for_kunde
       IMPORTING iv_kunnr TYPE i
       RETURNING VALUE(rv_sum) TYPE i.
+  PRIVATE SECTION.
+    DATA mo_kunde TYPE REF TO lif_dao_kunde.
+    DATA mo_kontakt TYPE REF TO lif_dao_kontakt.
+    DATA mo_chance TYPE REF TO lif_dao_chance.
 ENDCLASS.
 
 CLASS lcl_crm_service IMPLEMENTATION.
   METHOD constructor.
-    mo_kunde = io_kunde.
-    mo_kontakt = io_kontakt.
-    mo_chance = io_chance.
+    mo_kunde = io_kunde_dao.
+    mo_kontakt = io_kontakt_dao.
+    mo_chance = io_chance_dao.
   ENDMETHOD.
 
   METHOD read_kunde.
-    mo_kunde->select_one( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_kunde = es_kunde ev_found = ev_found ).
+    mo_kunde->read( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_kunde = es_kunde ev_found = ev_found ).
   ENDMETHOD.
 
-  METHOD first_kunde.
-    mo_kunde->select_first( IMPORTING es_kunde = es_kunde ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD next_kunde.
-    mo_kunde->select_next( EXPORTING iv_after = iv_after IMPORTING es_kunde = es_kunde ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD prev_kunde.
-    mo_kunde->select_prev( EXPORTING iv_before = iv_before IMPORTING es_kunde = es_kunde ev_found = ev_found ).
+  METHOD list_kunden.
+    mo_kunde->read_all( IMPORTING et_kunden = et_kunden ).
   ENDMETHOD.
 
   METHOD next_kunnr.
     DATA ls_kunde TYPE zkunde.
     DATA lv_found TYPE c.
-    mo_kunde->select_last( IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
+    mo_kunde->read_last( IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
     IF lv_found = 'X'.
       rv_next = ls_kunde-kunnr + 1.
     ELSE.
@@ -653,7 +516,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
   METHOD save_kunde.
     DATA lv_ok TYPE c.
     IF iv_neu = 'X'.
-      mo_kunde->insert_one( EXPORTING is_kunde = is_kunde IMPORTING ev_ok = lv_ok ).
+      mo_kunde->insert( EXPORTING is_kunde = is_kunde IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -661,7 +524,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
         ev_status = 'I'.
       ENDIF.
     ELSE.
-      mo_kunde->update_one( EXPORTING is_kunde = is_kunde IMPORTING ev_ok = lv_ok ).
+      mo_kunde->update( EXPORTING is_kunde = is_kunde IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -676,7 +539,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
     " Logische Arbeitseinheit: Chancen, Kontakte und Kunde werden zusammen geloescht.
     mo_chance->delete_for_kunde( iv_kunnr = iv_kunnr ).
     mo_kontakt->delete_for_kunde( iv_kunnr = iv_kunnr ).
-    mo_kunde->delete_one( EXPORTING iv_kunnr = iv_kunnr IMPORTING ev_ok = lv_ok ).
+    mo_kunde->delete( EXPORTING iv_kunnr = iv_kunnr IMPORTING ev_ok = lv_ok ).
     IF lv_ok = 'X'.
       COMMIT WORK.
       ev_ok = 'X'.
@@ -687,49 +550,23 @@ CLASS lcl_crm_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_kontakt.
-    mo_kontakt->select_one( EXPORTING iv_knr = iv_knr IMPORTING es_kontakt = es_kontakt ev_found = ev_found ).
+    mo_kontakt->read( EXPORTING iv_knr = iv_knr IMPORTING es_kontakt = es_kontakt ev_found = ev_found ).
   ENDMETHOD.
 
-  METHOD first_kontakt.
-    mo_kontakt->select_first_for_kunde( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_kontakt = es_kontakt ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD next_kontakt.
-    mo_kontakt->select_next_for_kunde( EXPORTING iv_kunnr = iv_kunnr iv_after = iv_after
-                                       IMPORTING es_kontakt = es_kontakt ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD prev_kontakt.
-    mo_kontakt->select_prev_for_kunde( EXPORTING iv_kunnr = iv_kunnr iv_before = iv_before
-                                       IMPORTING es_kontakt = es_kontakt ev_found = ev_found ).
+  METHOD list_kontakte.
+    mo_kontakt->read_all_for( EXPORTING iv_kunnr = iv_kunnr IMPORTING et_kontakte = et_kontakte ).
   ENDMETHOD.
 
   METHOD count_kontakte.
-    DATA ls_kontakt TYPE zkontakt.
-    DATA lv_found TYPE c.
-    rv_n = 0.
-    first_kontakt( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-    WHILE lv_found = 'X'.
-      rv_n = rv_n + 1.
-      next_kontakt( EXPORTING iv_kunnr = iv_kunnr iv_after = ls_kontakt-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-    ENDWHILE.
-  ENDMETHOD.
-
-  METHOD position_kontakt.
-    DATA ls_kontakt TYPE zkontakt.
-    DATA lv_found TYPE c.
-    rv_pos = 0.
-    first_kontakt( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-    WHILE lv_found = 'X' AND ls_kontakt-knr <= iv_knr.
-      rv_pos = rv_pos + 1.
-      next_kontakt( EXPORTING iv_kunnr = iv_kunnr iv_after = ls_kontakt-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-    ENDWHILE.
+    DATA lt_kontakte TYPE TABLE OF zkontakt.
+    list_kontakte( EXPORTING iv_kunnr = iv_kunnr IMPORTING et_kontakte = lt_kontakte ).
+    DESCRIBE TABLE lt_kontakte LINES rv_n.
   ENDMETHOD.
 
   METHOD next_knr.
     DATA ls_kontakt TYPE zkontakt.
     DATA lv_found TYPE c.
-    mo_kontakt->select_last( IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
+    mo_kontakt->read_last( IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
     IF lv_found = 'X'.
       rv_next = ls_kontakt-knr + 1.
     ELSE.
@@ -740,7 +577,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
   METHOD save_kontakt.
     DATA lv_ok TYPE c.
     IF iv_neu = 'X'.
-      mo_kontakt->insert_one( EXPORTING is_kontakt = is_kontakt IMPORTING ev_ok = lv_ok ).
+      mo_kontakt->insert( EXPORTING is_kontakt = is_kontakt IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -748,7 +585,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
         ev_status = 'I'.
       ENDIF.
     ELSE.
-      mo_kontakt->update_one( EXPORTING is_kontakt = is_kontakt IMPORTING ev_ok = lv_ok ).
+      mo_kontakt->update( EXPORTING is_kontakt = is_kontakt IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -759,54 +596,32 @@ CLASS lcl_crm_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD delete_kontakt.
-    mo_kontakt->delete_one( iv_knr = iv_knr ).
+    mo_kontakt->delete( iv_knr = iv_knr ).
     COMMIT WORK.
   ENDMETHOD.
 
   METHOD read_chance.
-    mo_chance->select_one( EXPORTING iv_cnr = iv_cnr IMPORTING es_chance = es_chance ev_found = ev_found ).
+    mo_chance->read( EXPORTING iv_cnr = iv_cnr IMPORTING es_chance = es_chance ev_found = ev_found ).
   ENDMETHOD.
 
-  METHOD first_chance.
-    mo_chance->select_first_for_kunde( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_chance = es_chance ev_found = ev_found ).
+  METHOD list_chancen.
+    mo_chance->read_all_for( EXPORTING iv_kunnr = iv_kunnr IMPORTING et_chancen = et_chancen ).
   ENDMETHOD.
 
-  METHOD next_chance.
-    mo_chance->select_next_for_kunde( EXPORTING iv_kunnr = iv_kunnr iv_after = iv_after
-                                      IMPORTING es_chance = es_chance ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD prev_chance.
-    mo_chance->select_prev_for_kunde( EXPORTING iv_kunnr = iv_kunnr iv_before = iv_before
-                                      IMPORTING es_chance = es_chance ev_found = ev_found ).
+  METHOD list_chancen_all.
+    mo_chance->read_all( IMPORTING et_chancen = et_chancen ).
   ENDMETHOD.
 
   METHOD count_chancen.
-    DATA ls_chance TYPE zchance.
-    DATA lv_found TYPE c.
-    rv_n = 0.
-    first_chance( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    WHILE lv_found = 'X'.
-      rv_n = rv_n + 1.
-      next_chance( EXPORTING iv_kunnr = iv_kunnr iv_after = ls_chance-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    ENDWHILE.
-  ENDMETHOD.
-
-  METHOD position_chance.
-    DATA ls_chance TYPE zchance.
-    DATA lv_found TYPE c.
-    rv_pos = 0.
-    first_chance( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    WHILE lv_found = 'X' AND ls_chance-cnr <= iv_cnr.
-      rv_pos = rv_pos + 1.
-      next_chance( EXPORTING iv_kunnr = iv_kunnr iv_after = ls_chance-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    ENDWHILE.
+    DATA lt_chancen TYPE TABLE OF zchance.
+    list_chancen( EXPORTING iv_kunnr = iv_kunnr IMPORTING et_chancen = lt_chancen ).
+    DESCRIBE TABLE lt_chancen LINES rv_n.
   ENDMETHOD.
 
   METHOD next_cnr.
     DATA ls_chance TYPE zchance.
     DATA lv_found TYPE c.
-    mo_chance->select_last( IMPORTING es_chance = ls_chance ev_found = lv_found ).
+    mo_chance->read_last( IMPORTING es_chance = ls_chance ev_found = lv_found ).
     IF lv_found = 'X'.
       rv_next = ls_chance-cnr + 1.
     ELSE.
@@ -817,7 +632,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
   METHOD save_chance.
     DATA lv_ok TYPE c.
     IF iv_neu = 'X'.
-      mo_chance->insert_one( EXPORTING is_chance = is_chance IMPORTING ev_ok = lv_ok ).
+      mo_chance->insert( EXPORTING is_chance = is_chance IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -825,7 +640,7 @@ CLASS lcl_crm_service IMPLEMENTATION.
         ev_status = 'I'.
       ENDIF.
     ELSE.
-      mo_chance->update_one( EXPORTING is_chance = is_chance IMPORTING ev_ok = lv_ok ).
+      mo_chance->update( EXPORTING is_chance = is_chance IMPORTING ev_ok = lv_ok ).
       IF lv_ok = 'X'.
         COMMIT WORK.
         ev_status = 'O'.
@@ -836,56 +651,36 @@ CLASS lcl_crm_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD delete_chance.
-    mo_chance->delete_one( iv_cnr = iv_cnr ).
+    mo_chance->delete( iv_cnr = iv_cnr ).
     COMMIT WORK.
   ENDMETHOD.
 
-  METHOD first_chance_any.
-    mo_chance->select_first( IMPORTING es_chance = es_chance ev_found = ev_found ).
-  ENDMETHOD.
-
-  METHOD next_chance_any.
-    mo_chance->select_next( EXPORTING iv_after = iv_after IMPORTING es_chance = es_chance ev_found = ev_found ).
-  ENDMETHOD.
-
   METHOD sum_won_for_kunde.
+    DATA lt_chancen TYPE TABLE OF zchance.
     DATA ls_chance TYPE zchance.
-    DATA lv_found TYPE c.
     rv_sum = 0.
-    first_chance( EXPORTING iv_kunnr = iv_kunnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    WHILE lv_found = 'X'.
+    mo_chance->read_all_for( EXPORTING iv_kunnr = iv_kunnr IMPORTING et_chancen = lt_chancen ).
+    LOOP AT lt_chancen INTO ls_chance.
       IF ls_chance-phase = 'gewonnen'.
         rv_sum = rv_sum + ls_chance-wert.
       ENDIF.
-      next_chance( EXPORTING iv_kunnr = iv_kunnr iv_after = ls_chance-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    ENDWHILE.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
 
 * ---------------------------------------------------------------
 * View-Model: Zustand der Bildschirme und Entscheidungen zu Tasten. Kein SQL, kein Dynpro, kein CALL SCREEN.
 * Rueckgabe 'E' = Eingabefehler; das Modul gibt dann die Meldung aus.
+* Blaettern (vorheriger, naechster Eintrag) geschieht auf den Listen des Service.
 * Die Position in Listen (Kontakte, Chancen) wird aus den Daten berechnet, nicht im Objekt gehalten.
+* Das Dynpro liest und schreibt ms_maske direkt (Komponentenzugriff).
 * ---------------------------------------------------------------
 CLASS lcl_crm_view DEFINITION.
   PUBLIC SECTION.
     DATA ms_maske TYPE ty_maske.
-    DATA mo_service TYPE REF TO lcl_crm_service.
-    DATA mo_val TYPE REF TO lcl_validator.
-    DATA mv_kunnr TYPE i.
-    DATA mv_kmode TYPE c LENGTH 1.
-    DATA mv_kon TYPE c LENGTH 1.
-    DATA mv_kmod TYPE c LENGTH 1.
-    DATA mv_con TYPE c LENGTH 1.
-    DATA mv_cmod TYPE c LENGTH 1.
-    DATA mv_phase_alt TYPE c LENGTH 10.
 
     METHODS constructor
       IMPORTING io_service TYPE REF TO lcl_crm_service.
-    METHODS get_maske
-      EXPORTING es_maske TYPE ty_maske.
-    METHODS set_maske
-      IMPORTING is_maske TYPE ty_maske.
     METHODS set_info
       IMPORTING iv_info TYPE c LENGTH 70.
     METHODS clear_info.
@@ -912,6 +707,27 @@ CLASS lcl_crm_view DEFINITION.
       RETURNING VALUE(rv_ok) TYPE c.
     METHODS delete_chance.
     METHODS cycle_phase.
+    METHODS save_0200
+      RETURNING VALUE(rv_error) TYPE c.
+  PRIVATE SECTION.
+    DATA mo_service TYPE REF TO lcl_crm_service.
+    DATA mo_val TYPE REF TO lcl_validator.
+    DATA mv_kunnr TYPE i.
+    DATA mv_kmode TYPE c LENGTH 1.
+    DATA mv_kon TYPE c LENGTH 1.
+    DATA mv_kmod TYPE c LENGTH 1.
+    DATA mv_con TYPE c LENGTH 1.
+    DATA mv_cmod TYPE c LENGTH 1.
+    DATA mv_phase_alt TYPE c LENGTH 10.
+
+    METHODS prev_kunde
+      IMPORTING iv_before TYPE i
+      EXPORTING es_kunde TYPE zkunde
+                ev_found TYPE c.
+    METHODS next_kunde
+      IMPORTING iv_after TYPE i
+      EXPORTING es_kunde TYPE zkunde
+                ev_found TYPE c.
     METHODS load_kontakte_view.
     METHODS show_kontakt.
     METHODS move_kontakt
@@ -922,8 +738,6 @@ CLASS lcl_crm_view DEFINITION.
     METHODS move_chance
       IMPORTING iv_step TYPE i.
     METHODS new_chance.
-    METHODS save_0200
-      RETURNING VALUE(rv_error) TYPE c.
 ENDCLASS.
 
 CLASS lcl_crm_view IMPLEMENTATION.
@@ -938,14 +752,6 @@ CLASS lcl_crm_view IMPLEMENTATION.
     mv_phase_alt = 'offen'.
   ENDMETHOD.
 
-  METHOD get_maske.
-    es_maske = ms_maske.
-  ENDMETHOD.
-
-  METHOD set_maske.
-    ms_maske = is_maske.
-  ENDMETHOD.
-
   METHOD set_info.
     ms_maske-info = iv_info.
   ENDMETHOD.
@@ -955,14 +761,15 @@ CLASS lcl_crm_view IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD start.
+    DATA lt_kunden TYPE TABLE OF zkunde.
     DATA ls_kunde TYPE zkunde.
-    DATA lv_found TYPE c.
     DATA lv_kunnr TYPE i.
-    mo_service->first_kunde( IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
     lv_kunnr = 0.
-    IF lv_found = 'X'.
+    mo_service->list_kunden( IMPORTING et_kunden = lt_kunden ).
+    LOOP AT lt_kunden INTO ls_kunde.
       lv_kunnr = ls_kunde-kunnr.
-    ENDIF.
+      EXIT.
+    ENDLOOP.
     read_kunde( lv_kunnr ).
   ENDMETHOD.
 
@@ -1023,14 +830,14 @@ CLASS lcl_crm_view IMPLEMENTATION.
           ms_maske-info = 'Eingaben verworfen.'.
         ENDIF.
       WHEN 'PREV'.
-        mo_service->prev_kunde( EXPORTING iv_before = mv_kunnr IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
+        prev_kunde( EXPORTING iv_before = mv_kunnr IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
         IF lv_found = 'X'.
           read_kunde( ls_kunde-kunnr ).
         ELSE.
           ms_maske-info = 'Erster Kunde erreicht.'.
         ENDIF.
       WHEN 'NEXT'.
-        mo_service->next_kunde( EXPORTING iv_after = mv_kunnr IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
+        next_kunde( EXPORTING iv_after = mv_kunnr IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
         IF lv_found = 'X'.
           read_kunde( ls_kunde-kunnr ).
         ELSE.
@@ -1075,6 +882,35 @@ CLASS lcl_crm_view IMPLEMENTATION.
           read_kunde( ms_maske-kunnr ).
         ENDIF.
     ENDCASE.
+  ENDMETHOD.
+
+  METHOD prev_kunde.
+    DATA lt_kunden TYPE TABLE OF zkunde.
+    DATA ls_kunde TYPE zkunde.
+    ev_found = ' '.
+    mo_service->list_kunden( IMPORTING et_kunden = lt_kunden ).
+    " Sortiert nach Kundennummer: der letzte Treffer unterhalb der Vorgabe ist der vorherige Kunde.
+    LOOP AT lt_kunden INTO ls_kunde.
+      IF ls_kunde-kunnr < iv_before.
+        es_kunde = ls_kunde.
+        ev_found = 'X'.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD next_kunde.
+    DATA lt_kunden TYPE TABLE OF zkunde.
+    DATA ls_kunde TYPE zkunde.
+    ev_found = ' '.
+    mo_service->list_kunden( IMPORTING et_kunden = lt_kunden ).
+    " Sortiert nach Kundennummer: der erste Treffer oberhalb der Vorgabe ist der naechste Kunde.
+    LOOP AT lt_kunden INTO ls_kunde.
+      IF ls_kunde-kunnr > iv_after.
+        es_kunde = ls_kunde.
+        ev_found = 'X'.
+        EXIT.
+      ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
   METHOD can_delete_kunde.
@@ -1180,36 +1016,53 @@ CLASS lcl_crm_view IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD load_kontakte_view.
+    DATA lt_kontakte TYPE TABLE OF zkontakt.
     DATA ls_kontakt TYPE zkontakt.
     DATA lv_found TYPE c.
     DATA lv_n TYPE i.
-    lv_n = mo_service->count_kontakte( iv_kunnr = mv_kunnr ).
+    mo_service->list_kontakte( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_kontakte = lt_kontakte ).
+    DESCRIBE TABLE lt_kontakte LINES lv_n.
     IF lv_n = 0.
       ms_maske-knr = 0.
     ELSE.
       " Die gemerkte Nummer bleibt, wenn sie zum Kunden gehoert. Sonst wird der erste Kontakt gewaehlt.
-      mo_service->read_kontakt( EXPORTING iv_knr = ms_maske-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-      IF lv_found <> 'X' OR ls_kontakt-kunnr <> mv_kunnr.
-        mo_service->first_kontakt( EXPORTING iv_kunnr = mv_kunnr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
-        ms_maske-knr = ls_kontakt-knr.
+      lv_found = ' '.
+      LOOP AT lt_kontakte INTO ls_kontakt.
+        IF ls_kontakt-knr = ms_maske-knr.
+          lv_found = 'X'.
+        ENDIF.
+      ENDLOOP.
+      IF lv_found <> 'X'.
+        LOOP AT lt_kontakte INTO ls_kontakt.
+          ms_maske-knr = ls_kontakt-knr.
+          EXIT.
+        ENDLOOP.
       ENDIF.
     ENDIF.
     show_kontakt( ).
   ENDMETHOD.
 
   METHOD show_kontakt.
+    DATA lt_kontakte TYPE TABLE OF zkontakt.
     DATA ls_kontakt TYPE zkontakt.
+    DATA ls_zeile TYPE zkontakt.
     DATA lv_found TYPE c.
     DATA lv_pos TYPE i.
     DATA lv_n TYPE i.
-    DATA lv_idx TYPE c LENGTH 10.
-    DATA lv_len TYPE c LENGTH 10.
+    lv_found = ' '.
     IF ms_maske-knr <> 0.
       mo_service->read_kontakt( EXPORTING iv_knr = ms_maske-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
     ENDIF.
     IF lv_found = 'X' AND ls_kontakt-kunnr = mv_kunnr.
-      lv_pos = mo_service->position_kontakt( iv_kunnr = mv_kunnr iv_knr = ls_kontakt-knr ).
-      lv_n = mo_service->count_kontakte( iv_kunnr = mv_kunnr ).
+      mo_service->list_kontakte( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_kontakte = lt_kontakte ).
+      DESCRIBE TABLE lt_kontakte LINES lv_n.
+      " Position: Anzahl der Kontakte bis einschliesslich dieses Kontakts (Liste ist aufsteigend sortiert).
+      lv_pos = 0.
+      LOOP AT lt_kontakte INTO ls_zeile.
+        IF ls_zeile-knr <= ls_kontakt-knr.
+          lv_pos = lv_pos + 1.
+        ENDIF.
+      ENDLOOP.
       ms_maske-knr = ls_kontakt-knr.
       ms_maske-vorname = ls_kontakt-vorname.
       ms_maske-nachname = ls_kontakt-nachname.
@@ -1231,15 +1084,32 @@ CLASS lcl_crm_view IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD move_kontakt.
+    DATA lt_kontakte TYPE TABLE OF zkontakt.
     DATA ls_kontakt TYPE zkontakt.
     DATA lv_found TYPE c.
+    DATA lv_knr TYPE i.
+    lv_found = ' '.
+    mo_service->list_kontakte( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_kontakte = lt_kontakte ).
     IF iv_step > 0.
-      mo_service->next_kontakt( EXPORTING iv_kunnr = mv_kunnr iv_after = ms_maske-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
+      " Naechster Kontakt: erster mit groesserer Nummer.
+      LOOP AT lt_kontakte INTO ls_kontakt.
+        IF ls_kontakt-knr > ms_maske-knr.
+          lv_knr = ls_kontakt-knr.
+          lv_found = 'X'.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
     ELSE.
-      mo_service->prev_kontakt( EXPORTING iv_kunnr = mv_kunnr iv_before = ms_maske-knr IMPORTING es_kontakt = ls_kontakt ev_found = lv_found ).
+      " Vorheriger Kontakt: letzter mit kleinerer Nummer.
+      LOOP AT lt_kontakte INTO ls_kontakt.
+        IF ls_kontakt-knr < ms_maske-knr.
+          lv_knr = ls_kontakt-knr.
+          lv_found = 'X'.
+        ENDIF.
+      ENDLOOP.
     ENDIF.
     IF lv_found = 'X'.
-      ms_maske-knr = ls_kontakt-knr.
+      ms_maske-knr = lv_knr.
       show_kontakt( ).
       ms_maske-info = ' '.
     ELSE.
@@ -1260,33 +1130,53 @@ CLASS lcl_crm_view IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD load_chancen_view.
+    DATA lt_chancen TYPE TABLE OF zchance.
     DATA ls_chance TYPE zchance.
     DATA lv_found TYPE c.
     DATA lv_n TYPE i.
-    lv_n = mo_service->count_chancen( iv_kunnr = mv_kunnr ).
+    mo_service->list_chancen( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_chancen = lt_chancen ).
+    DESCRIBE TABLE lt_chancen LINES lv_n.
     IF lv_n = 0.
       ms_maske-cnr = 0.
     ELSE.
-      mo_service->read_chance( EXPORTING iv_cnr = ms_maske-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-      IF lv_found <> 'X' OR ls_chance-kunnr <> mv_kunnr.
-        mo_service->first_chance( EXPORTING iv_kunnr = mv_kunnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-        ms_maske-cnr = ls_chance-cnr.
+      " Die gemerkte Nummer bleibt, wenn sie zum Kunden gehoert. Sonst wird die erste Chance gewaehlt.
+      lv_found = ' '.
+      LOOP AT lt_chancen INTO ls_chance.
+        IF ls_chance-cnr = ms_maske-cnr.
+          lv_found = 'X'.
+        ENDIF.
+      ENDLOOP.
+      IF lv_found <> 'X'.
+        LOOP AT lt_chancen INTO ls_chance.
+          ms_maske-cnr = ls_chance-cnr.
+          EXIT.
+        ENDLOOP.
       ENDIF.
     ENDIF.
     show_chance( ).
   ENDMETHOD.
 
   METHOD show_chance.
+    DATA lt_chancen TYPE TABLE OF zchance.
     DATA ls_chance TYPE zchance.
+    DATA ls_zeile TYPE zchance.
     DATA lv_found TYPE c.
     DATA lv_pos TYPE i.
     DATA lv_n TYPE i.
+    lv_found = ' '.
     IF ms_maske-cnr <> 0.
       mo_service->read_chance( EXPORTING iv_cnr = ms_maske-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
     ENDIF.
     IF lv_found = 'X' AND ls_chance-kunnr = mv_kunnr.
-      lv_pos = mo_service->position_chance( iv_kunnr = mv_kunnr iv_cnr = ls_chance-cnr ).
-      lv_n = mo_service->count_chancen( iv_kunnr = mv_kunnr ).
+      mo_service->list_chancen( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_chancen = lt_chancen ).
+      DESCRIBE TABLE lt_chancen LINES lv_n.
+      " Position: Anzahl der Chancen bis einschliesslich dieser Chance (Liste ist aufsteigend sortiert).
+      lv_pos = 0.
+      LOOP AT lt_chancen INTO ls_zeile.
+        IF ls_zeile-cnr <= ls_chance-cnr.
+          lv_pos = lv_pos + 1.
+        ENDIF.
+      ENDLOOP.
       ms_maske-cnr = ls_chance-cnr.
       ms_maske-titel = ls_chance-titel.
       ms_maske-wert = ls_chance-wert.
@@ -1310,15 +1200,32 @@ CLASS lcl_crm_view IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD move_chance.
+    DATA lt_chancen TYPE TABLE OF zchance.
     DATA ls_chance TYPE zchance.
     DATA lv_found TYPE c.
+    DATA lv_cnr TYPE i.
+    lv_found = ' '.
+    mo_service->list_chancen( EXPORTING iv_kunnr = mv_kunnr IMPORTING et_chancen = lt_chancen ).
     IF iv_step > 0.
-      mo_service->next_chance( EXPORTING iv_kunnr = mv_kunnr iv_after = ms_maske-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
+      " Naechste Chance: erste mit groesserer Nummer.
+      LOOP AT lt_chancen INTO ls_chance.
+        IF ls_chance-cnr > ms_maske-cnr.
+          lv_cnr = ls_chance-cnr.
+          lv_found = 'X'.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
     ELSE.
-      mo_service->prev_chance( EXPORTING iv_kunnr = mv_kunnr iv_before = ms_maske-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
+      " Vorherige Chance: letzte mit kleinerer Nummer.
+      LOOP AT lt_chancen INTO ls_chance.
+        IF ls_chance-cnr < ms_maske-cnr.
+          lv_cnr = ls_chance-cnr.
+          lv_found = 'X'.
+        ENDIF.
+      ENDLOOP.
     ENDIF.
     IF lv_found = 'X'.
-      ms_maske-cnr = ls_chance-cnr.
+      ms_maske-cnr = lv_cnr.
       show_chance( ).
       ms_maske-info = ' '.
     ELSE.
@@ -1414,7 +1321,7 @@ CLASS lcl_crm_view IMPLEMENTATION.
 ENDCLASS.
 
 * ---------------------------------------------------------------
-* Bericht: WRITE-Liste aus den Daten des Service.
+* Bericht: WRITE-Liste aus den Listen des Service.
 * ---------------------------------------------------------------
 CLASS lcl_report DEFINITION.
   PUBLIC SECTION.
@@ -1424,9 +1331,10 @@ ENDCLASS.
 
 CLASS lcl_report IMPLEMENTATION.
   METHOD run.
-    DATA ls_kunde TYPE zkunde.
+    DATA lt_chancen TYPE TABLE OF zchance.
     DATA ls_chance TYPE zchance.
-    DATA lv_found TYPE c.
+    DATA lt_kunden TYPE TABLE OF zkunde.
+    DATA ls_kunde TYPE zkunde.
     DATA lv_sum TYPE i.
     DATA lv_sum_won TYPE i.
     DATA lv_anz TYPE i.
@@ -1438,38 +1346,35 @@ CLASS lcl_report IMPLEMENTATION.
     WRITE / 'Offene Verkaufschancen'.
     lv_sum = 0.
     lv_anz = 0.
-    io_service->first_chance_any( IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    WHILE lv_found = 'X'.
+    io_service->list_chancen_all( IMPORTING et_chancen = lt_chancen ).
+    LOOP AT lt_chancen INTO ls_chance.
       IF ls_chance-phase = 'offen'.
         lv_sum = lv_sum + ls_chance-wert.
         lv_anz = lv_anz + 1.
         lv_line = |  Chance { ls_chance-cnr }, Kunde { ls_chance-kunnr }: { ls_chance-titel } { ls_chance-wert } EUR|.
         WRITE / lv_line.
       ENDIF.
-      io_service->next_chance_any( EXPORTING iv_after = ls_chance-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    ENDWHILE.
+    ENDLOOP.
     lv_line = |  Anzahl { lv_anz }, Summe { lv_sum } EUR|.
     WRITE / lv_line.
 
     WRITE / 'Gewonnene Verkaufschancen'.
     lv_sum_won = 0.
     lv_anz = 0.
-    io_service->first_chance_any( IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    WHILE lv_found = 'X'.
+    LOOP AT lt_chancen INTO ls_chance.
       IF ls_chance-phase = 'gewonnen'.
         lv_sum_won = lv_sum_won + ls_chance-wert.
         lv_anz = lv_anz + 1.
         lv_line = |  Chance { ls_chance-cnr }, Kunde { ls_chance-kunnr }: { ls_chance-titel } { ls_chance-wert } EUR|.
         WRITE / lv_line.
       ENDIF.
-      io_service->next_chance_any( EXPORTING iv_after = ls_chance-cnr IMPORTING es_chance = ls_chance ev_found = lv_found ).
-    ENDWHILE.
+    ENDLOOP.
     lv_line = |  Anzahl { lv_anz }, Summe { lv_sum_won } EUR|.
     WRITE / lv_line.
 
     WRITE / 'Umsatzanteil je Kunde (gewonnene Chancen)'.
-    io_service->first_kunde( IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
-    WHILE lv_found = 'X'.
+    io_service->list_kunden( IMPORTING et_kunden = lt_kunden ).
+    LOOP AT lt_kunden INTO ls_kunde.
       lv_kum = io_service->sum_won_for_kunde( iv_kunnr = ls_kunde-kunnr ).
       lv_pct = 0.
       IF lv_sum_won > 0.
@@ -1477,8 +1382,7 @@ CLASS lcl_report IMPLEMENTATION.
       ENDIF.
       lv_line = |  Kunde { ls_kunde-kunnr } { ls_kunde-name }: { lv_kum } EUR, { lv_pct } %|.
       WRITE / lv_line.
-      io_service->next_kunde( EXPORTING iv_after = ls_kunde-kunnr IMPORTING es_kunde = ls_kunde ev_found = lv_found ).
-    ENDWHILE.
+    ENDLOOP.
   ENDMETHOD.
 ENDCLASS.
 
@@ -1510,19 +1414,18 @@ DATA ok_code TYPE c LENGTH 70.
 DATA gv_ok TYPE c LENGTH 1.
 DATA gv_error TYPE c LENGTH 1.
 DATA gv_confirm TYPE c LENGTH 1.
-DATA go_dao_kunde TYPE REF TO lcl_dao_kunde.
-DATA go_dao_kontakt TYPE REF TO lcl_dao_kontakt.
-DATA go_dao_chance TYPE REF TO lcl_dao_chance.
+DATA go_dao_kunde TYPE REF TO lif_dao_kunde.
+DATA go_dao_kontakt TYPE REF TO lif_dao_kontakt.
+DATA go_dao_chance TYPE REF TO lif_dao_chance.
 DATA go_service TYPE REF TO lcl_crm_service.
 DATA go_view TYPE REF TO lcl_crm_view.
 DATA go_report TYPE REF TO lcl_report.
 
 START-OF-SELECTION.
-  " WORKAROUND FR-001: DAOs werden direkt erzeugt. Eine Factory mit Interfaces fehlt.
-  CREATE OBJECT go_dao_kunde.
-  CREATE OBJECT go_dao_kontakt.
-  CREATE OBJECT go_dao_chance.
-  CREATE OBJECT go_service EXPORTING io_kunde = go_dao_kunde io_kontakt = go_dao_kontakt io_chance = go_dao_chance.
+  go_dao_kunde = lcl_dao_factory=>get_kunde_dao( ).
+  go_dao_kontakt = lcl_dao_factory=>get_kontakt_dao( ).
+  go_dao_chance = lcl_dao_factory=>get_chance_dao( ).
+  CREATE OBJECT go_service EXPORTING io_kunde_dao = go_dao_kunde io_kontakt_dao = go_dao_kontakt io_chance_dao = go_dao_chance.
   CREATE OBJECT go_view EXPORTING io_service = go_service.
   CREATE OBJECT go_report.
   go_view->start( ).
@@ -1532,49 +1435,44 @@ START-OF-SELECTION.
 
 * Kopien zwischen Dynpro-Feldern und Maske. PBO kopiert in das Dynpro, PAI zurueck in die Maske.
 FORM to_dynpro.
-  DATA ls_m TYPE ty_maske.
-  go_view->get_maske( IMPORTING es_maske = ls_m ).
-  zkunnr = ls_m-kunnr.
-  zname = ls_m-name.
-  zort = ls_m-ort.
-  zbranche = ls_m-branche.
-  znkont = ls_m-nkont.
-  znchance = ls_m-nchance.
-  zinfo = ls_m-info.
-  zknr = ls_m-knr.
-  zvorname = ls_m-vorname.
-  znachname = ls_m-nachname.
-  zemail = ls_m-email.
-  ztelefon = ls_m-telefon.
-  zkpos = ls_m-kpos.
-  zcnr = ls_m-cnr.
-  ztitel = ls_m-titel.
-  zwert = ls_m-wert.
-  zphase = ls_m-phase.
-  zabschluss = ls_m-abschluss.
-  zcpos = ls_m-cpos.
-  zfrage = ls_m-frage.
+  zkunnr = go_view->ms_maske-kunnr.
+  zname = go_view->ms_maske-name.
+  zort = go_view->ms_maske-ort.
+  zbranche = go_view->ms_maske-branche.
+  znkont = go_view->ms_maske-nkont.
+  znchance = go_view->ms_maske-nchance.
+  zinfo = go_view->ms_maske-info.
+  zknr = go_view->ms_maske-knr.
+  zvorname = go_view->ms_maske-vorname.
+  znachname = go_view->ms_maske-nachname.
+  zemail = go_view->ms_maske-email.
+  ztelefon = go_view->ms_maske-telefon.
+  zkpos = go_view->ms_maske-kpos.
+  zcnr = go_view->ms_maske-cnr.
+  ztitel = go_view->ms_maske-titel.
+  zwert = go_view->ms_maske-wert.
+  zphase = go_view->ms_maske-phase.
+  zabschluss = go_view->ms_maske-abschluss.
+  zcpos = go_view->ms_maske-cpos.
+  zfrage = go_view->ms_maske-frage.
 ENDFORM.
 
 FORM from_dynpro.
-  DATA ls_m TYPE ty_maske.
-  go_view->get_maske( IMPORTING es_maske = ls_m ).
-  ls_m-kunnr = zkunnr.
-  ls_m-name = zname.
-  ls_m-ort = zort.
-  ls_m-branche = zbranche.
-  ls_m-info = zinfo.
-  ls_m-knr = zknr.
-  ls_m-vorname = zvorname.
-  ls_m-nachname = znachname.
-  ls_m-email = zemail.
-  ls_m-telefon = ztelefon.
-  ls_m-cnr = zcnr.
-  ls_m-titel = ztitel.
-  ls_m-wert = zwert.
-  ls_m-phase = zphase.
-  ls_m-abschluss = zabschluss.
-  go_view->set_maske( EXPORTING is_maske = ls_m ).
+  go_view->ms_maske-kunnr = zkunnr.
+  go_view->ms_maske-name = zname.
+  go_view->ms_maske-ort = zort.
+  go_view->ms_maske-branche = zbranche.
+  go_view->ms_maske-info = zinfo.
+  go_view->ms_maske-knr = zknr.
+  go_view->ms_maske-vorname = zvorname.
+  go_view->ms_maske-nachname = znachname.
+  go_view->ms_maske-email = zemail.
+  go_view->ms_maske-telefon = ztelefon.
+  go_view->ms_maske-cnr = zcnr.
+  go_view->ms_maske-titel = ztitel.
+  go_view->ms_maske-wert = zwert.
+  go_view->ms_maske-phase = zphase.
+  go_view->ms_maske-abschluss = zabschluss.
 ENDFORM.
 
 * ---------------------------------------------------------------

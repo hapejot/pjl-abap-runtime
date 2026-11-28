@@ -8,13 +8,16 @@ Nutzer. Der Compiler wird nicht still erweitert.
 
 | Nr | Titel | Beispiel | Status |
 |---|---|---|---|
-| [FR-001](FR-001-interfaces-und-factory.md) | Interfaces als Referenztyp, `CREATE OBJECT ... TYPE`, Factory für DAOs | poc-crm | umgesetzt (Stufe 1, Methodentabelle pro Klasse; Stufe 2 Factory offen, Beispiel nicht geändert) |
+| [FR-001](FR-001-interfaces-und-factory.md) | Interfaces als Referenztyp, `CREATE OBJECT ... TYPE`, Factory für DAOs | poc-crm | umgesetzt (Stufe 1 Compiler, Stufe 2 Factory im Beispiel) |
 | [FR-002](FR-002-tabellen-als-parameter.md) | Interne Tabellen als Methodenparameter und Klassenattribute | poc-crm | umgesetzt (Stufen 1 bis 3; Einschränkungen siehe FR-002) |
 | [FR-003](FR-003-verkettete-aufrufe-und-komponentenzugriff.md) | Verkettete Methodenaufrufe, Komponentenzugriff auf Objektattribute | poc-crm | umgesetzt (Einschränkungen siehe FR-003) |
 | [FR-004](FR-004-zahl-in-zeichenfeld.md) | Zuweisung einer Zahl an ein Zeichenfeld (eigene Regel nach SAP-Testlauf, kein `WRITE`) | poc-crm | umgesetzt (Offenes siehe FR-004; Beispiel poc-crm nicht geändert) |
 | [FR-005](FR-005-konvertierungsroutinen.md) | Konvertierungsroutinen für Ausgabe und Eingabe (Domäne) | offen, Beispiel noch nicht untersucht | umgesetzt (Stufe 1: `ALPHA` bei `WRITE`, Eingabe und Dynpro offen; siehe FR-005) |
 
+| [FR-006](FR-006-append-auf-objektattribut.md) | `APPEND` auf ein Tabellenattribut eines Objekts (stiller Laufzeitabbruch, Exit 78) | keines direkt (Mock-Prüfung) | offen |
+
 Reihenfolge der Umsetzung (festgelegt vom Nutzer, 2026-11-28): FR-002, FR-003, FR-001, FR-004, FR-005.
+FR-006 ist noch nicht eingeordnet; die Reihenfolge entscheidet der Nutzer.
 
 ## Beobachtete Fehler
 

@@ -16,15 +16,21 @@ dazu `input.keys` (Eingabeskript) und die erwarteten Ausgaben.
 ## Aufbau des Programms
 
 - **Dynpro** (Module in `prog.abap`): nur PBO- und PAI-Module. Sie kopieren über `to_dynpro` und `from_dynpro`
-  zwischen den Dynpro-Feldern und der Maske und rufen das View-Model auf.
-- **View-Model** (`lcl_crm_view`): Zustand der Bildschirme und Entscheidungen zu den Tasten. Kein SQL.
+  zwischen den Dynpro-Feldern und `ms_maske` im View-Model und rufen das View-Model auf.
+- **View-Model** (`lcl_crm_view`): Zustand der Bildschirme, Blättern und Entscheidungen zu den Tasten. Kein SQL.
 - **Service** (`lcl_crm_service`): Anwendungsfälle und Transaktionsgrenzen (`COMMIT WORK`, `ROLLBACK WORK`).
+  Kennt nur die DAO-Interfaces, die er per Konstruktor erhält.
 - **Validierung** (`lcl_validator`): Prüfungen der Eingaben, Ausnahme `lcx_crm`.
-- **DAOs** (`lcl_dao_kunde`, `lcl_dao_kontakt`, `lcl_dao_chance`): das einzige SQL. Sie liefern einzelne Sätze.
+- **DAOs**: je Tabelle ein Interface (`lif_dao_kunde`, `lif_dao_kontakt`, `lif_dao_chance`) und eine Implementierung
+  mit Open SQL (`lcl_dao_kunde_sql`, `lcl_dao_kontakt_sql`, `lcl_dao_chance_sql`). Das einzige SQL. Listen
+  kommen als Tabellenparameter, sortiert nach dem Schlüssel.
+- **Factory** (`lcl_dao_factory`): statische Methoden liefern die DAOs als Interface-Referenz. Das Hauptprogramm
+  holt sie hierüber.
 - **Bericht** (`lcl_report`): WRITE-Liste.
 
-Die DAOs sind konkrete Klassen, nicht Interfaces, und werden direkt erzeugt. Die Gründe und die offenen
-Feature-Requests stehen in `doc/feature-requests/` (FR-001 bis FR-004).
+Der Mock `lcl_dao_kunde_mock` liegt in `test/lcl_dao_kunde_mock.abap`. Er wird von `prog.abap` nicht verwendet
+und wartet auf ABAP Unit. Die Feature-Requests FR-001 bis FR-004 sind im Beispiel umgesetzt; es gibt keine
+`WORKAROUND`-Markierungen mehr.
 
 ## Übersetzen
 

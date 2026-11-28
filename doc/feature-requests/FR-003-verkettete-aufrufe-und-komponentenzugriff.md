@@ -2,10 +2,9 @@
 
 Status: umgesetzt (Einschränkungen siehe unten; Stand 2026-11-28)
 Beispiel: poc-crm (Akzeptanzfall `m16_crm`)
-Stelle im Beispiel: Die erste Fassung hatte `mo_service->mo_kunde->select_one( ... )`. Das wurde durch
-eine Service-Methode ersetzt. Die Strukturkomponente `go_view->ms_maske-kunnr` von außen wurde durch
-`get_maske` und `set_maske` ersetzt. Der Workaround-Marker `* WORKAROUND FR-003` fehlt im Beispiel und ist
-noch nachzutragen.
+Stelle im Beispiel: Die Strukturkomponente `go_view->ms_maske-kunnr` wird in den FORMs `to_dynpro` und
+`from_dynpro` direkt gelesen und geschrieben. `get_maske` und `set_maske` sind entfernt. Eine Markierung
+`WORKAROUND FR-003` gab es im Beispiel nicht.
 
 ## Problem
 Zwei Zugriffsformen fehlen:
@@ -49,5 +48,5 @@ Beide Formen sind Standard. Belegt durch die ABAP-Schlüsselwortdokumentation (S
 
 - Zuweisung an eine verkettete Stelle (`a->b->c = x`) ist nicht umgesetzt (Übersetzungsfehler).
 - Sichtbarkeit für Methodenaufrufe und Klassenattribute (`cls=>attr`) wird nicht geprüft.
-- Der Workaround-Marker `* WORKAROUND FR-003` fehlt im Beispiel poc-crm (nicht Teil dieses Auftrags; das Beispiel wurde nicht geändert).
+- Im Beispiel poc-crm ist der Komponentenzugriff umgesetzt (`get_maske`/`set_maske` entfernt). Eine Markierung ist nicht nötig.
 - Der Fall „Unterklasse greift über Referenz des Oberklassentyps auf PROTECTED zu“ ist nicht eindeutig belegt; die strenge Festlegung gilt (siehe `doc/sprache.md`, 5c, Festlegung 3).

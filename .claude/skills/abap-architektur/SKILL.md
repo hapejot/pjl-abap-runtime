@@ -53,22 +53,25 @@ Logik darin zu verteilen macht Tests schwer.
 
 ## 5. DAO
 
-- Ein DAO je Tabelle: `lcl_dao_kunde`, `lcl_dao_kontakt`, `lcl_dao_chance`.
-- Methoden: `read`, `read_all_for`, `insert`, `update`, `delete`. Parameter und Ergebnisse als `TYPES`-Zeilen.
+- Ein DAO je Tabelle: Interface `lif_dao_kunde`, `lif_dao_kontakt`, `lif_dao_chance`, Implementierung
+  `lcl_dao_kunde_sql`, `lcl_dao_kontakt_sql`, `lcl_dao_chance_sql`.
+- Methoden: `read` (ein Satz), `read_all` (alle Sätze, sortiert nach dem Schlüssel), `read_all_for` (Sätze eines
+  Kunden), `read_last` (Satz mit der höchsten Nummer, für die Nummernvergabe), `insert`, `update`, `delete`,
+  `delete_for_kunde`. Parameter und Ergebnisse als `TYPES`-Zeilen, Listen als Tabellenparameter.
 - SQL steht nur im DAO. Außerhalb keine `SELECT`-, `INSERT`-, `UPDATE`- oder `DELETE`-Anweisung.
-- **Umsetzungsstand (poc-crm):** Die DAOs sind konkrete Klassen, die direkt erzeugt und per Konstruktor in
-  den Service gegeben werden (`WORKAROUND FR-001`). Sie liefern nur Einzelsätze, weil Tabellen als Parameter
-  nicht unterstützt sind (`WORKAROUND FR-002`). Listen entstehen im Service durch Schleifen. Das ist das
-  Zwischenziel, bis die Feature-Requests umgesetzt sind.
+- **Umsetzungsstand (poc-crm):** Die Interfaces und die Factory sind umgesetzt (FR-001 Stufe 2), Listen kommen
+  als Tabellenparameter (FR-002), Komponentenzugriff ist direkt (FR-003). Es gibt keine `WORKAROUND`-Markierung
+  mehr im Beispiel. Die frühere Zwischenstufe (konkrete DAO-Klassen, Einzelsätze, Schleifen im Service) ist überholt.
 - DAOs sind echte Instanzen, damit sie in Unit-Tests durch Mocks ersetzt werden können. Dreiteilung je Tabelle:
   - Interface `lif_dao_kunde` mit den Methoden (Vertrag). Services und View-Models kennen nur das Interface.
-  - Implementierung `lcl_dao_kunde` mit Open SQL. Nur sie enthält SQL für diese Tabelle.
+  - Implementierung `lcl_dao_kunde_sql` mit Open SQL. Nur sie enthält SQL für diese Tabelle.
   - Factory `lcl_dao_factory` mit Methoden wie `get_kunde_dao( ) RETURNING ro_dao TYPE REF TO lif_dao_kunde`.
     Das Hauptprogramm holt die DAOs über die Factory und übergibt sie an die Services.
 - Services bekommen ihre DAOs per Konstruktor (Parameter `io_..._dao TYPE REF TO lif_dao_...`), nicht über
   eine globale Variable. So lässt sich im Test ein Mock einsetzen.
 - Mocks: Testklassen, die dasselbe Interface implementieren und Daten in internen Tabellen halten. Sie
-  liegen beim Test, nicht im Produktionscode.
+  liegen beim Test, nicht im Produktionscode. Beispiel: `poc-crm/test/lcl_dao_kunde_mock.abap` (nicht in
+  `prog.abap` eingebunden).
 - Ob der Compiler Interfaces mit `REF TO`-Parametern und Konstruktor-Injektion vollständig kann, wird
   am Beispiel geprüft. Lücken werden als Feature-Request erfasst (Abschnitt 8).
 
