@@ -135,6 +135,245 @@ stderr aus, keine Feldwerte.
 Konfiguration: `<NAME>.toml` neben der EXE oder im Arbeitsverzeichnis, oder `ABAPC_DB_CONFIG`. Die Datei
 enthält keine Geheimnisse, nur Namen von Umgebungsvariablen (Spezifikation, Abschnitt 9).
 
+## 5b. Interne Tabellen als Parameter und Attribute (FR-002)
+
+Umgesetzt in drei Stufen. Tabellenparameter (`IMPORTING`, `EXPORTING`, `CHANGING`, `RETURNING`), `FORM`-Parameter,
+Tabellenzuweisung `tab = expr`, `SELECT ... INTO TABLE` in einen Tabellenparameter und Tabellenattribute
+in Klassen. Die Belege sind Doku-Ausschnitte aus Suchtreffern (ABAP-Schlüsselwortdokumentation, Stichworte
+„Internal tables“, „Method parameters“, „INTO TABLE“), nicht vollständig gelesene Seiten. Ein SAP-System
+stand für den Abgleich nicht zur Verfügung. Die Quelle je Fall steht in der Spalte „Quelle“.
+
+| Akzeptanzfall | Ausgabe bzw. Fehler | Quelle |
+|---|---|---|
+| `m18_table_param_importing` | `alpha`, `beta` (je Zeile) | ABAP-Standard: IMPORTING-Tabelle, Schleife über den Parameter |
+| `m18_table_param_exporting` | `gamma`, `delta` | ABAP-Standard: EXPORTING-Tabelle. Die Methode leert mit `CLEAR`, daher hängt der Fall nicht an Festlegung 8 |
+| `m18_table_param_changing` | `alt`, `neu` | ABAP-Standard: CHANGING-Tabelle, Änderung wirkt im Aufrufer |
+| `m18_table_return` | `eins`, `zwei` | ABAP-Standard: RETURNING-Tabelle wird per Wert übergeben, Zuweisung `lt = o->make( )` |
+| `m18_table_assign` | `a`, `b`, `c`, `original`, `a`, `b` | ABAP-Standard: `lt2 = lt` kopiert alle Zeilen. Der Inhalt des Ziels wird ersetzt. Eine spätere Änderung des Ziels wirkt nicht auf die Quelle |
+| `m18_table_form_param` | `form` | Festlegung 5 (FORM-Tabellenparameter aktiv). Typisierung `TYPE TABLE OF` ist ABAP-Standard |
+| `m18_table_param_select` | `0400`, `0401` | ABAP-Standard: `SELECT ... INTO TABLE` leert das Ziel, vorher gefüllte Zeile `9999` verschwindet. Ausgabe `n(4)` ist die Zeichenform der Spalte |
+| `m18_table_attribute_loop` | `eins`, `zwei`, `o2` | ABAP-Standard: Tabellenattribut je Objekt. Das Wort `o2` ist eine Überschrift des Programms, danach ist das Objekt `o2` leer |
+| `m18_table_attribute_select` | `0400`, `0401` | ABAP-Standard: `SELECT ... INTO TABLE` in ein Tabellenattribut, derselbe Ablauf wie `m18_table_param_select` |
+| `m18_error_table_param_type` | `Type does not match formal parameter: 'lt'` | Festlegung 7 (Typprüfung). Der Fehlertext ist eine Projektfestlegung |
+| `m18_error_importing_table_write` | `Importing parameter 'it' is read-only and cannot be changed` | ABAP-Standard: Schreiben auf IMPORTING ist ein Syntaxfehler (Doku-Ausschnitt). Der Fehlertext ist Projektfestlegung |
+| `m18_error_importing_scalar_write` | `Importing parameter 'iv' is read-only and cannot be changed` | wie oben, für einen Skalar `TYPE i` |
+
+## 5c. Verkettete Aufrufe und Komponentenzugriff auf Attribute (FR-003)
+
+Umgesetzt: Aufrufketten `a->m( )->n( )`, `a->attr->m( )`, `a->m( )->attr` (auch als Anweisung), Lesen und
+Schreiben einer Strukturkomponente über ein Objekt `obj->struktur-komponente` (auch verschachtelt, nur
+Lesen über Ketten) sowie die Sichtbarkeitsprüfung für Attribute beim Zugriff von außen.
+Die Belege sind Doku-Ausschnitte aus der ABAP-Schlüsselwortdokumentation (Stichworte „Method calls“,
+„Object component selector“, „Structure component selector“, „PRIVATE“, „PROTECTED“). Gelesen wurden
+Spiegelseiten (eduardocopat.github.io/abap-docs, Release 7.54), nicht die offizielle Seite. Ein SAP-System
+stand für den Abgleich nicht zur Verfügung. Die Quelle je Fall steht in der Spalte „Quelle“.
+
+| Akzeptanzfall | Ausgabe bzw. Fehler | Quelle |
+|---|---|---|
+| `m19_chain_two_calls` | `42` (Kette `o->get_inner( )->value( )`, auch als Anweisung ohne Ergebnis) | ABAP-Standard: Aufruf auf dem Rückgabewert (Stichwort „Method calls“). Ausgabeformat siehe Abschnitt 6 |
+| `m19_chain_attribute` | `7` (Kette `o->mo_inner->value( )`) | ABAP-Standard: Attribut als Basis eines Aufrufs. Zuweisung `o->mo_inner = lo_in` ist Schreiben auf ein öffentliches Attribut |
+| `m19_struct_component_read` | `40`, `3` | ABAP-Standard: Komponente über Objekt (Stichwort „Object component selector“), lesend |
+| `m19_struct_component_write` | `5`, `50` | Schreiben `obj->struktur-komponente = wert` über dieselbe Regel. Belegt nur für Lesen; das Schreiben ist Vermutung, siehe Festlegung 3 |
+| `m19_protected_in_subclass` | `5` | ABAP-Standard: PROTECTED-Attribut in Unterklasse über `me->` sichtbar (Stichwort „PROTECTED“) |
+| `m19_error_protected_attribute_from_outside` | `Attribute 'mv_secret' is PROTECTED in class 'base' and not visible here` | ABAP-Standard: Zugriff von außen auf PROTECTED ist ein Syntaxfehler (Stichwort „PROTECTED“). Der Meldungstext ist Festlegung 4 |
+| `m19_error_private_write` | `Attribute 'mv_secret' is PRIVATE in class 'base' and not visible here` | ABAP-Standard: PRIVATE nur in der Klasse selbst (Stichwort „PRIVATE“). Der Meldungstext ist Festlegung 4 |
+
+**Festlegungen:**
+
+1. **Sichtbarkeit vor FR-003**: Der Compiler prüfte die Sichtbarkeit weder bei `obj->attr` noch bei
+   Methodenaufrufen. Mit FR-003 wird sie für Attribute beim Lesen und Schreiben geprüft, auch für
+   Komponenten. Die Regel gilt für alle Zugriffe gleich. Methodenaufrufe werden weiterhin nicht geprüft (offen).
+2. **PRIVATE** ist nur in der deklarierenden Klasse sichtbar. Friends sind nicht umgesetzt (belegt: Stichwort „Friends“).
+3. **PROTECTED** ist in der deklarierenden Klasse und ihren Unterklassen sichtbar, und nur über eine Referenz,
+   deren statischer Typ die zugreifende Klasse oder eine Unterklasse davon ist. Der Fall „Unterklasse greift über
+   eine Referenz des Oberklassentyps auf PROTECTED zu“ ist in der Doku nicht eindeutig belegt. Die Festlegung ist
+   bewusst streng: der Zugriff wird abgewiesen. Vor einer Änderung der Regel prüfen. Die Schreibrichtung der
+   Komponente (`obj->struktur-komponente = wert`) ist nicht vollständig belegt, sie folgt der Regel für
+   `obj->attr = wert`.
+4. **Meldungen**: `Attribute '<name>' is <PROTECTED|PRIVATE> in class '<klasse>' and not visible here`. Der Text
+   ist eine Projektfestlegung. Eine Anweisung ohne Klassenkontext (Programm, FORM) gilt als Zugriff von außen.
+   Statische Methoden gelten als Klassenkontext ihrer Klasse.
+5. **Initiale Referenz in der Kette**: Ein Zwischenwert ohne Objekt bricht mit dem Laufzeitfehler
+   `object reference is not set (CX_SY_REF_IS_INITIAL)` ab (Exit-Code 1, kein Dump). Der Dump-Name ist belegt
+   (Stichwort „Method calls“, Praxisbeleg). Ob der Fehler in ABAP behandelbar ist, ist widersprüchlich belegt
+   (Doku 7.40 und 7.54). Der Compiler kennt keine Ausnahmebehandlung für diesen Fall.
+6. **Attribut ohne Sichtbarkeitseintrag** (z. B. Interface-Attribute `intf~attr`, Attribute aus einer externen
+   Oberklasse) gilt als öffentlich.
+
+**Lücken (nicht umgesetzt):**
+
+- Zuweisung an eine verkettete Stelle `a->b->c = wert` bleibt ein Übersetzungsfehler
+  (`Assignment to chained attribute not supported yet`). Lesen über Ketten ist umgesetzt.
+- Sichtbarkeit von Methodenaufrufen (`obj->privat( )`) wird nicht geprüft.
+- Sichtbarkeit von Klassenattributen (`cls=>attr`) wird nicht geprüft.
+- Unqualifizierter Zugriff einer Unterklasse auf ein PRIVATE-Attribut der Oberklasse (`attr` ohne `me->`) wird
+  nicht abgewiesen. Der Zugriff über `me->` wird geprüft.
+
+## 5d. Interface-Referenzen und Methodentabelle (FR-001, Stufe 1)
+
+Umgesetzt: `TYPE REF TO <interface>` bei Attributen, Parametern, Rückgabewerten und lokalen Variablen;
+`CREATE OBJECT <ref> TYPE <klasse>` mit Prüfung der Implementierung; Aufruf von Interface-Methoden über eine
+Interface-Referenz über die Methodentabelle des Objekts; Zuweisung und Übergabe einer Klassenreferenz an eine
+Interface-Referenz (Upcast). Nicht umgesetzt: CAST, Vererbung zwischen Interfaces als Zuweisung (Stufe 1),
+statische Interface-Methoden über eine Referenz, Interface-Attribute über eine Referenz (`ref->attr`).
+Die Factory (Stufe 2) ist ABAP-Code im Beispiel und steht nicht in diesem Abschnitt. Der Akzeptanzfall
+`m20_iface_factory_return` zeigt sie als Compilerfall.
+
+| Akzeptanzfall | Ausgabe bzw. Fehler | Quelle |
+|---|---|---|
+| `m20_iface_two_impls` | `add`, `x` | Zwei Klassen implementieren dasselbe Interface. Der Aufruf über die Referenz löst zur Laufzeit auf die Implementierung des Objekts auf. Der Parameter `iv` wird an die Implementierung übergeben. Belegt durch Doku-Auszug („Conversion Rules for References“, Upcast) |
+| `m20_iface_mock_replaces_impl` | `mock`, `database` | Mock-Klasse ersetzt die echte Implementierung über den Konstruktor-Parameter `TYPE REF TO <interface>` (Upcast beim Aufruf). Zwei Service-Objekte mit unterschiedlichen Implementierungen |
+| `m20_iface_attr_and_param` | `param ok`, `attr ok` | Interface-Referenz als Parameter (`IMPORTING`) und als Attribut, Rückgabe per `RETURNING ... TYPE REF TO`. Der Aufruf über das Attribut ist Aufruf über die Tabelle |
+| `m20_iface_factory_return` | `mul`, `add` | Factory-Methode gibt `TYPE REF TO <interface>` zurück, die Implementierung wird im Rumpf per `CREATE OBJECT ro TYPE` gewählt |
+| `m20_iface_inherited_table` | `base` | Unterklasse ohne eigene Implementierung erbt den Interface-Eintrag der Oberklasse (Festlegung 2). Zuweisung `lo = lc` ist Upcast über die geerbte Implementierung (Festlegung 3) |
+| `m20_error_create_type_not_implemented` | `Class 'lcl_plain' does not implement interface 'lif_x'` | `CREATE OBJECT ... TYPE` mit einer Klasse, die das Interface nicht implementiert. Die Regel (Klasse muss implementieren) ist belegt (Auszug, „CREATE OBJECT“). Die Fehlerklasse (Syntax oder Laufzeit) ist nicht belegt; hier Übersetzungsfehler (Festlegung 4) |
+| `m20_error_create_iface_without_type` | `an interface reference needs TYPE` | `CREATE OBJECT` ohne `TYPE` bei einer Interface-Referenz. Die Pflicht zu `TYPE` ist belegt (Auszug, „CREATE OBJECT“). Die Fehlerklasse ist nicht belegt (Festlegung 4) |
+
+Unit-Tests: `lower::tests::interface_methods_are_qualified_and_sorted_with_sub_interfaces`,
+`lower::tests::lowers_create_with_type_clause_and_arguments`, `codegen::iface::tests::implemented_closure_adds_sub_interfaces_once`.
+
+**Festlegungen:**
+
+1. **Methodentabelle**: Jedes Interface des Programms bekommt einen festen Offset: die Summe der Methodenzahlen
+   der vorher definierten Interfaces. Die Methoden eines Interface (einschließlich der aus Unter-Interfaces
+   übernommenen, qualifiziert `iface~methode`) sind nach dem qualifizierten Namen sortiert. Der Slot ist
+   `Offset(Interface) + Index(Methode)`. Der Offset ist programmweit gleich, weil der Aufruf über eine
+   Interface-Referenz den Offset zur Übersetzungszeit kennt, nicht den Klassentyp des Objekts. Eine Tabelle
+   je Klasse hat Slots für alle Interfaces bis zum höchsten belegten Slot. Nicht belegte Slots sind null.
+2. **Oberklasse (Regel)**: Die Tabelle einer Klasse beginnt als Kopie der Tabelle ihrer Oberklasse. Eigene
+   Implementierungen von Interface-Methoden (`iface~methode`) überschreiben den Slot. Eine Unterklasse ohne
+   eigene Implementierung erbt also den Eintrag. Diese Regel ist eine Projektfestlegung. Die Vererbung
+   von Interface-Implementierungen ist in der Doku nicht vollständig belegt. Das Überschreiben über
+   `METHODS iface~m REDEFINITION` in einer Unterklasse ist im Compiler verdrahtet, aber nicht durch einen
+   Akzeptanzfall geprüft. Die Tabellenlogik überschreibt den Slot mit der eigenen Implementierung. Ob der Parser
+   `METHODS iface~m REDEFINITION` in einer Unterklasse für Interface-Methoden annimmt, ist nicht geprüft.
+   Die Doku-Auskunft (Spiegelseiten, nicht SAP-original) stützt das Überschreiben, die dynamische Auflösung
+   über die Referenz ist Vermutung.
+3. **Upcast**: Eine Klassenreferenz darf einer Interface-Referenz zugewiesen oder als Interface-Parameter
+   übergeben werden, wenn die Klasse das Interface implementiert. Das gilt auch für geerbte Interfaces und
+   für Interfaces, die das Interface über `INTERFACES` einbinden. Bei CHANGING muss der Typ gleich sein.
+   Die Regel ist durch einen Doku-Auszug belegt („Conversion Rules for References“).
+4. **Fehlerklasse**: Alle Verstöße gegen die Implementierungspflicht (Zuweisung, `CREATE OBJECT ... TYPE`,
+   fehlendes `TYPE`) sind Übersetzungsfehler, weil die Klasse zur Übersetzungszeit bekannt ist. Ob ABAP
+   dafür einen Syntaxfehler oder eine Laufzeitausnahme ausgibt, ist nicht belegt. Die Meldungstexte sind
+   Projektfestlegung.
+5. **Abstrakte Klasse**: `CREATE OBJECT` einer abstrakten Klasse ist ein Übersetzungsfehler
+   (`... is abstract and cannot be instantiated`). Der Grund ist, dass Slots abstrakter Klassen nicht gefüllt
+   sind. Die ABAP-Fehlerklasse ist nicht belegt (Festlegung 4).
+6. **Objektkopf**: Ein Objekt wird mit 8 Byte Kopf vor dem Objektzeiger angelegt. Der Kopf enthält den Zeiger
+   auf die Methodentabelle der Klasse. Der Objektzeiger zeigt auf die Attribute wie vorher. Eine Interface-
+   Referenz ist derselbe Zeiger. Dies ist eine Umsetzungsfestlegung, nicht ABAP.
+7. **Signatur**: Die Implementierung einer Interface-Methode muss Parameterzahl, Typ, CHANGING-Kennzeichen und
+   Rückgabetyp der Interface-Methode haben. Sonst ist es ein Übersetzungsfehler (`does not match the signature
+   of the interface method`). Parameternamen werden nicht geprüft. Der Aufruf über die Tabelle passt die
+   Argumente nur über die Position an.
+8. **Nicht getroffen**: Ein Aufruf über eine initiale Interface-Referenz verwendet die bestehende Prüfung
+   (`object reference is not set`). Interface-zu-Interface-Zuweisung ist nur für das gleiche Interface
+   zulässig. Zuweisung eines Oberinterface aus einem Unter-Interface ist ein Übersetzungsfehler.
+
+**Lücken (nicht umgesetzt):**
+
+- CAST (`?=`, `CAST`) und Zuweisung von Interface-Referenz an Klassenreferenz.
+- Statische Interface-Methoden über eine Referenz (`ref->m( )` mit `CLASS-METHODS` im Interface): Fehler.
+- Interface-Attribute über eine Referenz (`ref->attr`, Kettenschritt ohne Aufruf): Fehler.
+- Überschreiben von Interface-Methoden in Unterklassen (`REDEFINITION`) ist ohne Akzeptanzfall.
+- Keine Vererbung zwischen Interfaces als Zuweisung (Stufe 1).
+
+## 5e. Zuweisung einer ganzen Zahl an ein Zeichenfeld (FR-004)
+
+Die Zuweisung `TYPE i` → `TYPE c` ist keine Ausgabe mit `WRITE`. Sie folgt eigenen Regeln. Es gibt keinen
+Übersetzungsfehler und keinen Laufzeitabbruch, auch bei Überlauf (Festlegung des Nutzers, 2026-11-28).
+
+Quelle der Erwartungswerte: SAP-Testlauf S/4HANA 2025, Kernel 916, Angabe des Nutzers. Der Report steht in
+`doc/feature-requests/sap-belegtests-fr004-fr005.md`, die Beobachtungen in `doc/feature-requests/FR-004-zahl-in-zeichenfeld.md`.
+Eine Belegung in der Keyword-Dokumentation ist nicht gelesen und wird hier nicht behauptet.
+
+Regel mit L = Feldlänge und d = Anzahl der Ziffern von |Wert| (0 hat eine Ziffer):
+- positiv oder 0, d < L: Ziffern rechtsbündig in L−1 Stellen, letzte Stelle Leerzeichen.
+- positiv, d = L: nur die Ziffern, keine Vorzeichenstelle.
+- positiv, d > L: `*` vorne, danach die rechten L−1 Ziffern.
+- negativ, d < L: Ziffern rechtsbündig in L−1 Stellen, letzte Stelle `-`.
+- negativ, d ≥ L: `*` vorne, danach die rechten L−2 Ziffern, letzte Stelle `-`. Bei L = 1 bleibt nur `*`.
+
+Erwartungswerte (in der Tabelle steht `_` für ein Leerzeichen, wie im SAP-Report). „Zeile“ heißt: die Zeile steht
+wörtlich im Repo (FR-004, Abschnitt „Beispiele aus dem Lauf“). „Regel“ heißt: aus der Regel abgeleitet, eine
+SAP-Zeile dazu liegt im Repo nicht vor.
+
+| Fall | Wert | Feld | Erwartung | Beleg |
+|---|---|---|---|---|
+| T1 | 42 | c15 | `____________42_` (15 Zeichen) | Regel. Die Zeile in FR-004 hat 19 Zeichen, siehe Offenes |
+| T1 | -42 | c15 | `____________42-` | Zeile |
+| T2 | 42 | c10 | `_______42_` | Regel |
+| T2 | -42 | c10 | `_______42-` | Regel |
+| T3 | 42 | c9 | `______42_` | Regel |
+| T3 | 42 | c5 | `__42_` | Regel |
+| T4 | WRITE 42 | (WRITE) | `________42` (10 Zeichen) | Angabe in FR-004, Projektfestlegung Abschnitt 7, Punkt 1 |
+| T4 | WRITE -42 | (WRITE) | `________42-` (11 Zeichen) | Angabe in FR-004, Projektfestlegung Abschnitt 7, Punkt 1 |
+| T9 | 12345 | c5 | `12345` | Regel |
+| T9 | -12345 | c5 | `*345-` | Zeile |
+| T10 | 12345678 | c9 | `12345678_` | Zeile |
+| T10 | 123456789 | c9 | `123456789` | Zeile |
+| T10 | 123456789 | c10 | `123456789_` | Regel |
+| T12 | 123456 | c5 | `*3456` | Zeile |
+| T12 | -123456 | c5 | `*456-` | Zeile |
+| T12 | 1234 | c5 | `1234_` | Zeile |
+| T12 | 0 | c1 | `0` | Zeile |
+| T12 | -5 | c1 | `*` | Zeile |
+
+Akzeptanzfälle: `m21_t01_zahl_in_c15`, `m21_t02_zahl_in_c10`, `m21_t03_zahl_in_c9_und_c5`, `m21_t04_write_ganze_zahl`,
+`m21_t09_ueberlauf_c5`, `m21_t10_grenzen_c9_c10`, `m21_t12_randwerte_c5_c1`. Die Ausgabe enthält keine `|`-Markierung
+des Reports.
+
+Abgrenzung: `WRITE` bleibt unverändert (Abschnitt 6, `m1_write_int`). Eine Dezimalzahl (`TYPE p`) an ein
+Zeichenfeld ist weiterhin ein Übersetzungsfehler, weil dafür keine Regel belegt ist.
+
+Nicht umgesetzt und ohne Akzeptanzfall: T5 (Typ `n`), T6 bis T8 und T11 (`MATNR` mit ALPHA-Konvertierung,
+`CALL FUNCTION`). Dafür gibt es im Repo keine SAP-Ausgabe, und sie gehören zu FR-005.
+
+Die Erwartungen T1 bis T12 stimmen mit der SAP-Ausgabe überein (Datei `doc/feature-requests/sap-belegtests-fr004-fr005.md`).
+Offen: Die Länge 0 (`TYPE c LENGTH 0`) liefert eine leere Ausgabe. Das ist
+eine Annahme und nicht belegt.
+
+## 5f. Konvertierungsroutine ALPHA bei der Ausgabe (FR-005, Stufe 1)
+
+Eine Domäne im Data Dictionary kann eine Konvertierungsroutine haben (Element `CONVEXIT` in `DD01V`, abapGit-Datei
+`*.doma.xml`; belegt durch den Serializer-Quelltext des abapGit-Standalone-Reports, Abschnitt `DD01V`). Der Compiler
+liest den Namen aus dem Data Dictionary. Routinen aus dem ABAP-Quelltext gibt es nicht.
+
+Umgesetzt ist nur `ALPHA`. Die Anwendung in Stufe 1: `WRITE` einer Variable, die mit `DATA ... TYPE <Datenelement>`
+deklariert ist, wenn das Datenelement eine Domäne mit der Routine `ALPHA` hat. Andere Ausgaben bleiben unverändert.
+Eingabe (Dynpro, Selektionsbild, Parameter) ist nicht angebunden, auch wenn `abap-rt` die Eingaberegel hat.
+
+Regel (ALPHA-Ausgabe):
+- Ist der Wert rein numerisch (nur Ziffern `0` bis `9`, nachfolgende Leerzeichen zählen nicht), werden die führenden
+  Nullen entfernt. Das Ergebnis ist linksbündig und rechts mit Leerzeichen auf die Feldlänge aufgefüllt.
+- Belegt: Der SAP-Testlauf T11 gibt für MATNR mit gespeicherten Nullen `42` aus (`doc/feature-requests/sap-belegtests-fr004-fr005.md`).
+  Der Doku-Auszug zu ALPHA nennt die Regel „rein numerisch“ und linksbündiges Ergebnis (SAP-Keyword-Doku, Suchtreffer,
+  nicht im Volltext geprüft).
+- Festlegung, nicht belegt: Nicht-numerische Werte bleiben unverändert. Nur-Nullen ergibt `0`. Führende Leerzeichen
+  machen den Wert nicht numerisch. Die Regel für Vorzeichen und Buchstaben ist nicht im Volltext geprüft.
+- Festlegung: Ohne Routine (Domäne ohne `CONVEXIT` oder Datenelement mit direktem Typ) gibt es keine Umwandlung.
+
+Eingabe-Regel (in `abap-rt`, noch nicht vom Codegen aufgerufen): rein numerische Werte werden links mit Nullen auf
+die Feldlänge aufgefüllt, rechtsbündig (belegt durch T8 `CONVERSION_EXIT_ALPHA_INPUT('42')` in c18 mit Nullen, und
+die Doku-Auszüge). Nicht-numerische Werte: Festlegung, linksbündig mit Leerzeichen.
+
+Erwartungswerte (in der Tabelle steht `_` für ein Leerzeichen):
+
+| Fall | Programm | Erwartung | Beleg |
+|---|---|---|---|
+| `m22_alpha_write_domain`: `lv_nr` (Datenelement mit Domäne ALPHA, 18 Zeichen) = `'0000000000000042'`, `WRITE / lv_nr.` | Feld wird als `42` plus 16 Leerzeichen ausgegeben | T11 (Wert `42`). Ausgabebreite = Feldlänge: Festlegung |
+| `m22_write_without_domain`: `lv_plain` (Datenelement ohne Domäne, 18 Zeichen) = `'000000000000000042'`, `WRITE / lv_plain.` | `000000000000000042` | T11 (c18 mit Nullen bleibt) |
+| `m22_write_without_domain`: `lv_nr` (Domäne ohne Routine) = `'0000000000000042'`, `WRITE / lv_nr.` | `0000000000000042` plus 2 Leerzeichen | Festlegung: keine Routine, keine Umwandlung |
+| `m22_error_unknown_conversion_routine`: Domäne mit Routine `ZTKV_UNBEKANNT`, `DATA lv_nr TYPE ztkv_nr.` | Übersetzungsfehler `Conversion routine 'ZTKV_UNBEKANNT' of data element 'ztkv_nr' is not supported` | Festlegung: kein stiller Fallback |
+
+Akzeptanzfälle: `m22_alpha_write_domain`, `m22_write_without_domain`, `m22_error_unknown_conversion_routine`. Die
+DDIC-Daten dieser Fälle sind synthetisch (Namen `ZTKV_*`) und liegen im Unterverzeichnis `ddic/` des Falls. Sie stammen
+nicht aus den SAP-Beispielexporten. Der Runner übergibt das Verzeichnis mit `abapc --ddic`.
+
+Abgrenzung: Die Feldlänge der Ausgabe ist die Länge des Feldes, nicht die `OUTPUTLEN` aus der Domäne (Festlegung,
+offen). Klassenattribute und Strukturkomponenten sind in Stufe 1 nicht erfasst (nur `DATA`-Anweisungen).
+
 ## 6. Ausgabe
 
 - `WRITE` schreibt Felder hintereinander auf dieselbe Zeile. `/` beginnt eine neue Zeile
@@ -144,6 +383,10 @@ enthält keine Geheimnisse, nur Namen von Umgebungsvariablen (Spezifikation, Abs
   belegt: `m1_write_int`). Negative Zahlen haben das Minuszeichen danach und damit 11 Zeichen. Das
   Alignment zwischen Feldern kommt über die Tabs (Abschnitt 7, Punkt 2).
   Die Breite 10 ist eine Projektfestlegung (Abschnitt 7, Punkt 2).
+- Die Zuweisung einer ganzen Zahl (`TYPE i`) an ein Zeichenfeld ist keine Ausgabe mit `WRITE`. Sie bildet das
+  Verhalten des SAP-Systems nach (S/4HANA 2025, Kernel 916): Ziffern rechtsbündig, Vorzeichen am Ende
+  (Leerzeichen oder `-`), bei Überlauf `*` vorne. Kein Fehler, kein Laufzeitabbruch. Die Regel mit allen Beispielen
+  steht in FR-004.
 - Zeichenfelder werden mit ihrer vollen Länge ausgegeben, inklusive Auffüllung. Strings ohne Auffüllung
   (`m3_write_string_no_pad`).
 - `m7_write_chain_slash` erwartet bei `WRITE: 'a', 'b', / 'c'.` eine Ausgabe mit Tabulatoren zwischen
@@ -160,6 +403,23 @@ enthält keine Geheimnisse, nur Namen von Umgebungsvariablen (Spezifikation, Abs
 4. Dynpros sind umgesetzt: `.dynp`-Layout, PBO/PAI, Wertehilfe `PROCESS ON VALUE-REQUEST`, Modalfenster
   (Akzeptanzfälle `m11_dynpro_*` bis `m15_dynpro_*`). Die Terminal-Simulation läuft mit `crossterm` in
   `abap-rt`. Die Spezifikation steht in `doc/dynpro-spezifikation.md`.
+5. **FORM-Tabellenparameter** (`FORM f USING it TYPE TABLE OF ...`) sind aktiv. Der Parser für FORM und Methoden
+   ist derselbe. Der Auftrag nannte nur Methodenparameter (`m18_table_form_param`).
+6. **Tabellenargument nur als Variable**: Ein Ausdruck wie `o->get( )` als Tabellenargument wird mit
+   `Internal table argument must be a variable (not supported yet)` abgewiesen, weil der Zeilentyp eines
+   Ausdrucks nicht geprüft werden kann.
+7. **Typprüfung der Tabellen nur über den Zeilentyp**: Der Zeilentyp muss gleich sein (sonst
+   `Type does not match formal parameter`). Die Tabellenart (`STANDARD`, `SORTED`, `HASHED`) und die
+   Schlüsselangaben werden nicht geprüft. Nach der Doku wäre `STANDARD` an `SORTED` ein Syntaxfehler.
+   Das ist nicht umgesetzt.
+8. **EXPORTING-Tabellen werden beim Aufruf nicht geleert**: Der Aktualparameter wird per Referenz übergeben
+   und behält seinen Inhalt. Die Doku-Auskunft stützt das nur teilweise (Forum, Blog und ein Ausschnitt).
+   Kein Akzeptanzfall hängt daran.
+9. **Schreibschutz für IMPORTING**: Eine Zuweisung an einen IMPORTING-Parameter (Skalar oder Tabelle) ist ein
+   Übersetzungsfehler. Erkannt werden Zuweisungen, `CLEAR`, `APPEND`, `READ TABLE ... INTO`, `LOOP ... INTO`,
+   `DESCRIBE`, `SELECT`-Ziele, `CREATE OBJECT`, `RECEIVING` und `CHANGING`-Argumente. Ein Schreiben über ein
+   Feldsymbol (`LOOP ... ASSIGNING`) wird nicht erkannt. Ob der Speicher beim Aliasing (globale Variable und
+   IMPORTING zeigen auf dasselbe Objekt) geschützt sein müsste, ist nicht belegt und nicht geprüft.
 
 **Lücken:**
 
